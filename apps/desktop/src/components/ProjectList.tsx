@@ -1,0 +1,50 @@
+import type { ProjectView } from "../types";
+
+interface Props {
+  projects: ProjectView[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onAdd: () => void;
+  busy: boolean;
+}
+
+export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Props) {
+  return (
+    <nav className="sidebar">
+      <div className="sidebar-head">
+        <span className="sidebar-title">Projects</span>
+        <button className="ghost" onClick={onAdd} disabled={busy} title="Register a project">
+          +
+        </button>
+      </div>
+
+      {projects.length === 0 ? (
+        <p className="empty">
+          No projects yet. Add one to see what it is running.
+        </p>
+      ) : (
+        <ul className="project-list">
+          {projects.map((project) => (
+            <li key={project.id}>
+              <button
+                className={project.id === selectedId ? "project selected" : "project"}
+                onClick={() => onSelect(project.id)}
+              >
+                <span
+                  className={project.running_services > 0 ? "dot live" : "dot"}
+                  aria-hidden
+                />
+                <span className="project-body">
+                  <span className="project-name">{project.name}</span>
+                  <span className="project-meta">
+                    {project.running_services}/{project.total_services} running
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </nav>
+  );
+}

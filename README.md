@@ -18,7 +18,7 @@ the full product plan.
 |---|---|---|
 | 0 | Cross-platform process/port PoC | **done** |
 | 1 | Daemon, IPC, SQLite, registry, lifecycle, CLI | **done** |
-| 2 | Tauri desktop MVP | not started |
+| 2 | Tauri desktop MVP | **done** |
 | 3 | MCP server | not started |
 | 4 | Native edge sidebar | not started |
 | 5 | Project intelligence | partly done (detection, worktrees, stable ports) |
@@ -34,10 +34,11 @@ portable adapter.
 cargo build --release
 ```
 
-The two binaries land in `target/release`:
+The binaries land in `target/release`:
 
 - `runtime` — the CLI
-- `runtime-daemon` — the daemon (the CLI starts it on demand)
+- `runtime-daemon` — the daemon (every client starts it on demand)
+- `runtime-desktop` — the desktop app
 
 ```bash
 # check the platform adapter can see this machine
@@ -56,6 +57,24 @@ runtime port check 3000
 runtime list
 runtime port list
 ```
+
+## Desktop app
+
+```bash
+cd apps/desktop
+pnpm install
+pnpm tauri dev          # or: pnpm tauri build
+```
+
+The window shows projects in a sidebar and, per workspace, the services with
+their live status, port and owner. Selecting a service streams its output; the
+Ports tab lists everything listening on the machine, registered or not.
+
+It holds no state of its own — closing it stops nothing, and a service started
+from the CLI or by an agent appears in the window immediately through the
+daemon's event stream.
+
+The edge-docked side panel is Phase 4 and is deliberately not built yet.
 
 ## Commands
 
@@ -137,7 +156,7 @@ crates/
   runtime-daemon/    the daemon binary
   runtime-cli/       the `runtime` binary
 docs/
-apps/                (Phase 2: Tauri desktop)
+apps/desktop/        Tauri 2 + React desktop app
 packages/            (Phase 3: MCP server)
 ```
 
@@ -146,6 +165,7 @@ packages/            (Phase 3: MCP server)
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets
+pnpm --dir apps/desktop build          # type-check and bundle the frontend
 # type-check the Windows adapter without a Windows machine
 # (the whole workspace cannot cross-build: bundled SQLite needs a C toolchain)
 cargo check -p adapter-windows --target x86_64-pc-windows-msvc

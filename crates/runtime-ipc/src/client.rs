@@ -4,7 +4,8 @@
 //! all three reach the daemon through the same code path.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use runtime_core::events::RuntimeEvent;
 use runtime_core::paths;
@@ -92,5 +93,68 @@ pub async fn is_running() -> bool {
     match Client::connect_at(&path).await {
         Ok(mut client) => client.call(Request::Ping).await.is_ok(),
         Err(_) => false,
+    }
+}
+
+/// How long to wait for a freshly spawned daemon to start listening.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connect, starting the daemon if it is not already running.
+///
+/// Every client uses this, so a user's first command works without a separate
+/// install step and the desktop app does not need its own copy of the logic.
+pub async fn connect_or_start() -> Result<Client> {
+    if let Ok(client) = Client::connect_default().await {
+        return Ok(client);
+    }
+    spawn_daemon()?;
+    wait_for_daemon(STARTUP_TIMEOUT).await
+}
+
+/// Launch the daemon detached from the calling process.
+pub fn spawn_daemon() -> Result<()> {
+    let binary = daemon_binary()?;
+    std::process::Command::new(&binary)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|err| RuntimeError::Io(format!("failed to start {}: {err}", binary.display())))?;
+    Ok(())
+}
+
+/// Look for the daemon next to the calling binary first, so a checkout's
+/// `target/debug` build never picks up a different installed copy.
+pub fn daemon_binary() -> Result<PathBuf> {
+    let name = if cfg!(windows) {
+        "runtime-daemon.exe"
+    } else {
+        "runtime-daemon"
+    };
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    // Fall back to PATH.
+    Ok(PathBuf::from(name))
+}
+
+pub async fn wait_for_daemon(timeout: Duration) -> Result<Client> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(client) = Client::connect_default().await {
+            return Ok(client);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(RuntimeError::Io(format!(
+                "the daemon did not come up within {}s; run `runtime-daemon` directly to see why",
+                timeout.as_secs()
+            )));
+        }
+        tokio::time::sleep(Duration::from_millis(120)).await;
     }
 }

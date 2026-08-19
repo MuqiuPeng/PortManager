@@ -1,7 +1,7 @@
 # Architecture
 
 ```
-        Desktop (Phase 2)        CLI              MCP (Phase 3)
+           Desktop              CLI              MCP (Phase 3)
                 │                 │                    │
                 └────────┬────────┴──────────┬─────────┘
                          │  newline-JSON over UDS / named pipe
@@ -112,3 +112,19 @@ Frames are explicitly tagged (`kind`) rather than untagged — an ambiguous fram
 that silently deserialises as the wrong variant is far worse to debug than a
 slightly more verbose envelope. Collections travel in a named `items` field
 because serde cannot put an internal tag on a sequence.
+
+## Desktop app
+
+`apps/desktop` is a Tauri 2 shell around a React frontend. Its Rust side holds a
+`DaemonHandle` — a self-repairing IPC connection — and every `#[tauri::command]`
+is a one-to-one translation of an IPC request. No state and no logic live in the
+app: anything computed there would be something the CLI and MCP do not get.
+
+A second connection carries the event subscription, so a long-lived stream never
+interleaves with a command the user just clicked. Events are re-emitted to the
+frontend on the `runtime://event` channel, which is what makes a service started
+from a terminal appear in the window without polling.
+
+Two things still poll, because the daemon has no event for them: the ports table
+(the socket table changes without the runtime's involvement) and log tailing,
+which uses the `since_seq` cursor so each tick transfers only new lines.

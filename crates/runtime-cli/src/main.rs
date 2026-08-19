@@ -470,11 +470,7 @@ async fn follow_logs(
 // ---- daemon control ----------------------------------------------------
 
 async fn connect() -> Result<Client> {
-    if let Ok(client) = Client::connect_default().await {
-        return Ok(client);
-    }
-    spawn_daemon()?;
-    wait_for_daemon(Duration::from_secs(10)).await
+    runtime_ipc::client::connect_or_start().await
 }
 
 async fn daemon_command(command: &DaemonCommand, json: bool) -> Result<String> {
@@ -483,8 +479,7 @@ async fn daemon_command(command: &DaemonCommand, json: bool) -> Result<String> {
             if runtime_ipc::client::is_running().await {
                 return Ok("daemon is already running".to_string());
             }
-            spawn_daemon()?;
-            let mut client = wait_for_daemon(Duration::from_secs(10)).await?;
+            let mut client = runtime_ipc::client::connect_or_start().await?;
             let info = client.call(Request::DaemonInfo).await?;
             render_response(&info, json)
         }
@@ -500,55 +495,6 @@ async fn daemon_command(command: &DaemonCommand, json: bool) -> Result<String> {
             }
             Err(_) => Ok("not running".to_string()),
         },
-    }
-}
-
-/// Launch the daemon detached from this terminal.
-fn spawn_daemon() -> Result<()> {
-    let binary = daemon_binary()?;
-    std::process::Command::new(&binary)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|err| {
-            RuntimeError::Io(format!("failed to start {}: {err}", binary.display()))
-        })?;
-    Ok(())
-}
-
-/// Look for the daemon next to this binary first, so a checkout's `target/debug`
-/// build never picks up a different installed copy.
-fn daemon_binary() -> Result<PathBuf> {
-    let name = if cfg!(windows) {
-        "runtime-daemon.exe"
-    } else {
-        "runtime-daemon"
-    };
-    if let Ok(current) = std::env::current_exe() {
-        if let Some(dir) = current.parent() {
-            let candidate = dir.join(name);
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-    Ok(PathBuf::from(name))
-}
-
-async fn wait_for_daemon(timeout: Duration) -> Result<Client> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        if let Ok(client) = Client::connect_default().await {
-            return Ok(client);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(RuntimeError::Io(format!(
-                "the daemon did not come up within {}s; try running `runtime-daemon` directly to see why",
-                timeout.as_secs()
-            )));
-        }
-        tokio::time::sleep(Duration::from_millis(120)).await;
     }
 }
 

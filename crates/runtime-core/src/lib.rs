@@ -464,10 +464,17 @@ impl Runtime {
     /// A service with its current process state resolved against the OS.
     pub fn service_view(&self, service: &Service) -> Result<ServiceView> {
         let (status, instance) = self.current_state(service)?;
-        let actual_port = instance
-            .as_ref()
-            .and_then(|i| i.port)
-            .or_else(|| self.supervisor.port(&service.id).ok().flatten());
+        // Only report a port while something is actually bound to it. A stopped
+        // service showing `:3005` reads as "it is on 3005", which is precisely
+        // the confusion this tool exists to remove.
+        let actual_port = if status.is_live() {
+            instance
+                .as_ref()
+                .and_then(|i| i.port)
+                .or_else(|| self.supervisor.port(&service.id).ok().flatten())
+        } else {
+            None
+        };
 
         let url = actual_port.and_then(|port| match service.service_type {
             runtime_types::ServiceType::Web | runtime_types::ServiceType::Api => {
@@ -522,15 +529,28 @@ impl Runtime {
     }
 
     /// Everything listening on this machine, resolved to projects where possible.
+    ///
+    /// One row per (port, pid): a server that binds both IPv4 and IPv6 appears
+    /// twice in the socket table but is one thing to the user.
     pub fn list_ports(&self) -> Result<Vec<PortOwner>> {
         let resolver = self.resolver();
-        let mut owners = Vec::new();
+        let mut owners: Vec<PortOwner> = Vec::new();
         for binding in self.adapter.port().listening_ports()? {
+            if owners.iter().any(|owner| {
+                owner.port == binding.port && Some(owner.pid) == binding.primary_pid()
+            }) {
+                continue;
+            }
             if let Some(owner) = resolver.owner_of(binding.port)? {
-                owners.push(owner);
+                if !owners
+                    .iter()
+                    .any(|existing| existing.port == owner.port && existing.pid == owner.pid)
+                {
+                    owners.push(owner);
+                }
             }
         }
-        owners.sort_by_key(|owner| owner.port);
+        owners.sort_by_key(|owner| (owner.port, owner.pid));
         Ok(owners)
     }
 

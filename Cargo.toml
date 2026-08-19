@@ -9,6 +9,7 @@ members = [
     "crates/runtime-ipc",
     "crates/runtime-daemon",
     "crates/runtime-cli",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
