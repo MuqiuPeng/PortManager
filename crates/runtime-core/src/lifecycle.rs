@@ -29,6 +29,13 @@ use crate::Runtime;
 /// How long a graceful stop is given before escalating.
 pub const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// How long to watch a freshly started service before calling it started.
+///
+/// Long enough to catch the common failures — a missing binary, a port already
+/// taken, a syntax error — and short enough that starting something healthy
+/// does not feel slow.
+pub const START_VERIFY: Duration = Duration::from_millis(1_500);
+
 /// How long after start the runtime keeps probing before calling a service
 /// unhealthy rather than starting.
 pub const STARTUP_GRACE: Duration = Duration::from_secs(60);
@@ -119,6 +126,12 @@ impl Runtime {
 
         let port = reservation.as_ref().map(|r| r.port);
         let instance = self.spawn_service(&service, port, &options).await?;
+
+        // Reporting success the moment a process is spawned means reporting
+        // success for a process that is already dead. The common failures —
+        // a missing command, a port taken by something that ignores $PORT, a
+        // syntax error — all happen within the first second.
+        self.verify_started(&service, &instance).await?;
 
         // What is listening just changed; a cached answer would be wrong.
         self.invalidate_port_owners();
@@ -232,6 +245,55 @@ impl Runtime {
         Ok(instance)
     }
 
+    /// Fail loudly if the process is gone almost immediately.
+    async fn verify_started(&self, service: &Service, instance: &RuntimeInstance) -> Result<()> {
+        let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
+
+        // Poll rather than sleep the whole grace: a command that fails should
+        // say so at once, not after a fixed pause.
+        let deadline = tokio::time::Instant::now() + START_VERIFY;
+        loop {
+            if !self.adapter().process().is_alive(&identity)? {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // The process is gone; its last output is almost always the reason.
+        // Output is pumped on another task, which may not have caught up with a
+        // process that died this quickly — so give it a moment rather than
+        // reporting "no output" for something that printed the answer.
+        let mut detail = None;
+        for wait in [150, 350] {
+            tokio::time::sleep(Duration::from_millis(wait)).await;
+            detail = self
+                .read_logs(&service.id, 8, None)
+                .unwrap_or_default()
+                .iter()
+                .rev()
+                .find(|line| line.stream != LogStream::System && !line.message.trim().is_empty())
+                .map(|line| line.message.trim().to_string());
+            if detail.is_some() {
+                break;
+            }
+        }
+        let detail = detail.unwrap_or_else(|| "it produced no output".to_string());
+
+        let exit_code = self
+            .store()
+            .get_instance(&instance.id)?
+            .and_then(|stored| stored.exit_code);
+
+        Err(RuntimeError::StartFailed {
+            service: service.name.clone(),
+            exit_code,
+            detail,
+        })
+    }
+
     fn pump_logs<R>(
         &self,
         service_id: ServiceId,
@@ -293,7 +355,9 @@ impl Runtime {
                     None => "process terminated by signal".to_string(),
                 },
             );
-            let _ = supervisor.remove(&service.id);
+            // `finish`, not `remove`: aborting the log pumps here would throw
+            // away the output that explains the exit.
+            let _ = supervisor.finish(&service.id);
 
             events.publish(RuntimeEvent::ServiceExited {
                 service_id: service.id.clone(),
@@ -419,7 +483,9 @@ impl Runtime {
         if let Some(port) = instance.port {
             self.store().release_lease(port)?;
         }
-        self.supervisor().remove(&service.id)?;
+        // The pipes close when the process does, so the pumps drain the last
+        // lines and end by themselves.
+        self.supervisor().finish(&service.id)?;
         self.invalidate_port_owners();
         self.events().publish(RuntimeEvent::ServiceStatusChanged {
             service_id: service.id.clone(),
@@ -463,7 +529,24 @@ impl Runtime {
             .clone()
             .unwrap_or(default_health_check(instance.port));
 
-        let probe = crate::health::probe(&check, instance.port, alive).await;
+        let mut probe = crate::health::probe(&check, instance.port, alive).await;
+
+        // A live process that never binds the port it was given is the shape of
+        // a service that ignores $PORT — it is listening somewhere else, or
+        // failed to bind at all. Saying only "connection refused" leaves the
+        // caller to work that out.
+        if alive && probe.status == ServiceStatus::Unhealthy {
+            let running_for = Utc::now() - instance.started_at;
+            if running_for.num_seconds() >= 3 {
+                if let Some(port) = instance.port {
+                    probe.detail = Some(format!(
+                        "nothing is listening on {port} although the process is running; \
+                         it may not be honouring $PORT — check its logs, or set the port it \
+                         does use with `service set --port`"
+                    ));
+                }
+            }
+        }
 
         // Persist what we just observed, so a caller that probes and then lists
         // does not see two different answers for the same moment.

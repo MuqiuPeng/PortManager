@@ -61,6 +61,20 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Stop tracking a service whose process has ended.
+    ///
+    /// Deliberately does **not** abort its tasks. The log pumps end on their
+    /// own when the pipes close, and cutting them short discards whatever the
+    /// process printed on its way out — which is the one thing worth having
+    /// when something dies a second after starting.
+    pub fn finish(&self, service_id: &ServiceId) -> Result<Option<RunningProcess>> {
+        Ok(self.lock()?.remove(service_id))
+    }
+
+    /// Stop tracking a service and abandon its tasks.
+    ///
+    /// For shutdown, where waiting on pipes that may never close is worse than
+    /// losing the tail of a log.
     pub fn remove(&self, service_id: &ServiceId) -> Result<Option<RunningProcess>> {
         let removed = self.lock()?.remove(service_id);
         if let Some(process) = &removed {

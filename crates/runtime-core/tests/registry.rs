@@ -577,3 +577,51 @@ fn a_root_without_workspaces_is_unaffected() {
     assert_eq!(services.len(), 1);
     assert_eq!(services[0].service.name, "web");
 }
+
+#[tokio::test]
+async fn a_command_that_fails_immediately_is_reported_as_a_failure() {
+    let config = r#"{ "name": "boom", "services": {
+        "web": { "command": "echo 'no such module' >&2; exit 1" } } }"#;
+    let dir = repo(&[(".runtime.json", config)]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    // Spawning is not starting. Reporting success for a process that is already
+    // dead leaves the truth only in the logs, which is where this was found.
+    let error = runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .unwrap_err();
+
+    match error {
+        RuntimeError::StartFailed { service, detail, .. } => {
+            assert_eq!(service, "web");
+            assert!(detail.contains("no such module"), "{detail}");
+        }
+        other => panic!("expected a start failure, got {other:?}"),
+    }
+}
+
+
+#[tokio::test]
+async fn a_service_that_starts_and_keeps_running_is_not_reported_as_failed() {
+    let config = r#"{ "name": "fine", "services": { "web": { "command": "sleep 30" } } }"#;
+    let dir = repo(&[(".runtime.json", config)]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    let outcome = runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .expect("a running process is a successful start");
+    assert!(!outcome.reused);
+
+    runtime
+        .stop_service(&service.id, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+}

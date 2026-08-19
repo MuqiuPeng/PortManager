@@ -122,6 +122,26 @@ minute rather than paid for on each lookup. The CLI is located the same way the
 daemon is — a daemon started by the bundled app inherits a minimal PATH that
 contains no `docker`.
 
+## Starting
+
+Spawning is not starting. A process can be created and be dead a moment later —
+a missing command, a port already taken, a syntax error — and reporting success
+the instant a pid exists leaves the truth only in the logs. `start_service`
+therefore watches the process for a short grace period and fails with the last
+thing it printed if it is already gone.
+
+That last output has to survive, which it did not: the exit watcher used to drop
+the whole supervisor entry, aborting the log pumps along with it. The faster a
+service died, the more likely its explanation was thrown away. Ending a service
+now stops tracking it without touching the pumps, which finish by themselves
+when the pipes close.
+
+A service that stays alive but never binds the port it was reserved is the other
+common shape — a service that does not read `$PORT` and hardcodes its own. The
+health detail says so instead of reporting a bare connection refused, because
+"nothing is listening on 3005 although the process is running" is the fact that
+leads somewhere.
+
 ## Logs
 
 A bounded ring buffer per service answers reads; a file beside it is what makes

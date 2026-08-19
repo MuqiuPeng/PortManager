@@ -212,8 +212,14 @@ pub fn start_outcome(outcome: &StartOutcome) -> String {
             }
         }
     }
+    // The status, not just a URL: a service can be spawned and reserved a port
+    // and still not be serving on it.
+    out.push_str(&format!("\n  status {}", status_label(outcome.service.status)));
     if let Some(url) = &outcome.service.url {
-        out.push_str(&format!("\n{url}"));
+        out.push_str(&format!("\n  {url}"));
+    }
+    if outcome.service.status == ServiceStatus::Starting {
+        out.push_str("\n  (use --wait, or `runtime health`, to confirm it is serving)");
     }
     out
 }

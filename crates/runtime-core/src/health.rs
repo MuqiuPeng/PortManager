@@ -150,15 +150,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tcp_probe_detects_a_listener() {
+    async fn a_bound_port_probes_healthy() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
 
         let result = probe(&HealthCheck::Tcp { port: None }, Some(port), true).await;
         assert_eq!(result.status, ServiceStatus::Healthy);
+    }
 
+    #[tokio::test]
+    async fn a_port_nobody_listens_on_probes_unhealthy() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let result = probe(&HealthCheck::Tcp { port: None }, Some(port), true).await;
-        assert_eq!(result.status, ServiceStatus::Unhealthy);
+
+        // Closing a socket does not always make the port refuse connections in
+        // the same instant — a connection already in the backlog can still be
+        // completed — so the assertion is that it *becomes* unhealthy, not that
+        // it is unhealthy on the first attempt.
+        for _ in 0..20 {
+            let result = probe(&HealthCheck::Tcp { port: None }, Some(port), true).await;
+            if result.status == ServiceStatus::Unhealthy {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("port {port} never stopped accepting connections");
     }
 }

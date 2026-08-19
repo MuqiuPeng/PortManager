@@ -33,6 +33,15 @@ pub enum RuntimeError {
     #[error("service '{service}' is not running")]
     NotRunning { service: String },
 
+    #[error("'{service}' exited immediately{}: {detail}", .exit_code.map(|code| format!(" (code {code})")).unwrap_or_default())]
+    StartFailed {
+        service: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        /// The last thing it printed, which is normally the reason.
+        detail: String,
+    },
+
     #[error("refusing to terminate pid {pid}: {reason}")]
     NotPermitted { pid: u32, reason: String },
 
@@ -123,6 +132,11 @@ mod tests {
             },
             RuntimeError::NotRunning {
                 service: "web".to_string(),
+            },
+            RuntimeError::StartFailed {
+                service: "web".to_string(),
+                exit_code: Some(1),
+                detail: "EADDRINUSE".to_string(),
             },
             RuntimeError::NotPermitted {
                 pid: 42,
