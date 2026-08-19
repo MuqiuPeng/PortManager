@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use chrono::{Duration, Utc};
+use runtime_adapter::port::PortBinding;
 use runtime_adapter::PlatformAdapter;
 use runtime_types::{
     ConflictPolicy, PortLease, PortLeaseStatus, PortOwner, PortReservation, PortStatus, Project,
@@ -55,9 +56,21 @@ impl<'a> PortResolver<'a> {
         let Some(binding) = self.adapter.port().binding_for(port)? else {
             return Ok(None);
         };
+        self.owner_of_binding(&binding).map(Some)
+    }
+
+    /// Resolve a binding the caller already has.
+    ///
+    /// `list_ports` walks the whole socket table; routing each row back through
+    /// [`Self::owner_of`] would re-read that table once per row, and would also
+    /// collapse a port serving both TCP and UDP down to whichever protocol
+    /// `binding_for` prefers.
+    pub fn owner_of_binding(&self, binding: &PortBinding) -> Result<PortOwner> {
+        let port = binding.port;
         let Some(pid) = binding.primary_pid() else {
-            return Ok(Some(PortOwner {
+            return Ok(PortOwner {
                 port,
+                protocol: binding.protocol,
                 pid: 0,
                 executable: None,
                 cwd: None,
@@ -72,12 +85,13 @@ impl<'a> PortResolver<'a> {
                 container: None,
                 supervisor: None,
                 managed: false,
-            }));
+            });
         };
 
         let process = self.adapter.process().process_info(pid)?;
         let mut owner = PortOwner {
             port,
+            protocol: binding.protocol,
             pid,
             executable: process
                 .as_ref()
@@ -169,7 +183,7 @@ impl<'a> PortResolver<'a> {
                 if owner.project_name.is_none() {
                     owner.project_name = container.compose_project.clone();
                 }
-                return Ok(Some(owner));
+                return Ok(owner);
             }
         }
 
@@ -188,7 +202,7 @@ impl<'a> PortResolver<'a> {
             }
         }
 
-        Ok(Some(owner))
+        Ok(owner)
     }
 
     /// `pid` followed by its ancestors, nearest first.

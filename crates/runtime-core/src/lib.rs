@@ -2392,21 +2392,25 @@ impl Runtime {
         let resolver = self.resolver();
         let mut owners: Vec<PortOwner> = Vec::new();
         for binding in self.adapter.port().listening_ports()? {
+            // The protocol is part of the identity: a port serving both TCP and
+            // UDP is two things, and collapsing them hides one.
             if owners.iter().any(|owner| {
-                owner.port == binding.port && Some(owner.pid) == binding.primary_pid()
+                owner.port == binding.port
+                    && owner.protocol == binding.protocol
+                    && Some(owner.pid) == binding.primary_pid()
             }) {
                 continue;
             }
-            if let Some(owner) = resolver.owner_of(binding.port)? {
-                if !owners
-                    .iter()
-                    .any(|existing| existing.port == owner.port && existing.pid == owner.pid)
-                {
-                    owners.push(owner);
-                }
+            let owner = resolver.owner_of_binding(&binding)?;
+            if !owners.iter().any(|existing| {
+                existing.port == owner.port
+                    && existing.protocol == owner.protocol
+                    && existing.pid == owner.pid
+            }) {
+                owners.push(owner);
             }
         }
-        owners.sort_by_key(|owner| (owner.port, owner.pid));
+        owners.sort_by_key(|owner| (owner.port, owner.protocol, owner.pid));
         Ok(owners)
     }
 

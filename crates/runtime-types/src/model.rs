@@ -147,6 +147,33 @@ impl StartedBy {
 
 /// Lifecycle state. Deliberately finer-grained than running/stopped so that
 /// "the process exists" and "the service answers" stay distinguishable.
+/// Transport of a bound socket.
+///
+/// Lives here rather than in the adapter because it reaches the user: the CLI
+/// prints it, and the desktop app and MCP server both read it off a `PortOwner`.
+/// `Ord` puts TCP first, which is the order the port table is listed in.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[default]
+    Tcp,
+    Udp,
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `pad` rather than `write_str`: the port table aligns this in a
+        // fixed-width column, and a manual `Display` that writes directly
+        // silently ignores the width.
+        f.pad(match self {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceStatus {

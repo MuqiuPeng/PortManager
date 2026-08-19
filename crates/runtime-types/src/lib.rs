@@ -13,7 +13,7 @@ pub use config::{ProjectConfig, ServiceConfig, CONFIG_FILE_NAME};
 pub use error::{Result, RuntimeError};
 pub use id::{InstanceId, ProjectId, ServiceId, SessionId, StackId, WorkspaceId};
 pub use model::{
-    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy, Stack, Workspace,
+    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, Protocol, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy, Stack, Workspace,
 };
 pub use view::{
     FlowNode,
