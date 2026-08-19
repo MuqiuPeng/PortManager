@@ -8,13 +8,18 @@ This is the handoff document for the Windows half of the runtime. Everything in
 `WindowsAdapter` is a **working baseline**, not a stub. Building the workspace
 on Windows today gives you a functioning `runtime` and `runtime-daemon`:
 
-| Concern | Baseline | Where |
+| Concern | Implementation | Where |
 |---|---|---|
 | Process list, cwd, argv | `sysinfo` | `runtime-adapter/src/generic.rs` |
-| Listening ports -> pid | `netstat2` (`GetExtendedTcpTable` under the hood) | `runtime-adapter/src/generic.rs` |
+| Listening ports -> pid | `GetExtendedTcpTable` / `GetExtendedUdpTable`, TCP and UDP, v4 and v6 | `adapter-windows/src/port.rs` |
 | New process group | `CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` | `adapter-windows/src/spawn.rs` |
-| Tree termination | `taskkill /T /F` | `adapter-windows/src/process.rs` |
+| Tree termination | Job Object, `taskkill /T /F` as fallback | `adapter-windows/src/jobs.rs` |
 | IPC | named pipe `\\.\pipe\local-runtime` | `runtime-ipc/src/transport.rs` |
+
+Every subprocess the Windows path spawns carries `CREATE_NO_WINDOW`. Without it
+each one flashes a console window, because the daemon is started detached and
+so has no console of its own for children to inherit — and `git`, which project
+discovery calls six times per directory, made that very visible.
 
 Start here:
 
@@ -31,7 +36,12 @@ matters — that is the first thing to fix.
 
 > On macOS this check caught exactly that: `sysinfo` returns `None` for cwd, and
 > the adapter had to call `proc_pidinfo(PROC_PIDVNODEPATHINFO)` natively.
-> Verify the equivalent on Windows before trusting the baseline.
+>
+> Windows reported zero too, but for a different reason and with a much smaller
+> fix: `sysinfo`'s `refresh_processes` asks for memory, cpu, disk and exe, and
+> **not** for cwd or argv. Naming the fields explicitly
+> (`refresh_processes_specifics`) was enough — no native call needed. See
+> `GenericProcessProvider::refresh_kind`.
 
 ## The work, in priority order
 
@@ -49,28 +59,34 @@ when the deadline passes. You only need the two modes to actually differ.
 **Why it matters:** a force-killed dev server does not flush its state, and
 `restart` becomes lossy. See `crates/runtime-core/src/lifecycle.rs`.
 
-### 2. Job Objects for tree termination
+### 2. Job Objects for tree termination — **done**
 
-Replace `taskkill` with a Job Object created in `prepare()` and assigned to the
-child, with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Closing the handle then
-guarantees no descendant survives, even one that re-parents itself — which
-`taskkill /T` does not, because it walks a parent chain that a detached
-grandchild has already left.
+`adapter-windows/src/jobs.rs`. Each service is put in its own job immediately
+after spawn (by pid, via `OpenProcess` + `AssignProcessToJobObject` — a process
+cannot join a job before it exists, so this cannot happen in `prepare`), and
+`terminate_tree` calls `TerminateJobObject`, falling back to `taskkill` when
+there is no job. `SpawnProvider` grew two defaulted methods, `confine` and
+`release`, so no other platform had to change.
 
-This requires storing the job handle alongside the child. `Supervisor`
-(`runtime-core/src/supervisor.rs`) already owns a per-service record; if the
-handle needs to live there, add it behind a `#[cfg(windows)]` field rather than
-changing the trait.
+The job deliberately does **not** set `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+That would tie every service to the daemon holding the handle, so restarting the
+daemon would kill everything it had started — the opposite of what
+`Runtime::reconcile` exists to handle. Termination is explicit instead.
 
-**Acceptance:** start a service whose command spawns a detached grandchild, stop
-it, and confirm the grandchild is gone. `demo/server.js` in the repo history
-does exactly this and is what the macOS side was validated against.
+**Verified** against the case that motivates the whole thing: a service that
+spawns a detached child which spawns a second detached child and exits, leaving
+the grandchild with a dead parent. Through the job it dies with the service;
+forced down the `taskkill` path it survives, exactly as predicted.
 
-### 3. Native port table
+### 3. Native port table — **done**
 
-Swap `GenericPortProvider` for `GetExtendedTcpTable` / `GetExtendedUdpTable`
-directly. `netstat2` already uses these, so this is a performance and
-dependency-surface change, not a correctness one — do it after 1 and 2.
+`adapter-windows/src/port.rs` calls `GetExtendedTcpTable` and
+`GetExtendedUdpTable` directly for both address families, replacing
+`GenericPortProvider`. UDP is included: `Protocol::Udp` existed in the types but
+nothing ever produced it, so UDP sockets were invisible.
+
+Cross-checked against `Get-NetTCPConnection` and `Get-NetUDPEndpoint`: 99
+distinct protocol:port pairs on both sides, no misses and no phantoms.
 
 Do **not** parse `netstat -ano`. The plan is explicit about the API path for the
 shipped version, and the output format is localised.

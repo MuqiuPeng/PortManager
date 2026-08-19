@@ -21,6 +21,21 @@ pub trait SpawnProvider: Send + Sync {
     /// Called after the program and arguments are set but before spawning.
     fn prepare(&self, command: &mut Command) -> Result<()>;
 
+    /// Take ownership of a process the runtime has just started, so that
+    /// everything it goes on to spawn can be terminated as one unit.
+    ///
+    /// Defaulted to nothing: only Windows has a mechanism (Job Objects) that
+    /// survives a descendant re-parenting itself. Elsewhere termination walks
+    /// the process tree, which is enough because a process group already
+    /// travels with the children.
+    fn confine(&self, _pid: u32) -> Result<()> {
+        Ok(())
+    }
+
+    /// Forget a process that exited on its own, releasing anything
+    /// [`Self::confine`] allocated for it.
+    fn release(&self, _pid: u32) {}
+
     /// Build a ready-to-spawn command for a service's shell command line.
     fn build(&self, command_line: &str) -> Result<Command> {
         let (program, prefix) = self.shell();

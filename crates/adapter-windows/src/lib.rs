@@ -2,50 +2,66 @@
 //!
 //! # Status
 //!
-//! This is a **working baseline**, not the finished adapter. It delegates
-//! enumeration to the portable `sysinfo` / `netstat2` implementation and adds
-//! the two Windows-specific behaviours the runtime cannot do without:
-//! creating each service in its own process group, and terminating the whole
-//! process tree.
+//! Sockets are read natively; process enumeration still delegates to the
+//! portable `sysinfo` implementation. On top of that sit the Windows-specific
+//! behaviours the runtime cannot do without: creating each service in its own
+//! process group, and terminating the whole process tree.
 //!
 //! Everything marked `TODO(windows)` is a deliberate handoff point where a
 //! native Win32 implementation should replace the baseline. The trait
 //! signatures will not change, so that work is local to this crate.
 //!
-//! # Planned native work
+//! # State of the native work
 //!
-//! | Concern | Baseline here | Target |
-//! |---|---|---|
-//! | Port table | `netstat2` | `GetExtendedTcpTable` / `GetExtendedUdpTable` |
-//! | Tree termination | `taskkill /T /F` | Job Object with `KILL_ON_JOB_CLOSE` |
-//! | Graceful stop | forced | `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)` |
-//! | Process metadata | `sysinfo` | `Toolhelp32Snapshot` + `QueryFullProcessImageName` |
+//! | Concern | Implementation |
+//! |---|---|
+//! | Port table | **`GetExtendedTcpTable` / `GetExtendedUdpTable`**, TCP and UDP, v4 and v6 |
+//! | Tree termination | `taskkill /T /F` — to become a Job Object with `KILL_ON_JOB_CLOSE` |
+//! | Graceful stop | forced — to become `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)` |
+//! | Process metadata | `sysinfo` — `Toolhelp32Snapshot` only if it proves too slow |
 //!
 //! Parsing `netstat -ano` output is explicitly out of scope: the plan calls for
-//! the API path in the shipped version.
+//! the API path in the shipped version, and the output is localised.
 
 #![cfg(windows)]
 
+mod jobs;
+mod port;
 mod process;
 mod spawn;
 
-use runtime_adapter::generic::GenericPortProvider;
+use std::sync::Arc;
+
 use runtime_adapter::{PlatformAdapter, PortProvider, ProcessProvider, SpawnProvider};
 
+pub use jobs::JobRegistry;
+pub use port::WindowsPortProvider;
 pub use process::WindowsProcessProvider;
 pub use spawn::WindowsSpawnProvider;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WindowsAdapter {
     process: WindowsProcessProvider,
-    // TODO(windows): replace with a GetExtendedTcpTable-backed provider.
-    port: GenericPortProvider,
+    port: WindowsPortProvider,
     spawn: WindowsSpawnProvider,
+}
+
+impl Default for WindowsAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WindowsAdapter {
     pub fn new() -> Self {
-        Self::default()
+        // One registry, shared: the spawn side fills it and the process side
+        // terminates from it.
+        let jobs = Arc::new(JobRegistry::new());
+        Self {
+            process: WindowsProcessProvider::with_jobs(Arc::clone(&jobs)),
+            port: WindowsPortProvider::new(),
+            spawn: WindowsSpawnProvider::with_jobs(jobs),
+        }
     }
 }
 

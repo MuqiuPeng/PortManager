@@ -730,6 +730,14 @@ impl Runtime {
             .id()
             .ok_or_else(|| RuntimeError::internal("child exited before it could be recorded"))?;
 
+        // Confine before anything else runs: the service's own children start
+        // appearing the moment it does, and a child spawned before the job
+        // exists would never join it.
+        if let Err(err) = self.adapter().spawn().confine(pid) {
+            // Not fatal — termination falls back to walking the process tree.
+            tracing::warn!(%err, pid, "could not confine the service to a job");
+        }
+
         // Read the start time back from the OS rather than using "now": the
         // stored identity must match exactly what a later lookup will report.
         let process_start_time = self
@@ -1000,10 +1008,13 @@ impl Runtime {
         let logs = self.logs_arc();
         let events = self.events().clone();
         let supervisor = self.supervisor_arc();
+        let adapter = self.adapter_arc();
 
         tokio::spawn(async move {
             let status = child.wait().await;
             let exit_code = status.as_ref().ok().and_then(|s| s.code());
+            // Nothing left to terminate; drop whatever `confine` allocated.
+            adapter.spawn().release(instance.pid);
 
             instance.stopped_at = Some(Utc::now());
             instance.exit_code = exit_code;
