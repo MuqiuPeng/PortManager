@@ -175,7 +175,14 @@ impl Runtime {
 
         let detection = detect::detect(&root);
         let now = Utc::now();
-        let project = match self.store.find_project_by_path(&root)? {
+        let known = self.store.find_project_by_path(&root)?;
+        // Detection runs when a project is first added, and never again.
+        // Re-adding happens easily — the Discover tab, a scan, `project add`
+        // twice — and must not undo curation: a service the user deleted would
+        // come back, and a command they corrected would be overwritten by the
+        // guess it replaced.
+        let is_new = known.is_none();
+        let project = match known {
             Some(mut existing) => {
                 if let Some(name) = name.clone() {
                     existing.name = name;
@@ -200,7 +207,8 @@ impl Runtime {
             .ok_or_else(|| RuntimeError::internal("project vanished after insert"))?;
 
         let workspace = self.register_workspace(&project.id, &root)?;
-        for detected in &detection.services {
+
+        for detected in detection.services.iter().filter(|_| is_new) {
             let service = Service {
                 id: ServiceId::new(),
                 workspace_id: workspace.id.clone(),
@@ -257,9 +265,18 @@ impl Runtime {
             },
         };
         self.store.upsert_workspace(&workspace)?;
-        self.store
+        let stored = self
+            .store
             .find_workspace_by_path(&path)?
-            .ok_or_else(|| RuntimeError::internal("workspace vanished after insert"))
+            .ok_or_else(|| RuntimeError::internal("workspace vanished after insert"))?;
+
+        // A new checkout changes what the window should be showing, the same
+        // way a new service does.
+        self.events.publish(RuntimeEvent::WorkspaceChanged {
+            project_id: stored.project_id.clone(),
+            workspace_id: stored.id.clone(),
+        });
+        Ok(stored)
     }
 
     /// Discover git worktrees of a project and register any that are new,

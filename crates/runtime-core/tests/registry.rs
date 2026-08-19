@@ -697,3 +697,49 @@ fn editing_a_service_tells_anyone_watching() {
         other => panic!("expected a removal, got {other:?}"),
     }
 }
+
+#[test]
+fn re_registering_a_project_leaves_a_curated_registry_alone() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .update_service(
+            &service.id,
+            runtime_types::ServicePatch {
+                command: Some("pnpm run dev:local".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    // Adding the same directory again happens easily — the Discover tab, a
+    // scan, or `project add` run twice. Inference must not undo curation.
+    runtime.add_project(dir.path(), None).unwrap();
+
+    let after = runtime.get_project(&view.project.id).unwrap();
+    assert_eq!(after.total_services, 1);
+    assert_eq!(
+        after.workspaces[0].services[0].service.command,
+        "pnpm run dev:local",
+        "a corrected command was overwritten by the guess it replaced"
+    );
+}
+
+#[test]
+fn a_deleted_service_stays_deleted() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime.delete_service(&service.id).unwrap();
+    runtime.add_project(dir.path(), None).unwrap();
+
+    // Removing a service detection invented, only to have it reappear, is the
+    // shape of a tool that does not believe the user.
+    let after = runtime.get_project(&view.project.id).unwrap();
+    assert_eq!(after.total_services, 0);
+}

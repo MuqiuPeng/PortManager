@@ -213,7 +213,11 @@ a candidate directory is never descended into, so a vendored dependency with its
 own `package.json` is not reported as a separate project.
 
 Registration is idempotent and records only what is already there; it starts and
-stops nothing.
+stops nothing. Detection runs when a project is first added and never again:
+re-adding happens easily — the Discover tab, a scan, `project add` run twice —
+and must not undo curation. A service the user deleted coming back, or a
+corrected command being overwritten by the guess it replaced, is the shape of a
+tool that does not believe them.
 
 ## Declared, adopted, and observed
 

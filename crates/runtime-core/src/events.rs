@@ -3,7 +3,7 @@
 //! One broadcast channel that every entry point subscribes to, so a service
 //! started from the CLI shows up in the GUI without polling.
 
-use runtime_types::{LogLine, ProjectId, ServiceId, ServiceStatus};
+use runtime_types::{LogLine, ProjectId, ServiceId, ServiceStatus, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -16,6 +16,11 @@ pub enum RuntimeEvent {
     },
     ProjectRemoved {
         project_id: ProjectId,
+    },
+    /// A checkout was registered — a new git worktree, usually.
+    WorkspaceChanged {
+        project_id: ProjectId,
+        workspace_id: WorkspaceId,
     },
     /// A service definition was added, corrected or removed.
     ///
