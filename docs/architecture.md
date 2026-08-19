@@ -77,6 +77,34 @@ two, closing out instances whose process is gone and releasing their leases.
 Without that step the state drifts a little further from reality after every
 crash.
 
+## Containers
+
+Every containerised service publishes its ports through one Docker process, so
+`port -> pid -> cwd -> project` dead-ends at a single pid whose working
+directory is Docker's own: five services become five identical rows reading
+`com.docker.docker`. Docker is not a gap in coverage, it is a structural blind
+spot in the mechanism the whole product rests on.
+
+Compose labels supply the missing link. `com.docker.compose.project.working_dir`
+is the directory the compose file lives in, which is a project root by the same
+definition applied to processes — so containers join both port attribution and
+discovery through the paths that already exist.
+
+This is read-only on purpose. Compose starts and stops these services well, and
+its file is a contract shared with CI and teammates; the value on offer is
+putting containers and native processes in one picture, not becoming a second
+orchestrator. `RuntimeProvider` remains the seam if lifecycle is added later.
+
+Containers started with plain `docker run` carry no labels, and are reported by
+name and image without a project. `loom-postgres` obviously belongs to Loom, and
+guessing that is exactly the false positive discovery is built to avoid.
+
+The listing is cached for three seconds so enumerating every port costs one
+`docker` invocation rather than dozens, and an absent Docker is cached for a
+minute rather than paid for on each lookup. The CLI is located the same way the
+daemon is — a daemon started by the bundled app inherits a minimal PATH that
+contains no `docker`.
+
 ## Discovery
 
 The same chain that answers "who owns :3000" answers "what projects are on this

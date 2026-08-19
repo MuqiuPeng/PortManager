@@ -147,7 +147,8 @@ export function formatPortOwner(owner: PortOwner): string {
   } else {
     lines.push("unregistered process");
   }
-  lines.push(`pid ${owner.pid}`);
+  // For a container the pid belongs to Docker, not to the service.
+  lines.push(owner.container ? `container ${owner.container}` : `pid ${owner.pid}`);
   if (owner.cwd) lines.push(`cwd ${owner.cwd}`);
   if (owner.command_line) lines.push(`cmd ${truncate(owner.command_line, 160)}`);
   if (owner.started_by && owner.started_by !== "unknown") {
@@ -165,7 +166,8 @@ export function formatPorts(ports: PortOwner[]): string {
       const label = port.project_name
         ? [port.project_name, port.git_branch, port.service_name].filter(Boolean).join("/")
         : (port.executable?.split(/[/\\]/).pop() ?? "unknown");
-      return `${port.port}\t${label}\tpid ${port.pid}${port.managed ? "" : "\t(unmanaged)"}`;
+      const holder = port.container ? `container ${port.container}` : `pid ${port.pid}`;
+      return `${port.port}\t${label}\t${holder}${port.managed ? "" : "\t(unmanaged)"}`;
     })
     .join("\n");
 }

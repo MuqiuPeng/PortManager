@@ -71,7 +71,7 @@ if the attribution matters to you.
 | Tool | Purpose |
 |---|---|
 | `check_port` | Who owns a port, resolved to project/branch/service, and what to use instead |
-| `list_ports` | Everything listening, including processes the runtime did not start |
+| `list_ports` | Everything listening, including containers and processes the runtime did not start |
 | `reserve_port` | Claim a port before starting something yourself |
 | `release_port` | Drop a lease (does not stop anything) |
 

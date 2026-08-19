@@ -15,6 +15,7 @@ use runtime_adapter::PlatformAdapter;
 use serde::{Deserialize, Serialize};
 
 use crate::detect;
+use crate::docker::Docker;
 use crate::git;
 use crate::store::Store;
 use runtime_types::Result;
@@ -120,11 +121,18 @@ pub struct Discovery {
 pub fn discover(
     store: &Store,
     adapter: &dyn PlatformAdapter,
+    docker: &Docker,
     roots: &[PathBuf],
 ) -> Result<Vec<Discovery>> {
     let mut found: BTreeMap<PathBuf, Discovery> = BTreeMap::new();
 
-    for (root, ports) in roots_from_running_processes(adapter)? {
+    // A compose file's directory with containers running out of it is a project
+    // by the same standard as a directory with a process running out of it.
+    let running = roots_from_running_processes(adapter)?
+        .into_iter()
+        .chain(docker.project_roots());
+
+    for (root, ports) in running {
         let entry = found.entry(root.clone()).or_insert_with(|| describe(&root));
         entry.running = true;
         for port in ports {

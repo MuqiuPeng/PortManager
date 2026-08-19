@@ -14,6 +14,7 @@ use runtime_types::{
     ProjectId, Result, RuntimeError, Service, StartedBy, Workspace,
 };
 
+use crate::docker::Docker;
 use crate::store::Store;
 
 /// How far above the preferred port `allocate-next` will search.
@@ -25,11 +26,16 @@ pub const RESERVATION_TTL_SECONDS: i64 = 120;
 pub struct PortResolver<'a> {
     store: &'a Store,
     adapter: &'a dyn PlatformAdapter,
+    docker: &'a Docker,
 }
 
 impl<'a> PortResolver<'a> {
-    pub fn new(store: &'a Store, adapter: &'a dyn PlatformAdapter) -> Self {
-        Self { store, adapter }
+    pub fn new(store: &'a Store, adapter: &'a dyn PlatformAdapter, docker: &'a Docker) -> Self {
+        Self {
+            store,
+            adapter,
+            docker,
+        }
     }
 
     /// The port a service should try first.
@@ -63,6 +69,7 @@ impl<'a> PortResolver<'a> {
                 service_id: None,
                 service_name: None,
                 started_by: None,
+                container: None,
                 managed: false,
             }));
         };
@@ -84,6 +91,7 @@ impl<'a> PortResolver<'a> {
             service_id: None,
             service_name: None,
             started_by: None,
+            container: None,
             managed: false,
         };
 
@@ -113,6 +121,37 @@ impl<'a> PortResolver<'a> {
                     self.attach_workspace(&mut owner, &service.workspace_id)?;
                 }
                 break;
+            }
+        }
+
+        // A container publishes through Docker's own process, so the pid and
+        // its working directory describe Docker, not the service. Replace them
+        // with what the container itself says.
+        if owner.project_id.is_none() {
+            if let Some(container) = self.docker.container_for_port(port) {
+                owner.container = Some(container.name.clone());
+                owner.service_name = Some(container.display_service().to_string());
+                owner.command_line = Some(container.image.clone());
+                owner.cwd = container.working_dir.clone();
+
+                // The compose file's directory is a project root by the same
+                // definition used for processes, so a registered project is
+                // matched exactly; otherwise the compose project name is still
+                // a better answer than Docker's.
+                if let Some(directory) = &container.working_dir {
+                    if let Some(workspace) = self.workspace_containing(directory)? {
+                        owner.workspace_id = Some(workspace.id.clone());
+                        owner.git_branch = workspace.git_branch.clone();
+                        if let Some(project) = self.store.get_project(&workspace.project_id)? {
+                            owner.project_id = Some(project.id);
+                            owner.project_name = Some(project.name);
+                        }
+                    }
+                }
+                if owner.project_name.is_none() {
+                    owner.project_name = container.compose_project.clone();
+                }
+                return Ok(Some(owner));
             }
         }
 

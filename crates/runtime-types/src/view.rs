@@ -69,6 +69,12 @@ pub struct PortOwner {
     pub service_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<StartedBy>,
+    /// Container publishing this port, when it is not a plain process.
+    ///
+    /// Every container on a machine publishes through one Docker process, so
+    /// the pid alone identifies nothing; this is what separates them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
     /// True when this process was launched by the runtime itself. Only these
     /// are ever eligible for automatic termination.
     pub managed: bool,

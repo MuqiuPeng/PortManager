@@ -189,6 +189,12 @@ the projects on a machine without being told where any of them are — and
 without false positives, since every one it reports is running something right
 now. `--path` adds a directory walk for projects that happen to be stopped.
 
+**Containers are part of the same picture.** Every container publishes through
+one Docker process, so a port table built on pids shows five services as five
+identical `com.docker.docker` rows. Compose labels resolve them to their project
+and service, and the compose file's directory makes them discoverable like any
+other project. Read-only: compose still owns starting and stopping them.
+
 **A port is a lease, not an observation.** A service claims its port before the
 process starts, so a conflict is reported as an answer rather than discovered as
 a failed boot. Worktrees get a stable offset from the primary checkout, so

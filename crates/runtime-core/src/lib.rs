@@ -7,6 +7,7 @@
 
 pub mod detect;
 pub mod discover;
+pub mod docker;
 pub mod events;
 pub mod git;
 pub mod health;
@@ -30,6 +31,7 @@ use runtime_types::{
     WorkspaceId, WorkspaceView,
 };
 
+use crate::docker::Docker;
 use crate::events::{EventBus, RuntimeEvent};
 use crate::logs::LogStore;
 use crate::ports::PortResolver;
@@ -41,6 +43,7 @@ pub struct Runtime {
     store: Arc<Store>,
     logs: Arc<LogStore>,
     supervisor: Arc<Supervisor>,
+    docker: Arc<Docker>,
     events: EventBus,
     started_at: Instant,
 }
@@ -82,6 +85,7 @@ impl Runtime {
             store,
             logs: Arc::new(LogStore::default()),
             supervisor: Arc::new(Supervisor::new()),
+            docker: Arc::new(Docker::new()),
             events: EventBus::new(),
             started_at: Instant::now(),
         }
@@ -120,7 +124,11 @@ impl Runtime {
     }
 
     pub fn resolver(&self) -> PortResolver<'_> {
-        PortResolver::new(&self.store, self.adapter.as_ref())
+        PortResolver::new(&self.store, self.adapter.as_ref(), &self.docker)
+    }
+
+    pub fn docker(&self) -> &Docker {
+        &self.docker
     }
 
     pub fn info(&self) -> Result<DaemonInfo> {
@@ -288,7 +296,7 @@ impl Runtime {
     /// Always includes projects inferred from what is currently listening;
     /// `roots` adds directory trees to walk for projects that are stopped.
     pub fn discover_projects(&self, roots: &[PathBuf]) -> Result<Vec<discover::Discovery>> {
-        discover::discover(&self.store, self.adapter.as_ref(), roots)
+        discover::discover(&self.store, self.adapter.as_ref(), &self.docker, roots)
     }
 
     /// Register everything discovery found that is not registered yet.

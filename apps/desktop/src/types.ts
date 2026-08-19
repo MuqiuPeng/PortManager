@@ -129,6 +129,8 @@ export interface PortOwner {
   service_id?: string;
   service_name?: string;
   started_by?: StartedBy;
+  /** Container publishing this port, when it is not a plain process. */
+  container?: string;
   /** Only a process the runtime started may ever be terminated automatically. */
   managed: boolean;
 }

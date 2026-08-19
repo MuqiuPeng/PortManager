@@ -165,15 +165,28 @@ pub fn port_status(status: &PortStatus) -> String {
 
 pub fn port_owner(owner: &PortOwner) -> String {
     let mut out = String::new();
-    match (&owner.project_name, &owner.service_name) {
-        (Some(project), Some(service)) => {
-            let branch = owner.git_branch.as_deref().unwrap_or("-");
-            out.push_str(&format!("  {project}/{branch}/{service}\n"));
-        }
-        (Some(project), None) => out.push_str(&format!("  {project}\n")),
-        _ => out.push_str("  unregistered process\n"),
+    // Containers have no branch, so a placeholder there is noise rather than
+    // information; only name the parts that are actually known.
+    let identity = [
+        owner.project_name.as_deref(),
+        owner.git_branch.as_deref(),
+        owner.service_name.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("/");
+    if identity.is_empty() {
+        out.push_str("  unregistered process\n");
+    } else {
+        out.push_str(&format!("  {identity}\n"));
     }
-    out.push_str(&format!("  pid {}\n", owner.pid));
+    if let Some(container) = &owner.container {
+        // The pid is Docker's, not the service's, so it is not the useful fact.
+        out.push_str(&format!("  container {container}\n"));
+    } else {
+        out.push_str(&format!("  pid {}\n", owner.pid));
+    }
     if let Some(cwd) = &owner.cwd {
         out.push_str(&format!("  cwd {}\n", cwd.display()));
     }
@@ -205,17 +218,30 @@ pub fn ports(owners: &[PortOwner]) -> String {
         // remove.
         // The branch is known for anything resolved through a workspace, even
         // when the runtime did not start it and so cannot name the service.
-        let label = match (&owner.project_name, &owner.git_branch, &owner.service_name) {
-            (Some(project), Some(branch), Some(service)) => format!("{project}/{branch}/{service}"),
-            (Some(project), Some(branch), None) => format!("{project}/{branch}"),
-            (Some(project), None, Some(service)) => format!("{project}/{service}"),
-            (Some(project), None, None) => project.clone(),
-            _ => "-".to_string(),
+        let pid = match &owner.container {
+            Some(_) => "docker".to_string(),
+            None => owner.pid.to_string(),
+        };
+        // Everything known, in order; a container with no compose labels still
+        // has a name, which beats an empty cell.
+        let label = [
+            owner.project_name.as_deref(),
+            owner.git_branch.as_deref(),
+            owner.service_name.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("/");
+        let label = if label.is_empty() {
+            "-".to_string()
+        } else {
+            label
         };
         out.push_str(&format!(
             "{:<8} {:<8} {:<34} {}\n",
             owner.port,
-            owner.pid,
+            pid,
             label,
             owner
                 .cwd

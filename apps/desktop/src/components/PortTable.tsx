@@ -46,7 +46,8 @@ export function PortTable({ ports }: Props) {
                 </span>
               )}
             </td>
-            <td className="mono">{port.pid}</td>
+            {/* A container's pid is Docker's; the container name is the fact. */}
+            <td className="mono">{port.container ?? port.pid}</td>
             <td className="mono path" title={port.cwd}>
               {port.cwd ?? "—"}
             </td>
@@ -59,6 +60,7 @@ export function PortTable({ ports }: Props) {
 
 /** The executable name is more identifying than a full argv at table width. */
 function shortCommand(port: PortOwner): string | null {
+  if (port.container) return port.container;
   if (port.executable) {
     const parts = port.executable.split(/[/\\]/);
     return parts[parts.length - 1] || port.executable;
