@@ -242,7 +242,13 @@ alone" — an option that appears to work and does nothing.
 
 Adoption is deliberately strict: the declared port must match *and* be held
 from inside the workspace. Either half alone attributes unrelated processes to
-a service. In practice most already-running services land in the third bucket,
+a service.
+
+It is also refused when two services declare the same port. One package often
+has two modes — a `dev` script and a `dev:local` one — of which only ever one
+runs; adopting the listener into both would report two services as up when at
+most one is, and nothing in the process says which. Reporting neither leaves the
+port visible as unexplained, which is true. In practice most already-running services land in the third bucket,
 because an inferred default port (Next.js 3000) rarely matches what is actually
 running (3007) — which is the honest answer, not a shortcoming to paper over.
 

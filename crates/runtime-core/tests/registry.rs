@@ -625,3 +625,33 @@ async fn a_service_that_starts_and_keeps_running_is_not_reported_as_failed() {
         .await
         .unwrap();
 }
+
+#[test]
+fn two_services_declaring_one_port_do_not_both_claim_it() {
+    let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = occupied.local_addr().unwrap().port();
+
+    // One package, two modes — `dev` and `dev:local` — only one of which ever
+    // runs. This is the shape a payments service with a demo mode has.
+    let config = format!(
+        r#"{{ "name": "modes", "services": {{
+             "server": {{ "command": "true", "port": {port} }},
+             "demo":   {{ "command": "true", "port": {port} }} }} }}"#
+    );
+    let dir = repo(&[(".runtime.json", config.as_str())]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+
+    // Whether or not the listener is attributed to this workspace, neither
+    // service may claim it while the other declares the same port: at most one
+    // can be running, and nothing says which.
+    for service in &view.workspaces[0].services {
+        let refreshed = runtime.service_view(&service.service).unwrap();
+        assert!(
+            !refreshed.status.is_live(),
+            "{} claimed a port two services declare",
+            service.service.name
+        );
+    }
+}

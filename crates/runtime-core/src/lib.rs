@@ -832,12 +832,32 @@ impl Runtime {
         let Some(expected) = ports::PortResolver::preferred_port(service, &workspace) else {
             return Ok(None);
         };
-        Ok(owners
-            .iter()
-            .find(|owner| {
-                owner.port == expected && owner.workspace_id.as_ref() == Some(&workspace.id)
+
+        let listening = owners.iter().any(|owner| {
+            owner.port == expected && owner.workspace_id.as_ref() == Some(&workspace.id)
+        });
+        if !listening {
+            return Ok(None);
+        }
+
+        // Two modes of the same package can declare the same port — one `dev`
+        // and one `dev:local`, only ever one of them running. Adopting the
+        // listener into both would report two services as up when at most one
+        // is, and there is nothing in the process to say which. Reporting
+        // neither leaves the port visible as unexplained, which is true.
+        let claimants = self
+            .store
+            .list_services(&workspace.id)?
+            .into_iter()
+            .filter(|other| {
+                ports::PortResolver::preferred_port(other, &workspace) == Some(expected)
             })
-            .map(|owner| owner.port))
+            .count();
+        if claimants > 1 {
+            return Ok(None);
+        }
+
+        Ok(Some(expected))
     }
 
     /// Reconcile the stored instance for a service against the live process
