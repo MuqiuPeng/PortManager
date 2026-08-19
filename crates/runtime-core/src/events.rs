@@ -17,6 +17,18 @@ pub enum RuntimeEvent {
     ProjectRemoved {
         project_id: ProjectId,
     },
+    /// A service definition was added, corrected or removed.
+    ///
+    /// Registry edits are not lifecycle events, but a window showing a service
+    /// list has to hear about them: an agent correcting a command through MCP
+    /// otherwise leaves the app displaying the old one until something
+    /// unrelated happens.
+    ServiceChanged {
+        project_id: ProjectId,
+        service_id: ServiceId,
+        #[serde(default)]
+        removed: bool,
+    },
     ServiceStatusChanged {
         service_id: ServiceId,
         status: ServiceStatus,

@@ -423,6 +423,7 @@ impl Runtime {
     pub fn upsert_service(&self, service: &Service) -> Result<Service> {
         self.require_workspace(&service.workspace_id)?;
         self.store.upsert_service(service)?;
+        self.announce_service(service, false);
         Ok(service.clone())
     }
 
@@ -459,6 +460,7 @@ impl Runtime {
         }
 
         self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
         Ok(service)
     }
 
@@ -479,7 +481,23 @@ impl Runtime {
             });
         }
         self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
         Ok(service)
+    }
+
+    /// Tell everyone watching that a definition changed.
+    ///
+    /// Best effort: an event that cannot be addressed to a project is not worth
+    /// failing an edit over.
+    fn announce_service(&self, service: &Service, removed: bool) {
+        let Ok(Some(workspace)) = self.store.get_workspace(&service.workspace_id) else {
+            return;
+        };
+        self.events.publish(RuntimeEvent::ServiceChanged {
+            project_id: workspace.project_id,
+            service_id: service.id.clone(),
+            removed,
+        });
     }
 
     /// The project's services as a committable `.runtime.json`.
@@ -527,8 +545,13 @@ impl Runtime {
     }
 
     pub fn delete_service(&self, id: &ServiceId) -> Result<bool> {
+        let service = self.store.get_service(id)?;
         self.store.release_leases_for_service(id)?;
-        self.store.delete_service(id)
+        let removed = self.store.delete_service(id)?;
+        if let Some(service) = service.filter(|_| removed) {
+            self.announce_service(&service, true);
+        }
+        Ok(removed)
     }
 
     /// Every service across every project, with live state attached.

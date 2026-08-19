@@ -655,3 +655,45 @@ fn two_services_declaring_one_port_do_not_both_claim_it() {
         );
     }
 }
+
+#[test]
+fn editing_a_service_tells_anyone_watching() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    let mut events = runtime.events().subscribe();
+
+    runtime
+        .update_service(
+            &service.id,
+            runtime_types::ServicePatch {
+                preferred_port: Some(Some(3007)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    // A registry edit is not a lifecycle event, but a window showing a service
+    // list has to hear about it: an agent correcting a command through MCP
+    // otherwise leaves the app displaying the old one indefinitely.
+    let event = events.try_recv().expect("an edit is announced");
+    match event {
+        runtime_core::events::RuntimeEvent::ServiceChanged {
+            service_id,
+            removed,
+            ..
+        } => {
+            assert_eq!(service_id, service.id);
+            assert!(!removed);
+        }
+        other => panic!("expected a service change, got {other:?}"),
+    }
+
+    runtime.delete_service(&service.id).unwrap();
+    match events.try_recv().expect("a removal is announced") {
+        runtime_core::events::RuntimeEvent::ServiceChanged { removed, .. } => assert!(removed),
+        other => panic!("expected a removal, got {other:?}"),
+    }
+}

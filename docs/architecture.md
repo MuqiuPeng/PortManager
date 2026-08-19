@@ -305,6 +305,11 @@ because serde cannot put an internal tag on a sequence.
 is a one-to-one translation of an IPC request. No state and no logic live in the
 app: anything computed there would be something the CLI and MCP do not get.
 
+Registry edits are announced too, not just lifecycle changes. Adding, correcting
+or removing a service used to publish nothing, so a service an agent declared
+through MCP did not appear in an open window until something unrelated happened
+— which reads exactly like the edit not having worked.
+
 A second connection carries the event subscription, so a long-lived stream never
 interleaves with a command the user just clicked. Events are re-emitted to the
 frontend on the `runtime://event` channel, which is what makes a service started
