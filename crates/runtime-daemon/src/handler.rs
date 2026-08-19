@@ -120,6 +120,63 @@ impl Dispatcher {
                 Ok(ResponseBody::Service(runtime.service_view(&service)?))
             }
 
+            Request::UpdateService {
+                project,
+                service,
+                patch,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let updated = runtime.update_service(&service.id, patch)?;
+                Ok(ResponseBody::Service(runtime.service_view(&updated)?))
+            }
+
+            Request::AddService {
+                selector,
+                name,
+                config,
+            } => {
+                let project = runtime.resolve_project(&selector)?;
+                let workspace = runtime
+                    .store()
+                    .list_workspaces(&project.id)?
+                    .into_iter()
+                    .find(|workspace| !workspace.worktree)
+                    .ok_or_else(|| RuntimeError::not_found("workspace", selector.as_str()))?;
+
+                let cwd = match config.cwd {
+                    Some(cwd) if cwd.is_absolute() => cwd,
+                    Some(cwd) => workspace.path.join(cwd),
+                    None => workspace.path.clone(),
+                };
+                let service = Service {
+                    id: runtime_types::ServiceId::new(),
+                    workspace_id: workspace.id.clone(),
+                    name,
+                    service_type: config.service_type.unwrap_or_default(),
+                    command: config.command,
+                    cwd,
+                    env: config.env,
+                    preferred_port: config.port,
+                    health_check: config.health,
+                    auto_start: config.auto_start,
+                    conflict_policy: config.on_conflict.unwrap_or_default(),
+                };
+                let created = runtime.add_service(&workspace.id, service)?;
+                Ok(ResponseBody::Service(runtime.service_view(&created)?))
+            }
+
+            Request::RemoveService { project, service } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Done {
+                    ok: runtime.delete_service(&service.id)?,
+                })
+            }
+
+            Request::ExportConfig { selector } => {
+                let project = runtime.resolve_project(&selector)?;
+                Ok(ResponseBody::Config(runtime.export_config(&project.id)?))
+            }
+
             Request::StartService {
                 project,
                 service,

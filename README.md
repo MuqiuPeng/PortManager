@@ -139,7 +139,8 @@ protocol does not offer them, so the MCP server cannot expose them. See
 runtime list                        every project, workspace and service
 runtime scan [--path DIR] [--add]   find projects automatically
 runtime project add|list|show|remove
-runtime service list|show
+runtime service list|show|set|add|remove
+runtime export [project] [--write]  services as a committable .runtime.json
 runtime start <service> [--port N] [--on-conflict P] [--wait]
 runtime stop <service> [--timeout S]
 runtime restart <service> [--wait]
@@ -181,6 +182,17 @@ inferred:
 ```
 
 See [config/runtime.example.json](config/runtime.example.json) for every field.
+
+Inference is a starting point, not a verdict. Correct it in place and write the
+result out:
+
+```bash
+runtime service set web --port 3007
+runtime export --write            # writes .runtime.json at the project root
+```
+
+Correcting the port is also what lets the runtime recognise an already-running
+service *as* that service, rather than listing it as an unexplained port.
 
 ## Design notes
 

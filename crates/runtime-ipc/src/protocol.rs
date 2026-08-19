@@ -15,7 +15,8 @@ use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
     AgentSession, DaemonInfo, HealthReport, LogLine, PortOwner, PortReservation, PortStatus,
-    ProjectView, RuntimeError, ServiceView, StartOutcome, Workspace,
+    ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch, ServiceView,
+    StartOutcome, Workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +72,30 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
         service: String,
+    },
+
+    /// Correct a declared service. Detection is inference and gets it wrong.
+    UpdateService {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        service: String,
+        patch: ServicePatch,
+    },
+    /// Declare a service detection did not find.
+    AddService {
+        selector: String,
+        name: String,
+        #[serde(flatten)]
+        config: ServiceConfig,
+    },
+    RemoveService {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        service: String,
+    },
+    /// The project's services as a committable `.runtime.json`.
+    ExportConfig {
+        selector: String,
     },
 
     StartService {
@@ -186,6 +211,7 @@ pub enum ResponseBody {
     Workspaces { items: Vec<Workspace> },
     Workspace(Workspace),
     Services { items: Vec<ServiceView> },
+    Config(ProjectConfig),
     Service(ServiceView),
     Started(StartOutcome),
     Health(HealthReport),

@@ -165,6 +165,15 @@ port table shows three of its ports live.
   because that would be a guess, and a service shown as running when something
   else holds its port is worse than an honest gap.
 
+Which is why services are editable. Detection guesses a framework's default
+port, and correcting it is usually all that stands between "stopped, plus an
+unexplained port" and "running". `export_config` then turns a corrected registry
+into a `.runtime.json` the repository can carry.
+
+A patch distinguishes an absent field from an explicit `null`: serde folds both
+into `None` by default, which silently turns "clear this port" into "leave it
+alone" — an option that appears to work and does nothing.
+
 Adoption is deliberately strict: the declared port must match *and* be held
 from inside the workspace. Either half alone attributes unrelated processes to
 a service. In practice most already-running services land in the third bucket,

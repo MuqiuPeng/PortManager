@@ -355,3 +355,133 @@ fn a_service_already_listening_on_its_port_is_reported_as_running() {
     assert_eq!(refreshed.status, runtime_types::ServiceStatus::Stopped);
     assert!(!refreshed.managed);
 }
+
+#[test]
+fn correcting_an_inferred_port_is_enough_to_fix_it() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    // Inference guessed the framework default; the project does not use it.
+    assert_eq!(service.preferred_port, Some(3000));
+
+    let updated = runtime
+        .update_service(
+            &service.id,
+            runtime_types::ServicePatch {
+                preferred_port: Some(Some(3007)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(updated.preferred_port, Some(3007));
+    // Untouched fields survive: correcting a port should not restate a command.
+    assert_eq!(updated.command, service.command);
+    assert_eq!(updated.name, service.name);
+}
+
+#[test]
+fn renaming_onto_an_existing_service_is_refused() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+    let web = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .add_service(
+            &workspace.id,
+            runtime_types::Service {
+                id: runtime_types::ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                name: "api".to_string(),
+                service_type: Default::default(),
+                command: "true".to_string(),
+                cwd: workspace.path.clone(),
+                env: Default::default(),
+                preferred_port: None,
+                health_check: None,
+                auto_start: false,
+                conflict_policy: Default::default(),
+            },
+        )
+        .unwrap();
+
+    // The registry is keyed on (workspace, name); allowing this would silently
+    // overwrite the other service.
+    let error = runtime
+        .update_service(
+            &web.id,
+            runtime_types::ServicePatch {
+                name: Some("api".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::AlreadyExists { .. }), "{error:?}");
+}
+
+#[test]
+fn a_reservation_holds_the_port_before_anything_listens() {
+    let dir = repo(&[(
+        ".runtime.json",
+        r#"{ "name": "race", "services": {
+             "a": { "command": "true", "port": 39871 },
+             "b": { "command": "true", "port": 39871 } } }"#,
+    )]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+    let services = &view.workspaces[0].services;
+    let first = services[0].service.clone();
+    let second = services[1].service.clone();
+
+    let one = runtime
+        .resolver()
+        .reserve(&view.project, &workspace, &first, None, None, Default::default())
+        .unwrap();
+    assert_eq!(one.port, 39871);
+
+    // Nothing is listening yet — the first service has only claimed the port.
+    // Without leases counting as occupied, a second agent asking at exactly
+    // this moment is told it is free and takes it too.
+    let two = runtime
+        .resolver()
+        .reserve(&view.project, &workspace, &second, None, None, Default::default())
+        .unwrap();
+    assert_ne!(two.port, one.port, "a reservation must actually reserve");
+    assert!(two.reallocated);
+}
+
+#[test]
+fn exporting_produces_a_config_that_reproduces_the_registry() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .update_service(
+            &service.id,
+            runtime_types::ServicePatch {
+                preferred_port: Some(Some(3007)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    let config = runtime.export_config(&view.project.id).unwrap();
+    let web = config.services.get("web").expect("web is exported");
+
+    assert_eq!(config.name.as_deref(), Some("shop"));
+    assert_eq!(web.port, Some(3007));
+    assert_eq!(web.command, "pnpm run dev");
+    // A corrected registry is only useful to a teammate if it round-trips
+    // through the file the repository carries.
+    let encoded = serde_json::to_string(&config).unwrap();
+    let decoded: runtime_types::ProjectConfig = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded.services.get("web").map(|s| s.port), Some(Some(3007)));
+}

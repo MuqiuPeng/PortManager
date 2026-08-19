@@ -310,7 +310,21 @@ impl<'a> PortResolver<'a> {
         };
 
         let conflict = self.owner_of(preferred)?;
-        let free = conflict.is_none() && self.adapter.port().is_port_free(preferred)?;
+
+        // A live reservation counts as occupying the port. Without this the
+        // reservation does not actually reserve: between one agent claiming a
+        // port and its process binding it, nothing is listening, so a second
+        // agent asking at that moment is told the port is free and takes it too.
+        let reserved_elsewhere = self
+            .store
+            .get_lease(preferred)?
+            .filter(|lease| lease.service_id != service.id)
+            .filter(|lease| lease.status != PortLeaseStatus::Released)
+            .is_some();
+
+        let free = conflict.is_none()
+            && !reserved_elsewhere
+            && self.adapter.port().is_port_free(preferred)?;
 
         if free {
             self.write_lease(project.id.clone(), workspace, service, preferred, true, owner)?;
@@ -337,10 +351,18 @@ impl<'a> PortResolver<'a> {
             }
         }
 
+        // Name the reservation holder rather than saying "unknown process":
+        // nothing is listening yet, so the process table cannot explain it.
+        let holder = if conflict.is_none() && reserved_elsewhere {
+            self.describe_lease(preferred)?
+        } else {
+            describe(conflict.as_ref())
+        };
+
         match policy {
             ConflictPolicy::Reuse | ConflictPolicy::Fail => Err(RuntimeError::PortConflict {
                 port: preferred,
-                holder: describe(conflict.as_ref()),
+                holder,
             }),
 
             // `Ask` reports the conflict without acting, leaving the decision
@@ -396,6 +418,28 @@ impl<'a> PortResolver<'a> {
                 })
             }
         }
+    }
+
+    /// Who holds a reservation, for a conflict message.
+    fn describe_lease(&self, port: u16) -> Result<String> {
+        let Some(lease) = self.store.get_lease(port)? else {
+            return Ok("a reservation".to_string());
+        };
+        let service = self
+            .store
+            .get_service(&lease.service_id)?
+            .map(|service| service.name)
+            .unwrap_or_else(|| "a service".to_string());
+        let project = self
+            .store
+            .get_project(&lease.project_id)?
+            .map(|project| project.name)
+            .unwrap_or_default();
+        let owner = serde_json::to_value(lease.owner)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        Ok(format!("a reservation held by {project}/{service} for {owner}"))
     }
 
     fn write_lease(

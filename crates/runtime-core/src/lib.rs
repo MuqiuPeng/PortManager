@@ -425,6 +425,106 @@ impl Runtime {
         Ok(service.clone())
     }
 
+    /// Correct a declared service.
+    ///
+    /// Detection is inference and gets things wrong — a default port that the
+    /// project does not actually use, a command from the wrong script. Without
+    /// this the only remedy is hand-writing `.runtime.json`.
+    pub fn update_service(
+        &self,
+        id: &ServiceId,
+        patch: runtime_types::ServicePatch,
+    ) -> Result<Service> {
+        let mut service = self.require_service(id)?;
+        let previous_name = service.name.clone();
+        patch.apply(&mut service);
+
+        // The registry is keyed on (workspace, name); renaming onto an existing
+        // name would silently overwrite the other service.
+        if service.name != previous_name {
+            let taken = self
+                .store
+                .list_services(&service.workspace_id)?
+                .into_iter()
+                .any(|other| other.id != service.id && other.name == service.name);
+            if taken {
+                return Err(RuntimeError::AlreadyExists {
+                    message: format!(
+                        "this workspace already has a service called '{}'",
+                        service.name
+                    ),
+                });
+            }
+        }
+
+        self.store.upsert_service(&service)?;
+        Ok(service)
+    }
+
+    /// Declare a service detection did not find.
+    pub fn add_service(&self, workspace_id: &WorkspaceId, service: Service) -> Result<Service> {
+        self.require_workspace(workspace_id)?;
+        if self
+            .store
+            .list_services(workspace_id)?
+            .iter()
+            .any(|other| other.name == service.name)
+        {
+            return Err(RuntimeError::AlreadyExists {
+                message: format!(
+                    "this workspace already has a service called '{}'",
+                    service.name
+                ),
+            });
+        }
+        self.store.upsert_service(&service)?;
+        Ok(service)
+    }
+
+    /// The project's services as a committable `.runtime.json`.
+    ///
+    /// Inference is a starting point; this is how a corrected registry becomes
+    /// something the repository carries and a teammate gets for free.
+    pub fn export_config(&self, project_id: &ProjectId) -> Result<runtime_types::ProjectConfig> {
+        let project = self.require_project(project_id)?;
+        let workspaces = self.store.list_workspaces(project_id)?;
+        // The primary checkout defines the project; worktrees are copies of it.
+        let primary = workspaces
+            .iter()
+            .find(|workspace| !workspace.worktree)
+            .or(workspaces.first())
+            .ok_or_else(|| RuntimeError::not_found("workspace", project_id.as_str()))?;
+
+        let mut services = std::collections::BTreeMap::new();
+        for service in self.store.list_services(&primary.id)? {
+            let cwd = service
+                .cwd
+                .strip_prefix(&primary.path)
+                .ok()
+                .filter(|relative| !relative.as_os_str().is_empty())
+                .map(|relative| relative.to_path_buf());
+
+            services.insert(
+                service.name.clone(),
+                runtime_types::ServiceConfig {
+                    command: service.command,
+                    port: service.preferred_port,
+                    cwd,
+                    service_type: Some(service.service_type),
+                    env: service.env,
+                    health: service.health_check,
+                    auto_start: service.auto_start,
+                    on_conflict: Some(service.conflict_policy),
+                },
+            );
+        }
+
+        Ok(runtime_types::ProjectConfig {
+            name: Some(project.name),
+            services,
+        })
+    }
+
     pub fn delete_service(&self, id: &ServiceId) -> Result<bool> {
         self.store.release_leases_for_service(id)?;
         self.store.delete_service(id)

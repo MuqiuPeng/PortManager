@@ -144,16 +144,25 @@ pub fn service_detail(view: &ServiceView) -> String {
     if let Some(url) = &view.url {
         out.push_str(&format!("  url       {url}\n"));
     }
-    if let Some(instance) = &view.instance {
-        out.push_str(&format!("  pid       {}\n", instance.pid));
-        out.push_str(&format!(
-            "  started   {} by {}\n",
-            instance.started_at.to_rfc3339(),
-            serde_json::to_value(instance.started_by)
-                .ok()
-                .and_then(|v| v.as_str().map(str::to_string))
-                .unwrap_or_else(|| "unknown".to_string())
-        ));
+    // `instance` is the last run this runtime performed, which may have ended
+    // — or may belong to a different process than the one now on the port.
+    // Reporting its pid for an adopted service claims we started it.
+    match (&view.instance, view.status.is_live(), view.managed) {
+        (Some(instance), true, true) => {
+            out.push_str(&format!("  pid       {}\n", instance.pid));
+            out.push_str(&format!(
+                "  started   {} by {}\n",
+                instance.started_at.to_rfc3339(),
+                serde_json::to_value(instance.started_by)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "unknown".to_string())
+            ));
+        }
+        (_, true, false) => {
+            out.push_str("  owner     started outside the runtime; cannot be stopped here\n");
+        }
+        _ => {}
     }
     out
 }

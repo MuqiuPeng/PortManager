@@ -115,6 +115,14 @@ enum Command {
     #[command(subcommand)]
     Port(PortCommand),
 
+    /// Write the project's services out as a committable .runtime.json.
+    Export {
+        selector: Option<String>,
+        /// Write it to the project root instead of printing it.
+        #[arg(long)]
+        write: bool,
+    },
+
     /// Manage git worktrees of a project.
     #[command(subcommand)]
     Worktree(WorktreeCommand),
@@ -150,6 +158,49 @@ enum ServiceCommand {
     List,
     /// Show one service in detail.
     Show { service: String },
+
+    /// Correct a service. Detection is a guess; this is how you fix it.
+    Set {
+        service: String,
+        /// Port the service should use.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Forget the port entirely.
+        #[arg(long, conflicts_with = "port")]
+        no_port: bool,
+        #[arg(long)]
+        command: Option<String>,
+        /// Working directory, relative to the workspace unless absolute.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// web | api | worker | database | cache | container | custom
+        #[arg(long = "type")]
+        service_type: Option<String>,
+        #[arg(long)]
+        rename: Option<String>,
+        /// reuse | allocate-next | fail | ask | kill-existing
+        #[arg(long)]
+        on_conflict: Option<String>,
+        /// KEY=VALUE, repeatable. Merged with the existing environment.
+        #[arg(long = "env")]
+        env: Vec<String>,
+    },
+
+    /// Declare a service detection did not find.
+    Add {
+        name: String,
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long = "type")]
+        service_type: Option<String>,
+    },
+
+    /// Remove a declared service. Nothing running is touched.
+    Remove { service: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -253,6 +304,103 @@ async fn run(cli: Cli) -> Result<String> {
         }
         Command::Service(ServiceCommand::Show { service }) => {
             client.call(Request::GetService { project, service }).await?
+        }
+
+        Command::Service(ServiceCommand::Set {
+            service,
+            port,
+            no_port,
+            command,
+            cwd,
+            service_type,
+            rename,
+            on_conflict,
+            env,
+        }) => {
+            let patch = runtime_types::ServicePatch {
+                name: rename,
+                command,
+                cwd,
+                service_type: service_type
+                    .as_deref()
+                    .map(parse_service_type)
+                    .transpose()?,
+                // `Some(None)` clears it; `None` leaves it alone.
+                preferred_port: if no_port {
+                    Some(None)
+                } else {
+                    port.map(Some)
+                },
+                health_check: None,
+                auto_start: None,
+                conflict_policy: on_conflict
+                    .as_deref()
+                    .map(parse_conflict_policy)
+                    .transpose()?,
+                env: parse_env(&env)?,
+            };
+            if patch.is_empty() {
+                return Err(RuntimeError::invalid(
+                    "nothing to change; pass --port, --command, --cwd, --type, --rename, --on-conflict or --env",
+                ));
+            }
+            client
+                .call(Request::UpdateService {
+                    project,
+                    service,
+                    patch,
+                })
+                .await?
+        }
+
+        Command::Service(ServiceCommand::Add {
+            name,
+            command,
+            port,
+            cwd,
+            service_type,
+        }) => {
+            let selector = project.unwrap_or_else(|| ".".to_string());
+            client
+                .call(Request::AddService {
+                    selector,
+                    name,
+                    config: runtime_types::ServiceConfig {
+                        command,
+                        port,
+                        cwd,
+                        service_type: service_type
+                            .as_deref()
+                            .map(parse_service_type)
+                            .transpose()?,
+                        env: Default::default(),
+                        health: None,
+                        auto_start: false,
+                        on_conflict: None,
+                    },
+                })
+                .await?
+        }
+
+        Command::Service(ServiceCommand::Remove { service }) => {
+            client
+                .call(Request::RemoveService { project, service })
+                .await?
+        }
+
+        Command::Export { selector, write } => {
+            let selector = selector
+                .or(project)
+                .unwrap_or_else(|| ".".to_string());
+            let response = client
+                .call(Request::ExportConfig {
+                    selector: selector.clone(),
+                })
+                .await?;
+            if write {
+                return write_config(&mut client, &selector, &response).await;
+            }
+            response
         }
 
         Command::Start {
@@ -400,6 +548,61 @@ async fn run(cli: Cli) -> Result<String> {
     render_response(&response, cli.json)
 }
 
+fn parse_service_type(value: &str) -> Result<runtime_types::ServiceType> {
+    serde_json::from_value(serde_json::Value::String(value.to_ascii_lowercase())).map_err(|_| {
+        RuntimeError::invalid(format!(
+            "unknown service type '{value}'; expected web, api, worker, database, cache, container or custom"
+        ))
+    })
+}
+
+fn parse_conflict_policy(value: &str) -> Result<runtime_types::ConflictPolicy> {
+    runtime_types::ConflictPolicy::parse(value).ok_or_else(|| {
+        RuntimeError::invalid(format!(
+            "unknown conflict policy '{value}'; expected reuse, allocate-next, fail, ask or kill-existing"
+        ))
+    })
+}
+
+fn parse_env(entries: &[String]) -> Result<std::collections::BTreeMap<String, String>> {
+    entries
+        .iter()
+        .map(|entry| {
+            entry
+                .split_once('=')
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .ok_or_else(|| RuntimeError::invalid(format!("expected KEY=VALUE, got '{entry}'")))
+        })
+        .collect()
+}
+
+/// Write the exported config into the project root.
+async fn write_config(
+    client: &mut Client,
+    selector: &str,
+    response: &ResponseBody,
+) -> Result<String> {
+    let ResponseBody::Config(config) = response else {
+        return Err(RuntimeError::internal("expected a config"));
+    };
+    // Ask the daemon where the project is rather than guessing from the cwd.
+    let ResponseBody::Project(view) = client
+        .call(Request::GetProject {
+            selector: selector.to_string(),
+        })
+        .await?
+    else {
+        return Err(RuntimeError::internal("expected a project"));
+    };
+
+    let path = view.project.root_path.join(runtime_types::CONFIG_FILE_NAME);
+    let body = serde_json::to_string_pretty(config)
+        .map_err(|err| RuntimeError::internal(format!("cannot encode the config: {err}")))?;
+    std::fs::write(&path, format!("{body}\n"))
+        .map_err(|err| RuntimeError::io(format!("cannot write {}: {err}", path.display())))?;
+    Ok(format!("wrote {}", path.display()))
+}
+
 fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
     if json {
         return serde_json::to_string_pretty(response)
@@ -414,6 +617,8 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         ResponseBody::Workspaces { items } => render::workspaces(items),
         ResponseBody::Workspace(item) => render::workspaces(std::slice::from_ref(item)),
         ResponseBody::Services { items } => render::services(items),
+        ResponseBody::Config(config) => serde_json::to_string_pretty(config)
+            .map_err(|err| RuntimeError::internal(format!("cannot encode the config: {err}")))?,
         ResponseBody::Service(view) => render::service_detail(view),
         ResponseBody::Started(outcome) => render::start_outcome(outcome),
         ResponseBody::Health(report) => render::health(report),

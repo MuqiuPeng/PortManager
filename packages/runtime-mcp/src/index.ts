@@ -186,6 +186,74 @@ function registerTools(
       ),
   );
 
+  server.registerTool(
+    "update_service",
+    {
+      title: "Correct a service",
+      description:
+        "Change a declared service's port, command, working directory or type. Service definitions come from inference, which guesses — a framework's default port is often not the one a project actually uses. Correcting the port is also what lets the runtime recognise an already-running service as that service.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        port: z
+          .number()
+          .int()
+          .min(1)
+          .max(65535)
+          .optional()
+          .describe("The port this service should use."),
+        command: z.string().optional(),
+        cwd: z.string().optional().describe("Absolute, or relative to the workspace."),
+        service_type: z
+          .enum(["web", "api", "worker", "database", "cache", "container", "custom"])
+          .optional(),
+        on_conflict: z
+          .enum(["reuse", "allocate-next", "fail", "ask", "kill-existing"])
+          .optional(),
+      },
+    },
+    async ({ service, project, port, command, cwd, service_type, on_conflict }) => {
+      const patch: Record<string, unknown> = {};
+      // `[port]` rather than `port`: the wire format distinguishes "set it to
+      // this" from "leave it alone", and an absent key means the latter.
+      if (port !== undefined) patch.preferred_port = port;
+      if (command !== undefined) patch.command = command;
+      if (cwd !== undefined) patch.cwd = cwd;
+      if (service_type !== undefined) patch.service_type = service_type;
+      if (on_conflict !== undefined) patch.conflict_policy = on_conflict;
+
+      if (Object.keys(patch).length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "Nothing to change." }],
+          isError: true,
+        };
+      }
+      return run(
+        "update_service",
+        { service, project: project ?? null, patch },
+        (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
+      );
+    },
+  );
+
+  server.registerTool(
+    "export_config",
+    {
+      title: "Export .runtime.json",
+      description:
+        "Return the project's services as a committable .runtime.json. Inference is a starting point; this is how a corrected set of services becomes something the repository carries and a teammate gets without repeating the work.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("export_config", { selector: project }, (body) =>
+        body.type === "config"
+          ? JSON.stringify({ name: body.name, services: body.services }, null, 2)
+          : unexpected(body),
+      ),
+  );
+
   // ---- lifecycle -----------------------------------------------------
 
   server.registerTool(

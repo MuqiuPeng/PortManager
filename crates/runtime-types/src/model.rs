@@ -207,6 +207,92 @@ impl ConflictPolicy {
     }
 }
 
+/// Changes to a declared service.
+///
+/// Every field optional, because inference gets things wrong in ones and twos —
+/// a port, a command — and correcting one should not mean restating the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServicePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_type: Option<ServiceType>,
+    /// `Some(None)` clears the port; `None` leaves it alone.
+    #[serde(
+        default,
+        deserialize_with = "present_as_some",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub preferred_port: Option<Option<u16>>,
+    #[serde(
+        default,
+        deserialize_with = "present_as_some",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub health_check: Option<Option<HealthCheck>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_start: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_policy: Option<ConflictPolicy>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+}
+
+/// Distinguish an absent field from one explicitly set to `null`.
+///
+/// Serde folds both into `None` by default, which silently turns "clear this
+/// port" into "leave it alone" — an option that appears to work and does
+/// nothing. Running the inner deserializer only when the key is present makes
+/// `null` mean what it says.
+fn present_as_some<'de, D, T>(deserializer: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+impl ServicePatch {
+    /// Apply the changes, leaving untouched fields as they were.
+    pub fn apply(self, service: &mut Service) {
+        if let Some(name) = self.name {
+            service.name = name;
+        }
+        if let Some(command) = self.command {
+            service.command = command;
+        }
+        if let Some(cwd) = self.cwd {
+            service.cwd = cwd;
+        }
+        if let Some(service_type) = self.service_type {
+            service.service_type = service_type;
+        }
+        if let Some(port) = self.preferred_port {
+            service.preferred_port = port;
+        }
+        if let Some(health) = self.health_check {
+            service.health_check = health;
+        }
+        if let Some(auto_start) = self.auto_start {
+            service.auto_start = auto_start;
+        }
+        if let Some(policy) = self.conflict_policy {
+            service.conflict_policy = policy;
+        }
+        // Merged rather than replaced: setting one variable should not drop
+        // the others.
+        service.env.extend(self.env);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum HealthCheck {
@@ -264,4 +350,56 @@ pub struct LogLine {
     pub stream: LogStream,
     pub timestamp: DateTime<Utc>,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Absent, null and a value must mean three different things.
+    ///
+    /// Serde folds an explicit `null` into the same `None` as an absent key,
+    /// which turns "clear this port" into a silent no-op — an option that
+    /// appears to work and does nothing.
+    #[test]
+    fn a_patch_distinguishes_absent_from_null() {
+        let absent: ServicePatch = serde_json::from_str(r#"{"command":"pnpm dev"}"#).unwrap();
+        assert_eq!(absent.preferred_port, None, "absent means leave it alone");
+
+        let cleared: ServicePatch = serde_json::from_str(r#"{"preferred_port":null}"#).unwrap();
+        assert_eq!(cleared.preferred_port, Some(None), "null means clear it");
+
+        let set: ServicePatch = serde_json::from_str(r#"{"preferred_port":3007}"#).unwrap();
+        assert_eq!(set.preferred_port, Some(Some(3007)));
+    }
+
+    #[test]
+    fn applying_a_patch_leaves_untouched_fields_alone() {
+        let mut service = Service {
+            id: ServiceId::from("svc"),
+            workspace_id: WorkspaceId::from("ws"),
+            name: "web".to_string(),
+            service_type: ServiceType::Web,
+            command: "pnpm dev".to_string(),
+            cwd: PathBuf::from("/repo"),
+            env: BTreeMap::from([("A".to_string(), "1".to_string())]),
+            preferred_port: Some(3000),
+            health_check: None,
+            auto_start: false,
+            conflict_policy: ConflictPolicy::AllocateNext,
+        };
+
+        ServicePatch {
+            preferred_port: Some(Some(3007)),
+            env: BTreeMap::from([("B".to_string(), "2".to_string())]),
+            ..Default::default()
+        }
+        .apply(&mut service);
+
+        assert_eq!(service.preferred_port, Some(3007));
+        assert_eq!(service.command, "pnpm dev");
+        // Environment is merged: setting one variable must not drop the others.
+        assert_eq!(service.env.get("A").map(String::as_str), Some("1"));
+        assert_eq!(service.env.get("B").map(String::as_str), Some("2"));
+    }
 }

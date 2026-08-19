@@ -14,7 +14,8 @@ pub use error::{Result, RuntimeError};
 pub use id::{InstanceId, ProjectId, ServiceId, SessionId, WorkspaceId};
 pub use model::{
     AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus,
-    Project, RuntimeInstance, Service, ServiceStatus, ServiceType, StartedBy, Workspace,
+    Project, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy,
+    Workspace,
 };
 pub use view::{
     DaemonInfo, ExternalService, HealthReport, PortOwner, PortReservation, PortStatus, ProjectView,

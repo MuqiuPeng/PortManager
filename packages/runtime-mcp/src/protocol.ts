@@ -88,6 +88,11 @@ export interface Discovery {
   registered: boolean;
 }
 
+export interface ProjectConfig {
+  name?: string;
+  services: Record<string, unknown>;
+}
+
 export interface PortOwner {
   port: number;
   pid: number;
@@ -170,6 +175,7 @@ export type ResponseBody =
   | { type: "workspaces"; items: Workspace[] }
   | ({ type: "workspace" } & Workspace)
   | { type: "services"; items: ServiceView[] }
+  | ({ type: "config" } & ProjectConfig)
   | ({ type: "service" } & ServiceView)
   | ({ type: "started" } & StartOutcome)
   | ({ type: "health" } & HealthReport)

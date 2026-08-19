@@ -50,6 +50,8 @@ if the attribution matters to you.
 | `get_project_runtime` | One project's workspaces, services, ports and owners |
 | `list_services` | Services with live status, optionally scoped to a project |
 | `get_service` | One service's command, cwd, status, port and URL |
+| `update_service` | Correct an inferred port, command, cwd or type |
+| `export_config` | The project's services as a committable `.runtime.json` |
 
 ### Lifecycle
 
