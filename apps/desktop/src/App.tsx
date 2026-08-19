@@ -278,7 +278,9 @@ export default function App() {
                             onStart={() => act(() => api.startService(service.id))}
                             onStop={() => act(() => api.stopService(service.id))}
                             onRestart={() => act(() => api.restartService(service.id))}
-                            onOpen={() => service.url && openExternal(service.url)}
+                            onOpen={() =>
+                              act(() => openExternal(service.url as string))
+                            }
                           />
                         ))
                       )}

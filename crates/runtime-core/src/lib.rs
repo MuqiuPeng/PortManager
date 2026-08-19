@@ -508,11 +508,13 @@ impl Runtime {
             None
         };
 
+        // Anything with a port gets a URL except the two kinds where HTTP is
+        // certainly wrong. The service type is a *guess* made by inference, so
+        // gating a useful button on it means a misclassified dev server
+        // silently loses its "open" action.
         let url = actual_port.and_then(|port| match service.service_type {
-            runtime_types::ServiceType::Web | runtime_types::ServiceType::Api => {
-                Some(format!("http://localhost:{port}"))
-            }
-            _ => None,
+            runtime_types::ServiceType::Database | runtime_types::ServiceType::Cache => None,
+            _ => Some(format!("http://localhost:{port}")),
         });
 
         Ok(ServiceView {

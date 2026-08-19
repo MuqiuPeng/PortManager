@@ -144,7 +144,9 @@ export default function Panel() {
                     <button
                       className="icon-button"
                       title={`Open ${service.url}`}
-                      onClick={() => service.url && openExternal(service.url)}
+                      onClick={() =>
+                        act(id, () => openExternal(service.url as string))
+                      }
                     >
                       ↗
                     </button>

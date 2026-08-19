@@ -84,7 +84,12 @@ export function onPanelState(handler: (state: PanelState) => void) {
   return listen<PanelState>(PANEL_STATE_CHANNEL, (message) => handler(message.payload));
 }
 
-/** Open a service's URL in the user's browser, not in the app's webview. */
+/**
+ * Open a service's URL in the user's browser, not in the app's webview.
+ *
+ * Rejects when the URL falls outside the capability's scope, which callers must
+ * surface — a silently swallowed rejection here reads as a dead button.
+ */
 export function openExternal(url: string) {
   return openUrl(url);
 }
