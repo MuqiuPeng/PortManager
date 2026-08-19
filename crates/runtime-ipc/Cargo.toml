@@ -1,0 +1,15 @@
+[package]
+name = "runtime-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Local IPC protocol and transport for the runtime daemon."
+
+[dependencies]
+runtime-types = { workspace = true }
+runtime-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

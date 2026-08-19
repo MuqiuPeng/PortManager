@@ -1,0 +1,31 @@
+{
+  "name": "example",
+  "services": {
+    "web": {
+      "command": "pnpm dev",
+      "port": 3000,
+      "type": "web"
+    },
+    "api": {
+      "command": "uv run uvicorn app.main:app --reload",
+      "port": 8000,
+      "type": "api",
+      "cwd": "services/api",
+      "env": {
+        "DATABASE_URL": "postgres://localhost:5432/example"
+      },
+      "health": {
+        "kind": "http",
+        "path": "/health",
+        "expect_status": [200, 204]
+      },
+      "on_conflict": "allocate-next",
+      "auto_start": false
+    },
+    "worker": {
+      "command": "pnpm worker",
+      "type": "worker",
+      "health": { "kind": "process" }
+    }
+  }
+}

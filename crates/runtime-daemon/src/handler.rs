@@ -1,0 +1,286 @@
+//! Request dispatch.
+//!
+//! Every arm is a thin translation from the protocol to a `Runtime` call. Any
+//! logic that appears here rather than in the core would be logic the desktop
+//! app does not get, so there should never be much.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::Utc;
+use runtime_core::lifecycle::{StartOptions, GRACEFUL_TIMEOUT};
+use runtime_core::Runtime;
+use runtime_ipc::protocol::{Request, ResponseBody, PROTOCOL_VERSION};
+use runtime_types::{
+    AgentSession, ConflictPolicy, Project, Result, RuntimeError, Service, SessionId, StartedBy,
+};
+
+/// Default cap on log lines returned in one call, low enough that an agent can
+/// read the result without burning its context.
+const DEFAULT_LOG_LINES: usize = 100;
+
+const DEFAULT_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
+
+pub struct Dispatcher {
+    runtime: Arc<Runtime>,
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+impl Dispatcher {
+    pub fn new(runtime: Arc<Runtime>, shutdown: tokio::sync::watch::Sender<bool>) -> Self {
+        Self { runtime, shutdown }
+    }
+
+    pub fn runtime(&self) -> &Arc<Runtime> {
+        &self.runtime
+    }
+
+    pub async fn dispatch(&self, request: Request) -> Result<ResponseBody> {
+        let runtime = &self.runtime;
+        match request {
+            Request::Ping => Ok(ResponseBody::Pong {
+                protocol_version: PROTOCOL_VERSION,
+            }),
+
+            Request::DaemonInfo => Ok(ResponseBody::Info(runtime.info()?)),
+
+            Request::Shutdown => {
+                let _ = self.shutdown.send(true);
+                Ok(ResponseBody::Done { ok: true })
+            }
+
+            // ---- projects ----------------------------------------------
+
+            Request::ListProjects => Ok(ResponseBody::Projects { items: runtime.list_projects()? }),
+
+            Request::GetProject { selector } => {
+                let project = runtime.resolve_project(&selector)?;
+                Ok(ResponseBody::Project(runtime.project_view(&project)?))
+            }
+
+            Request::AddProject { path, name } => {
+                Ok(ResponseBody::Project(runtime.add_project(path, name)?))
+            }
+
+            Request::RemoveProject { selector } => {
+                let project = runtime.resolve_project(&selector)?;
+                Ok(ResponseBody::Done {
+                    ok: runtime.remove_project(&project.id)?,
+                })
+            }
+
+            Request::ListWorktrees { selector } => {
+                let project = runtime.resolve_project(&selector)?;
+                // Refresh first: a worktree created since the last call should
+                // appear without the user having to register it by hand.
+                runtime.sync_worktrees(&project.id)?;
+                Ok(ResponseBody::Workspaces {
+                    items: runtime.store().list_workspaces(&project.id)?,
+                })
+            }
+
+            Request::RegisterWorktree { selector, path } => {
+                let project = runtime.resolve_project(&selector)?;
+                Ok(ResponseBody::Workspace(
+                    runtime.register_workspace(&project.id, path)?,
+                ))
+            }
+
+            // ---- services ----------------------------------------------
+
+            Request::ListServices { project } => {
+                let views = match project {
+                    Some(selector) => {
+                        let project = runtime.resolve_project(&selector)?;
+                        runtime
+                            .project_view(&project)?
+                            .workspaces
+                            .into_iter()
+                            .flat_map(|workspace| workspace.services)
+                            .collect()
+                    }
+                    None => runtime.list_all_services()?,
+                };
+                Ok(ResponseBody::Services { items: views })
+            }
+
+            Request::GetService { project, service } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Service(runtime.service_view(&service)?))
+            }
+
+            Request::StartService {
+                project,
+                service,
+                port,
+                on_conflict,
+                started_by,
+                session,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let options = StartOptions {
+                    started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
+                    session: session.map(SessionId::from),
+                    port,
+                    conflict_policy: parse_policy(on_conflict.as_deref())?,
+                };
+                Ok(ResponseBody::Started(
+                    runtime.start_service(&service.id, options).await?,
+                ))
+            }
+
+            Request::StopService {
+                project,
+                service,
+                timeout_seconds,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let timeout = timeout_seconds
+                    .map(Duration::from_secs)
+                    .unwrap_or(GRACEFUL_TIMEOUT);
+                Ok(ResponseBody::Service(
+                    runtime.stop_service(&service.id, timeout).await?,
+                ))
+            }
+
+            Request::RestartService {
+                project,
+                service,
+                started_by,
+                session,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let options = StartOptions {
+                    started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
+                    session: session.map(SessionId::from),
+                    port: None,
+                    conflict_policy: None,
+                };
+                Ok(ResponseBody::Started(
+                    runtime.restart_service(&service.id, options).await?,
+                ))
+            }
+
+            // ---- health ------------------------------------------------
+
+            Request::GetHealth { project, service } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Health(runtime.health(&service.id).await?))
+            }
+
+            Request::WaitUntilHealthy {
+                project,
+                service,
+                timeout_seconds,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let timeout = timeout_seconds
+                    .map(Duration::from_secs)
+                    .unwrap_or(DEFAULT_HEALTH_TIMEOUT);
+                Ok(ResponseBody::Health(
+                    runtime.wait_until_healthy(&service.id, timeout).await?,
+                ))
+            }
+
+            // ---- ports -------------------------------------------------
+
+            Request::CheckPort { port } => Ok(ResponseBody::Port(runtime.check_port(port)?)),
+
+            Request::ListPorts => Ok(ResponseBody::Ports { items: runtime.list_ports()? }),
+
+            Request::ReservePort {
+                project,
+                service,
+                port,
+                on_conflict,
+                started_by,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let workspace = runtime.require_workspace(&service.workspace_id)?;
+                let project = runtime.require_project(&workspace.project_id)?;
+                let reservation = runtime.resolver().reserve(
+                    &project,
+                    &workspace,
+                    &service,
+                    port,
+                    parse_policy(on_conflict.as_deref())?,
+                    started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
+                )?;
+                Ok(ResponseBody::Reservation(reservation))
+            }
+
+            Request::ReleasePort { port } => Ok(ResponseBody::Done {
+                ok: runtime.release_port(port)?,
+            }),
+
+            // ---- logs --------------------------------------------------
+
+            Request::GetLogs {
+                project,
+                service,
+                max_lines,
+                since_seq,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Logs {
+                    items: runtime.read_logs(
+                        &service.id,
+                        max_lines.unwrap_or(DEFAULT_LOG_LINES),
+                        since_seq,
+                    )?,
+                })
+            }
+
+            // ---- sessions ----------------------------------------------
+
+            Request::ListSessions => Ok(ResponseBody::Sessions { items: runtime.store().list_sessions()? }),
+
+            Request::RegisterSession {
+                provider,
+                client,
+                cwd,
+            } => {
+                let now = Utc::now();
+                // Associating the session with a project up front is what lets
+                // the GUI later say "started by Claude Code" against a branch.
+                let project_id = cwd
+                    .as_ref()
+                    .and_then(|path| runtime.resolve_project(&path.to_string_lossy()).ok())
+                    .map(|project| project.id);
+
+                let session = AgentSession {
+                    id: SessionId::new(),
+                    provider,
+                    client,
+                    cwd,
+                    project_id,
+                    started_at: now,
+                    last_seen_at: now,
+                };
+                runtime.store().upsert_session(&session)?;
+                Ok(ResponseBody::Session(session))
+            }
+
+            // Handled by the connection loop, which needs the socket itself.
+            Request::Subscribe => Ok(ResponseBody::Done { ok: true }),
+        }
+    }
+
+    fn resolve_service(&self, project: Option<&str>, selector: &str) -> Result<Service> {
+        let project: Option<Project> = project
+            .map(|selector| self.runtime.resolve_project(selector))
+            .transpose()?;
+        self.runtime.resolve_service(project.as_ref(), selector)
+    }
+}
+
+fn parse_policy(raw: Option<&str>) -> Result<Option<ConflictPolicy>> {
+    match raw {
+        None => Ok(None),
+        Some(value) => ConflictPolicy::parse(value).map(Some).ok_or_else(|| {
+            RuntimeError::invalid(format!(
+                "unknown conflict policy '{value}'; expected reuse, allocate-next, fail, ask or kill-existing"
+            ))
+        }),
+    }
+}
