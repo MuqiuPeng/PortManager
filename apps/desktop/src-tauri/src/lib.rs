@@ -60,6 +60,16 @@ pub fn run() {
                 // A missing panel must not take the whole app down; the main
                 // window and the tray still work.
                 tracing::warn!(%err, "the edge panel is unavailable on this platform");
+                // The window is declared in tauri.conf.json, so it exists on
+                // every platform whether or not adoption works. Unadopted it
+                // never receives its geometry — it just sits wherever it opened
+                // as a blank always-on-top rectangle — so close it rather than
+                // leave that on screen.
+                if let Some(window) = handle.get_webview_window(panel::PANEL_LABEL) {
+                    if let Err(err) = window.close() {
+                        tracing::warn!(%err, "could not close the unadopted panel");
+                    }
+                }
             } else {
                 let controller = app.state::<Arc<PanelController>>().inner().clone();
                 // Rest as a tab straight away: the panel is meant to be visible
