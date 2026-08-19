@@ -103,8 +103,10 @@ underneath.
 | Menu bar icon | Same, on left click |
 | Pin | Keeps it expanded, no auto-collapse |
 
-The app runs as a menu-bar accessory: no Dock icon, no place in ⌘-Tab. Closing
-the main window leaves the panel and the tray, which is the resting state.
+The app is a menu-bar accessory while the main window is closed — no Dock icon,
+no place in ⌘-Tab — and a normal foreground app while it is open, because macOS
+withholds full-screen support from accessory apps. Closing the main window
+hides it and drops the Dock icon; the panel and the tray stay.
 
 Clicking the panel must never steal focus, which on macOS means a real
 `NSPanel` rather than the `NSWindow` Tauri creates — see

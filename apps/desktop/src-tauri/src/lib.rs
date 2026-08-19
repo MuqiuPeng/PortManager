@@ -29,16 +29,22 @@ const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Alt+L";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // A second launch — from the Dock while a copy is already running, say
+        // — would put a second panel on the same screen edge, a second tray
+        // icon, and fail to register the shortcut. Hand the request to the
+        // instance that is already up instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .manage(DaemonHandle::new())
         .manage(Arc::new(PanelController::new()))
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // No Dock icon: closing the main window leaves the tray and the
-            // panel, which is the intended resting state.
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            // The policy follows the main window rather than being fixed, so
+            // the window behaves the same however it was opened.
+            sync_activation_policy(&handle);
 
             build_tray(&handle)?;
             keep_main_window_alive(&handle);
@@ -158,6 +164,33 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Keep the activation policy in step with the main window.
+///
+/// macOS withholds full-screen support from accessory apps, so the green button
+/// only offers full screen while the app is `Regular`. Pinning the policy to
+/// `Accessory` therefore made the window launched at startup behave differently
+/// from the same window reopened from the tray, which switched to `Regular` on
+/// the way.
+///
+/// Tying it to whether the main window is on screen gives that window the same
+/// capabilities either way, and still leaves no Dock icon once it is closed.
+fn sync_activation_policy(app: &AppHandle) {
+    let _ = app;
+    #[cfg(target_os = "macos")]
+    {
+        let visible = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        let policy = if visible {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        let _ = app.set_activation_policy(policy);
+    }
+}
+
 /// Closing the main window hides it instead of destroying it.
 ///
 /// Without this the window is gone for good after the first close: Tauri
@@ -177,8 +210,7 @@ fn keep_main_window_alive(app: &AppHandle) {
             }
             // Back to a menu-bar app: the Dock icon should not outlive the
             // window that justified it.
-            #[cfg(target_os = "macos")]
-            let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            sync_activation_policy(&handle);
         }
     });
 }

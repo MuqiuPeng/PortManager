@@ -165,8 +165,15 @@ which uses the `since_seq` cursor so each tick transfers only new lines.
 
 ## Windows and activation
 
-The app runs as a macOS accessory: no Dock icon, no place in ⌘-Tab. Two
-consequences are easy to get wrong.
+The activation policy is not fixed: it follows the main window. `Regular` while
+the window is on screen, `Accessory` — no Dock icon, no ⌘-Tab entry — once it is
+closed.
+
+Pinning it to `Accessory` seems right for a menu-bar app but is wrong in a way
+that is hard to attribute: macOS withholds full-screen support from accessory
+apps, so the window launched at startup had no full-screen button while the
+same window reopened from the tray did, because reopening switched to `Regular`
+on the way. Two windows that were never actually two windows.
 
 Closing the main window **hides** it rather than destroying it. Tauri's default
 is to destroy, after which `get_webview_window("main")` returns `None` and the
