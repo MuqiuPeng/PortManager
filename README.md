@@ -66,6 +66,12 @@ pnpm install
 pnpm tauri dev          # or: pnpm tauri build
 ```
 
+`tauri build` bundles the daemon inside the `.app`, so the result is
+self-contained: an app launched from Finder inherits a minimal `PATH` and would
+otherwise have no way to find it. A plain `cargo build` does not need this — the
+daemon sits beside the executable in `target/` — but if you assemble a bundle by
+hand, stage the sidecar first with `pnpm --dir apps/desktop prepare-sidecar`.
+
 Always launch it through the Tauri CLI. `cargo build` produces a **dev** binary
 whatever the profile — `tauri-build` takes that from the CLI's environment, not
 from cargo — and a dev binary loads its frontend from the Vite server rather

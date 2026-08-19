@@ -127,24 +127,77 @@ pub fn spawn_daemon() -> Result<()> {
     Ok(())
 }
 
-/// Look for the daemon next to the calling binary first, so a checkout's
-/// `target/debug` build never picks up a different installed copy.
+/// Locate the daemon binary.
+///
+/// The order matters. Next to the calling binary comes first, so a checkout's
+/// `target/debug` build never picks up a different installed copy, and so the
+/// bundled sidecar inside a `.app` is found before anything else.
+///
+/// PATH is the *last* resort rather than the only one: an app launched from
+/// Finder inherits a minimal PATH that contains none of the places a developer
+/// installs things, which is exactly how this fails in the wild.
 pub fn daemon_binary() -> Result<PathBuf> {
     let name = if cfg!(windows) {
         "runtime-daemon.exe"
     } else {
         "runtime-daemon"
     };
+
+    let mut searched = Vec::new();
+    for directory in search_directories() {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        searched.push(candidate);
+    }
+
+    // Fall back to PATH resolution by the OS.
+    if which(name).is_some() {
+        return Ok(PathBuf::from(name));
+    }
+
+    Err(RuntimeError::not_found(
+        "runtime-daemon",
+        format!(
+            "looked in {} and on PATH",
+            searched
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ))
+}
+
+/// Directories to look in, most specific first.
+fn search_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
-            let candidate = dir.join(name);
-            if candidate.exists() {
-                return Ok(candidate);
-            }
+            directories.push(dir.to_path_buf());
+            // A macOS bundle may keep helpers beside the executable directory.
+            directories.push(dir.join("..").join("Resources"));
         }
     }
-    // Fall back to PATH.
-    Ok(PathBuf::from(name))
+
+    if let Some(home) = directories::BaseDirs::new() {
+        directories.push(home.home_dir().join(".cargo").join("bin"));
+        directories.push(home.home_dir().join(".local").join("bin"));
+    }
+
+    directories.push(PathBuf::from("/usr/local/bin"));
+    directories.push(PathBuf::from("/opt/homebrew/bin"));
+    directories
+}
+
+/// Minimal PATH lookup; `which` as a crate would be a dependency for six lines.
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 pub async fn wait_for_daemon(timeout: Duration) -> Result<Client> {

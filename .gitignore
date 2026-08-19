@@ -6,3 +6,4 @@ dist/
 *.log
 .runtime-local/
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/

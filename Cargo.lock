@@ -3401,6 +3401,7 @@ dependencies = [
 name = "runtime-ipc"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "runtime-core",
  "runtime-types",
  "serde",
