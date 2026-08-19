@@ -56,7 +56,11 @@ pub fn detect(root: &Path) -> Detection {
                 name = declared.trim().to_string();
             }
         }
-        detect_node(&pkg, &mut frameworks, &mut services);
+        // Workspace members first: they are the real runnable units, and a
+        // root script that merely forwards to one should not shadow it.
+        let (members, member_tokens) = detect_workspace_members(root, &pkg, &mut frameworks);
+        detect_node(&pkg, &mut frameworks, &mut services, &member_tokens);
+        services.extend(members);
     }
     detect_python(root, &mut frameworks, &mut services);
     detect_rust(root, &mut frameworks, &mut services);
@@ -119,38 +123,9 @@ fn detect_node(
     pkg: &serde_json::Value,
     frameworks: &mut Vec<String>,
     services: &mut Vec<DetectedService>,
+    member_tokens: &[String],
 ) {
-    let deps: BTreeMap<String, String> = ["dependencies", "devDependencies"]
-        .iter()
-        .filter_map(|key| pkg.get(*key).and_then(|v| v.as_object()))
-        .flat_map(|map| {
-            map.iter()
-                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-        })
-        .collect();
-
-    // Ordered most specific first: Next.js also depends on React.
-    let known: &[(&str, &str, u16)] = &[
-        ("next", "Next.js", 3000),
-        ("nuxt", "Nuxt", 3000),
-        ("@remix-run/dev", "Remix", 3000),
-        ("@sveltejs/kit", "SvelteKit", 5173),
-        ("astro", "Astro", 4321),
-        ("@angular/cli", "Angular", 4200),
-        ("react-scripts", "Create React App", 3000),
-        ("vite", "Vite", 5173),
-        ("@nestjs/core", "NestJS", 3000),
-        ("express", "Express", 3000),
-        ("fastify", "Fastify", 3000),
-    ];
-
-    let mut default_port = None;
-    for (dep, label, port) in known {
-        if deps.contains_key(*dep) {
-            frameworks.push((*label).to_string());
-            default_port.get_or_insert(*port);
-        }
-    }
+    let default_port = framework_port(pkg, frameworks);
 
     let manager = package_manager(pkg);
     let scripts = pkg.get("scripts").and_then(|v| v.as_object());
@@ -187,6 +162,17 @@ fn detect_node(
 
     for (script, service_name) in candidates {
         if services.iter().any(|s| s.name == service_name) {
+            continue;
+        }
+        // A root script that forwards to a workspace member starts the same
+        // thing the member does, under a different name and rooted at the
+        // repository rather than the package. Keeping both would double the
+        // service list and leave neither able to recognise the running process.
+        let body = scripts
+            .get(&script)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if forwards_to_member(body, member_tokens) {
             continue;
         }
         let command = format!("{manager} run {script}");
@@ -240,6 +226,256 @@ fn is_service_like(name: &str) -> bool {
     !NON_SERVICE_SCRIPTS
         .iter()
         .any(|action| name == *action || name.starts_with(&format!("{action}:")))
+}
+
+/// The framework a manifest declares, and the port it defaults to.
+///
+/// Ordered most specific first: Next.js also depends on React.
+fn framework_port(pkg: &serde_json::Value, frameworks: &mut Vec<String>) -> Option<u16> {
+    const KNOWN: &[(&str, &str, u16)] = &[
+        ("next", "Next.js", 3000),
+        ("nuxt", "Nuxt", 3000),
+        ("@remix-run/dev", "Remix", 3000),
+        ("@sveltejs/kit", "SvelteKit", 5173),
+        ("astro", "Astro", 4321),
+        ("@angular/cli", "Angular", 4200),
+        ("react-scripts", "Create React App", 3000),
+        ("vite", "Vite", 5173),
+        ("@nestjs/core", "NestJS", 3000),
+        ("express", "Express", 3000),
+        ("fastify", "Fastify", 3000),
+    ];
+
+    let deps: BTreeMap<String, String> = ["dependencies", "devDependencies"]
+        .iter()
+        .filter_map(|key| pkg.get(*key).and_then(|value| value.as_object()))
+        .flat_map(|map| {
+            map.iter()
+                .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_string()))
+        })
+        .collect();
+
+    let mut port = None;
+    for (dependency, label, default) in KNOWN {
+        if deps.contains_key(*dependency) {
+            let label = (*label).to_string();
+            if !frameworks.contains(&label) {
+                frameworks.push(label);
+            }
+            port.get_or_insert(*default);
+        }
+    }
+    port
+}
+
+/// Services from the packages of a monorepo.
+///
+/// Reading only the root manifest misses them entirely: a workspace root often
+/// has nothing but `build` and `lint`, and every dev server lives in
+/// `packages/*`. Even when the root does forward — `api:dev` running
+/// `pnpm --filter @acme/payments dev` — the service it produces is named after
+/// the script and rooted at the repository, so its working directory does not
+/// match the process that actually runs, and it can never be recognised as
+/// already running.
+fn detect_workspace_members(
+    root: &Path,
+    pkg: &serde_json::Value,
+    frameworks: &mut Vec<String>,
+) -> (Vec<DetectedService>, Vec<String>) {
+    let patterns = workspace_patterns(root, pkg);
+    if patterns.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut services = Vec::new();
+    // Both spellings a root script might use to name a member.
+    let mut tokens = Vec::new();
+    for directory in expand_patterns(root, &patterns) {
+        let Some(member) = read_json(&directory.join("package.json")) else {
+            continue;
+        };
+        if let Some(declared) = member.get("name").and_then(|value| value.as_str()) {
+            tokens.push(declared.to_string());
+        }
+        if let Some(directory_name) = directory.file_name() {
+            tokens.push(directory_name.to_string_lossy().to_string());
+        }
+        let Some(scripts) = member.get("scripts").and_then(|value| value.as_object()) else {
+            continue;
+        };
+        // `dev` is what a developer runs; `start` is the fallback.
+        let Some(script) = ["dev", "start"]
+            .into_iter()
+            .find(|candidate| scripts.contains_key(*candidate))
+        else {
+            continue;
+        };
+
+        let name = directory
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "app".to_string());
+        let manager = package_manager(pkg);
+        let command = format!("{manager} run {script}");
+
+        let mut member_frameworks = Vec::new();
+        let port = framework_port(&member, &mut member_frameworks);
+        for framework in member_frameworks {
+            if !frameworks.contains(&framework) {
+                frameworks.push(framework);
+            }
+        }
+
+        services.push(DetectedService {
+            service_type: guess_type(&name, &command),
+            name,
+            command,
+            port,
+            // The member's own directory, which is where its process runs — the
+            // difference between recognising it later and not.
+            cwd: Some(directory),
+            reason: "workspace member".to_string(),
+        });
+    }
+    (services, tokens)
+}
+
+/// Whether a root script just runs a workspace member.
+fn forwards_to_member(script_body: &str, member_tokens: &[String]) -> bool {
+    if member_tokens.is_empty() {
+        return false;
+    }
+    // Naming a member: `pnpm --filter @acme/payments dev`, `yarn workspace ...`.
+    if member_tokens
+        .iter()
+        .any(|token| script_body.contains(token.as_str()))
+    {
+        return true;
+    }
+    // Or running all of them at once, which the members already cover.
+    ["turbo", "nx ", "lerna", "pnpm -r ", "pnpm --recursive"]
+        .iter()
+        .any(|runner| script_body.contains(runner))
+}
+
+/// Workspace globs from `pnpm-workspace.yaml` or the `workspaces` field.
+fn workspace_patterns(root: &Path, pkg: &serde_json::Value) -> Vec<String> {
+    // pnpm keeps them in its own file.
+    if let Ok(raw) = std::fs::read_to_string(root.join("pnpm-workspace.yaml")) {
+        let patterns = parse_pnpm_workspace(&raw);
+        if !patterns.is_empty() {
+            return patterns;
+        }
+    }
+
+    // npm, yarn and bun use `workspaces`, as either a list or `{ packages }`.
+    let workspaces = pkg.get("workspaces");
+    let list = workspaces
+        .and_then(|value| value.as_array())
+        .or_else(|| workspaces?.get("packages")?.as_array());
+
+    list.map(|entries| {
+        entries
+            .iter()
+            .filter_map(|entry| entry.as_str().map(str::to_string))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The `packages:` list from `pnpm-workspace.yaml`.
+///
+/// Hand-parsed rather than pulling in a YAML crate: the shape is a fixed list
+/// of strings, and this is the only YAML the runtime ever reads.
+fn parse_pnpm_workspace(raw: &str) -> Vec<String> {
+    let mut patterns = Vec::new();
+    let mut in_packages = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("packages:") {
+            in_packages = true;
+            continue;
+        }
+        if !in_packages {
+            continue;
+        }
+        let Some(entry) = trimmed.strip_prefix("- ") else {
+            // Any other top-level key ends the list.
+            if !line.starts_with(' ') && !line.starts_with('-') {
+                in_packages = false;
+            }
+            continue;
+        };
+        patterns.push(entry.trim().trim_matches(['"', '\'']).to_string());
+    }
+    patterns
+}
+
+/// Directories matching workspace globs, supporting `*` and `**`.
+fn expand_patterns(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for pattern in patterns {
+        let segments: Vec<&str> = pattern
+            .split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+            .collect();
+        expand_segments(root, &segments, &mut out);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn expand_segments(directory: &Path, segments: &[&str], out: &mut Vec<PathBuf>) {
+    let Some((head, rest)) = segments.split_first() else {
+        out.push(directory.to_path_buf());
+        return;
+    };
+
+    match *head {
+        // Bounded: a workspace glob is not an invitation to walk a home
+        // directory, and `**` in practice means "a level or two".
+        "**" => {
+            expand_segments(directory, rest, out);
+            for child in child_directories(directory) {
+                expand_segments(&child, segments, out);
+            }
+        }
+        "*" => {
+            for child in child_directories(directory) {
+                expand_segments(&child, rest, out);
+            }
+        }
+        literal => {
+            let child = directory.join(literal);
+            if child.is_dir() {
+                expand_segments(&child, rest, out);
+            }
+        }
+    }
+}
+
+fn child_directories(directory: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .map(|name| {
+                    let name = name.to_string_lossy();
+                    !name.starts_with('.') && name != "node_modules"
+                })
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 fn package_manager(pkg: &serde_json::Value) -> &'static str {

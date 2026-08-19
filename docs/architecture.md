@@ -156,6 +156,16 @@ is demonstrably running something. A directory walk (bounded to three levels,
 skipping `node_modules`, `target`, `.venv` and friends) covers projects that are
 stopped, and is opt-in because it touches directories the user did not name.
 
+In a monorepo the packages are the runnable units, and the root manifest is not
+enough. Often it holds nothing but `build` and `lint` while every dev server
+lives in `packages/*`. Even when the root does forward — `api:dev` running
+`pnpm --filter @acme/payments dev` — the service that produces is named after
+the script and rooted at the repository, so its working directory never matches
+the process that actually runs and it can never be recognised as already
+running. Workspace globs are read from `pnpm-workspace.yaml` or the `workspaces`
+field, and a root script whose body names a member (or runs them all through
+turbo, nx or lerna) is dropped in favour of the member itself.
+
 Two filters do the real work. System prefixes (`/System`, `/Library`,
 `/usr`, `%ProgramFiles%`) and sandbox fragments (`/Library/Containers/`) are
 never projects — without them a chat app's container directory looks exactly

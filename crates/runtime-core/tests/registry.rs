@@ -485,3 +485,95 @@ fn exporting_produces_a_config_that_reproduces_the_registry() {
     let decoded: runtime_types::ProjectConfig = serde_json::from_str(&encoded).unwrap();
     assert_eq!(decoded.services.get("web").map(|s| s.port), Some(Some(3007)));
 }
+
+/// A pnpm monorepo whose root only forwards to its packages.
+fn monorepo() -> TempDir {
+    let dir = repo(&[
+        (
+            "package.json",
+            r#"{
+              "name": "shop",
+              "packageManager": "pnpm@9.0.0",
+              "scripts": {
+                "api:dev": "pnpm --filter @shop/payments dev",
+                "scheduler:dev": "pnpm --filter @shop/billing dev",
+                "build": "turbo run build"
+              }
+            }"#,
+        ),
+        ("pnpm-workspace.yaml", "packages:\n  - \"packages/*\"\n"),
+    ]);
+
+    for (name, package, extra) in [
+        ("payments", "@shop/payments", r#""fastify": "4""#),
+        ("billing", "@shop/billing", r#""zod": "3""#),
+    ] {
+        let member = dir.path().join("packages").join(name);
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            member.join("package.json"),
+            format!(
+                r#"{{ "name": "{package}", "scripts": {{ "dev": "tsx watch server.ts" }},
+                     "dependencies": {{ {extra} }} }}"#
+            ),
+        )
+        .unwrap();
+    }
+    dir
+}
+
+#[test]
+fn workspace_members_become_services_rooted_in_their_own_package() {
+    let dir = monorepo();
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+
+    let services = &view.workspaces[0].services;
+    let mut names: Vec<&str> = services.iter().map(|s| s.service.name.as_str()).collect();
+    names.sort();
+
+    // The packages, not the root scripts that forward to them: a service rooted
+    // at the repository can never match the process that runs in the package.
+    assert_eq!(names, vec!["billing", "payments"]);
+
+    let payments = services
+        .iter()
+        .find(|s| s.service.name == "payments")
+        .unwrap();
+    // Canonicalised, because macOS resolves /var to /private/var.
+    assert_eq!(
+        payments.service.cwd,
+        dir.path()
+            .join("packages")
+            .join("payments")
+            .canonicalize()
+            .unwrap()
+    );
+    // Ports come from the member's own dependencies.
+    assert_eq!(payments.service.preferred_port, Some(3000));
+}
+
+#[test]
+fn a_root_script_that_forwards_to_a_member_is_not_duplicated() {
+    let dir = monorepo();
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+
+    let services = &view.workspaces[0].services;
+    // `api:dev` runs `pnpm --filter @shop/payments dev`. Keeping both it and
+    // the member would start the same thing twice under two names.
+    assert!(!services.iter().any(|s| s.service.name == "api"));
+    assert!(!services.iter().any(|s| s.service.name == "scheduler"));
+    assert_eq!(services.len(), 2);
+}
+
+#[test]
+fn a_root_without_workspaces_is_unaffected() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+
+    let services = &view.workspaces[0].services;
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].service.name, "web");
+}
