@@ -86,12 +86,16 @@ daemon's event stream.
 An edge-docked panel gives the common case — glance at what is running, start or
 stop one thing — without switching windows. Four ways in, one state machine:
 
+At rest it is a slim tab against the screen edge showing one dot per running
+service. It is click-through, so it never swallows a click meant for the window
+underneath.
+
 | | |
 |---|---|
-| `⌘⌥L` | Summons it **focused**, so the keyboard works |
+| Pointer reaches the tab | Expands **without taking focus** from your editor |
+| `⌘⌥L` | Expands it **focused**, so the keyboard works |
 | Menu bar icon | Same, on left click |
-| Screen edge | Hovering reveals it **without taking focus** from your editor |
-| Pin | Keeps it docked, no auto-hide |
+| Pin | Keeps it expanded, no auto-collapse |
 
 The app runs as a menu-bar accessory: no Dock icon, no place in ⌘-Tab. Closing
 the main window leaves the panel and the tray, which is the resting state.

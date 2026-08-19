@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
-import { isLive, type ProjectView, type ServiceView } from "./types";
+import { api, errorMessage, onPanelState, onRuntimeEvent, openExternal } from "./api";
+import { isLive, type PanelState, type ProjectView, type ServiceView } from "./types";
 
 /**
- * The compact panel.
+ * The edge panel, in both of its sizes.
  *
- * Everything here is one glance and one click: what is running, on which port,
- * and start / stop / open. Logs, ports and project management stay in the main
- * window — a panel that grew a second screen would just be a small main window.
+ * At rest it is a tab: a few status dots, readable in the corner of your eye.
+ * Expanded it is one glance and one click — what is running, on which port, and
+ * start / stop / open. Logs, ports and project management stay in the main
+ * window; a panel that grew a second screen would just be a small main window.
  */
 export default function Panel() {
+  const [state, setState] = useState<PanelState>("island");
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pinned, setPinned] = useState(false);
+  const [edge, setEdge] = useState<"left" | "right">("right");
 
   const refresh = useCallback(async () => {
     try {
@@ -27,17 +30,23 @@ export default function Panel() {
 
   useEffect(() => {
     void refresh();
-    void api.getPanelConfig().then((config) => setPinned(config.pinned));
+    void api.getPanelConfig().then((config) => {
+      setPinned(config.pinned);
+      setEdge(config.edge);
+    });
   }, [refresh]);
 
   useEffect(() => {
     const unlisten = onRuntimeEvent(() => void refresh());
-    return () => {
-      void unlisten.then((stop) => stop());
-    };
+    return () => void unlisten.then((stop) => stop());
   }, [refresh]);
 
-  // Escape dismisses the panel, the same as clicking away from it.
+  useEffect(() => {
+    const unlisten = onPanelState(setState);
+    return () => void unlisten.then((stop) => stop());
+  }, []);
+
+  // Escape collapses the panel, the same as moving the pointer away.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") void api.hidePanel();
@@ -52,11 +61,7 @@ export default function Panel() {
     for (const project of projects) {
       for (const workspace of project.workspaces) {
         for (const service of workspace.services) {
-          out.push({
-            project,
-            branch: workspace.git_branch ?? "",
-            service,
-          });
+          out.push({ project, branch: workspace.git_branch ?? "", service });
         }
       }
     }
@@ -64,10 +69,11 @@ export default function Panel() {
     // to bring something up.
     return out.sort((a, b) => {
       const live = Number(isLive(b.service.status)) - Number(isLive(a.service.status));
-      if (live !== 0) return live;
-      return a.project.name.localeCompare(b.project.name);
+      return live !== 0 ? live : a.project.name.localeCompare(b.project.name);
     });
   }, [projects]);
+
+  const running = rows.filter((row) => isLive(row.service.status));
 
   async function act(id: string, action: () => Promise<unknown>) {
     setBusy(id);
@@ -89,13 +95,15 @@ export default function Panel() {
     await api.setPanelConfig({ ...config, pinned: next });
   }
 
-  const runningCount = rows.filter((row) => isLive(row.service.status)).length;
+  if (state === "island") {
+    return <Island running={running.length} total={rows.length} edge={edge} />;
+  }
 
   return (
-    <div className="panel">
+    <div className="panel expanded">
       <header className="panel-head">
         <span className="panel-title">Local Runtime</span>
-        <span className="panel-count">{runningCount} running</span>
+        <span className="panel-count">{running.length} running</span>
         <button
           className={pinned ? "icon-button active" : "icon-button"}
           onClick={() => void togglePinned()}
@@ -163,6 +171,46 @@ export default function Panel() {
           Open main window
         </button>
       </footer>
+    </div>
+  );
+}
+
+/**
+ * The resting tab.
+ *
+ * Only as much as reads at a glance from the corner of a screen: one dot per
+ * running service, up to a handful, then a count.
+ */
+function Island({
+  running,
+  total,
+  edge,
+}: {
+  running: number;
+  total: number;
+  edge: "left" | "right";
+}) {
+  const DOTS = 4;
+  const shown = Math.min(running, DOTS);
+
+  // The tab is rounded on the inward side only, which depends on which edge it
+  // is docked to.
+  const className = ["island", `edge-${edge}`, running > 0 ? "active" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={className} title={`${running}/${total} running`}>
+      {running === 0 ? (
+        <span className="island-dot idle" />
+      ) : (
+        <>
+          {Array.from({ length: shown }, (_, index) => (
+            <span className="island-dot" key={index} />
+          ))}
+          {running > DOTS && <span className="island-more">+{running - DOTS}</span>}
+        </>
+      )}
     </div>
   );
 }

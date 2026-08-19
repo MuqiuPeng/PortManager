@@ -17,14 +17,20 @@ pub enum ScreenEdge {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PanelConfig {
     pub edge: ScreenEdge,
+    /// Width when expanded.
     pub width: u32,
-    /// Fraction of the screen height the panel occupies, 0.0–1.0.
+    /// Fraction of the screen height the expanded panel occupies, 0.0–1.0.
     pub height_ratio: f64,
-    /// Stay docked and visible instead of hiding when the pointer leaves.
+    /// Width of the resting tab.
+    pub island_width: u32,
+    /// Height of the resting tab.
+    pub island_height: u32,
+    /// How far past the tab the pointer may be and still expand it.
+    pub hover_margin: u32,
+    /// Duration of the expand and collapse animation, in milliseconds.
+    pub animation_ms: u32,
+    /// Stay expanded instead of collapsing when the pointer leaves.
     pub pinned: bool,
-    /// Width of the invisible strip that reveals the panel on hover.
-    /// Zero disables edge triggering.
-    pub hover_strip_width: u32,
 }
 
 impl Default for PanelConfig {
@@ -33,10 +39,28 @@ impl Default for PanelConfig {
             edge: ScreenEdge::Right,
             width: 300,
             height_ratio: 0.9,
+            // Narrow enough to live at the screen edge without covering a
+            // scrollbar, tall enough to be an obvious target.
+            island_width: 10,
+            island_height: 96,
+            hover_margin: 6,
+            animation_ms: 170,
             pinned: false,
-            hover_strip_width: 2,
         }
     }
+}
+
+/// The two sizes the panel lives at.
+///
+/// Not "hidden" and "shown": the resting state is a visible tab, so the panel
+/// is discoverable and the expansion is a resize rather than an appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelState {
+    /// A slim tab at the screen edge.
+    Island,
+    /// The full panel.
+    Expanded,
 }
 
 /// How the panel was asked to appear.
@@ -81,23 +105,29 @@ pub trait WindowProvider: Send + Sync {
     /// by the caller and alive for the duration of the call.
     unsafe fn adopt_panel(&self, handle: RawWindow) -> Result<()>;
 
-    /// Position the panel against a screen edge and show it.
+    /// Move the panel to the geometry for `state`, animating the change.
+    ///
+    /// Collapsing also makes the tab click-through, so a permanently visible
+    /// strip at the screen edge does not swallow clicks meant for the window
+    /// underneath.
     ///
     /// # Safety
     ///
     /// See [`WindowProvider::adopt_panel`].
-    unsafe fn show_panel(
+    unsafe fn apply_state(
         &self,
         handle: RawWindow,
         config: &PanelConfig,
         screen: Option<&str>,
+        state: PanelState,
         activation: PanelActivation,
     ) -> Result<()>;
 
-    /// # Safety
+    /// Where the resting tab is, in screen coordinates, so the caller can tell
+    /// whether the pointer is near it.
     ///
-    /// See [`WindowProvider::adopt_panel`].
-    unsafe fn hide_panel(&self, handle: RawWindow) -> Result<()>;
+    /// Returns `(x, y, width, height)`.
+    fn island_rect(&self, config: &PanelConfig, screen: Option<&str>) -> Result<(f64, f64, f64, f64)>;
 
     /// Screens the panel can dock to, for the settings UI and for choosing
     /// the one under the pointer.

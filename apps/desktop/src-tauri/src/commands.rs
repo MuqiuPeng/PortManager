@@ -243,10 +243,10 @@ pub fn set_panel_config(
         .map_err(|err| err.to_string())
 }
 
-/// Dismiss the panel from inside it — Escape, or after an action completes.
+/// Collapse the panel from inside it — Escape, or after an action completes.
 #[tauri::command]
 pub fn hide_panel(app: AppHandle, controller: State<'_, Arc<PanelController>>) -> CmdResult<()> {
-    controller.hide(&app).map_err(|err| err.to_string())
+    controller.collapse(&app).map_err(|err| err.to_string())
 }
 
 /// Jump from the panel to the full window, for logs and anything else the

@@ -1,51 +1,56 @@
 //! The edge-docked panel.
 //!
-//! Four ways in — a global shortcut, the menu bar item, hovering the screen
-//! edge, and pinning it open — but one state machine, because they are all the
-//! same question asked differently: should the panel be on screen right now?
+//! The panel is never absent: at rest it is a slim tab against the screen edge,
+//! and expanding is a resize rather than an appearance. That makes it
+//! discoverable — an invisible hover strip is something you have to be told
+//! about — and it makes the expansion animatable, because there is already a
+//! window on screen to animate.
 //!
 //! ```text
-//! hidden ──hover──▶ shown (passive: keeps the editor's focus)
-//!    ▲                 │
-//!    └──pointer left───┘
-//! hidden ──shortcut / menu bar──▶ shown (focused: keyboard works)
-//! pinned ─────────────────────────▶ always shown, never auto-hides
+//! island ──pointer reaches the tab──▶ expanded (passive: keeps the editor's focus)
+//!   ▲                                    │
+//!   └────pointer leaves the panel────────┘
+//! island ──shortcut / menu bar──▶ expanded (focused: keyboard works)
+//! pinned ────────────────────────▶ expanded always
 //! ```
 //!
-//! Platform specifics live behind `WindowProvider`; this module only decides
-//! *when*.
+//! The tab is click-through while resting, so a permanent strip at the screen
+//! edge never swallows a click meant for the window underneath. Proximity is
+//! found by polling the pointer, which works regardless of who receives events.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use runtime_adapter::{PanelActivation, PanelConfig, RawWindow, ScreenEdge, WindowProvider};
+use runtime_adapter::{PanelActivation, PanelConfig, PanelState, RawWindow, WindowProvider};
 use runtime_types::{Result, RuntimeError};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 /// The window label the panel is created with.
 pub const PANEL_LABEL: &str = "panel";
 
-/// How often the pointer is checked against the trigger strip.
-///
-/// Cheap enough to be unnoticeable and fast enough to feel immediate; the
-/// alternative, a global event tap, would demand Accessibility permission for
-/// something this small.
-const HOVER_POLL: Duration = Duration::from_millis(90);
+/// The frontend listens on this to switch between tab and full content.
+pub const STATE_CHANNEL: &str = "panel://state";
 
-/// How far past the panel the pointer may stray before it hides.
+/// How often the pointer is checked against the tab.
 ///
-/// Without slack the panel flickers shut when the pointer crosses a one-pixel
-/// gap on its way to a button.
-const HIDE_MARGIN: f64 = 24.0;
+/// Cheap enough to be unnoticeable and fast enough to feel immediate; a global
+/// event tap would demand Accessibility permission for something this small.
+const HOVER_POLL: Duration = Duration::from_millis(80);
+
+/// How far past the expanded panel the pointer may stray before it collapses.
+///
+/// Without slack the panel snaps shut when the pointer crosses a one-pixel gap
+/// on its way to a button.
+const COLLAPSE_MARGIN: f64 = 32.0;
 
 pub struct PanelController {
     config: Mutex<PanelConfig>,
     /// Screen id to dock to; `None` follows the pointer.
     screen: Mutex<Option<String>>,
-    visible: AtomicBool,
-    /// True while the panel is showing because the pointer is at the edge, as
-    /// opposed to having been summoned deliberately.
+    expanded: AtomicBool,
+    /// True while expanded because the pointer is near the tab, as opposed to
+    /// having been summoned deliberately.
     from_hover: AtomicBool,
 }
 
@@ -54,7 +59,7 @@ impl Default for PanelController {
         Self {
             config: Mutex::new(PanelConfig::default()),
             screen: Mutex::new(None),
-            visible: AtomicBool::new(false),
+            expanded: AtomicBool::new(false),
             from_hover: AtomicBool::new(false),
         }
     }
@@ -77,64 +82,71 @@ impl PanelController {
                 .map_err(|_| RuntimeError::internal("panel config lock poisoned"))?;
             *guard = config.clone();
         }
-        // Pinning is a show; unpinning leaves it where it is until the pointer
-        // moves away, which is less jarring than snapping shut.
-        if config.pinned {
-            self.show(app, PanelActivation::Passive)?;
-        }
-        Ok(())
+        // Pinning expands; unpinning leaves the panel out until the pointer
+        // moves away, which is less jarring than snapping shut under the cursor.
+        let state = if config.pinned || self.is_expanded() {
+            PanelState::Expanded
+        } else {
+            PanelState::Island
+        };
+        self.apply(app, state, PanelActivation::Passive)
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.visible.load(Ordering::Relaxed)
+    pub fn is_expanded(&self) -> bool {
+        self.expanded.load(Ordering::Relaxed)
     }
 
-    pub fn show(&self, app: &AppHandle, activation: PanelActivation) -> Result<()> {
-        let config = self.config();
-        let screen = self
-            .screen
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or(None);
+    /// Put the panel at rest as a tab. Called once at startup.
+    pub fn rest(&self, app: &AppHandle) -> Result<()> {
+        self.apply(app, PanelState::Island, PanelActivation::Passive)
+    }
 
-        with_panel(app, move |provider, handle| {
-            // SAFETY: `handle` comes from the live panel window, and Tauri runs
-            // this closure on the main thread.
-            unsafe { provider.show_panel(handle, &config, screen.as_deref(), activation) }
-        })?;
-
-        self.visible.store(true, Ordering::Relaxed);
+    pub fn expand(&self, app: &AppHandle, activation: PanelActivation) -> Result<()> {
+        self.apply(app, PanelState::Expanded, activation)?;
         self.from_hover
             .store(activation == PanelActivation::Passive, Ordering::Relaxed);
         Ok(())
     }
 
-    pub fn hide(&self, app: &AppHandle) -> Result<()> {
+    pub fn collapse(&self, app: &AppHandle) -> Result<()> {
         if self.config().pinned {
             return Ok(());
         }
-        with_panel(app, |provider, handle| {
-            // SAFETY: see `show`.
-            unsafe { provider.hide_panel(handle) }
-        })?;
-        self.visible.store(false, Ordering::Relaxed);
+        self.apply(app, PanelState::Island, PanelActivation::Passive)?;
         self.from_hover.store(false, Ordering::Relaxed);
         Ok(())
     }
 
     /// The shortcut and the menu bar item both land here.
     pub fn toggle(&self, app: &AppHandle) -> Result<()> {
-        // A panel revealed by hovering is not "already open" as far as a
-        // deliberate keystroke is concerned — that should focus it, not dismiss
-        // it, or the shortcut appears to do nothing.
-        if self.is_visible() && !self.from_hover.load(Ordering::Relaxed) {
-            self.hide(app)
+        // A panel that opened because the pointer drifted to the edge is not
+        // "already open" as far as a deliberate keystroke is concerned — that
+        // should focus it, not dismiss it, or the shortcut appears to do nothing.
+        if self.is_expanded() && !self.from_hover.load(Ordering::Relaxed) {
+            self.collapse(app)
         } else {
-            self.show(app, PanelActivation::Focused)
+            self.expand(app, PanelActivation::Focused)
         }
     }
 
-    /// Watch the pointer and reveal the panel when it reaches the edge.
+    fn apply(&self, app: &AppHandle, state: PanelState, activation: PanelActivation) -> Result<()> {
+        let config = self.config();
+        let screen = self.screen.lock().map(|s| s.clone()).unwrap_or(None);
+
+        with_panel(app, move |provider, handle| {
+            // SAFETY: `handle` comes from the live panel window, and Tauri runs
+            // commands and main-thread closures on the main thread.
+            unsafe { provider.apply_state(handle, &config, screen.as_deref(), state, activation) }
+        })?;
+
+        self.expanded
+            .store(state == PanelState::Expanded, Ordering::Relaxed);
+        // Told, not polled: the webview swaps between tab and full content.
+        let _ = app.emit(STATE_CHANNEL, state);
+        Ok(())
+    }
+
+    /// Watch the pointer and expand the tab when it arrives.
     ///
     /// Pointer and screen queries are AppKit calls, so the check itself is
     /// hopped onto the main thread; the timer is not.
@@ -147,12 +159,14 @@ impl PanelController {
 
             let controller = Arc::clone(&controller);
             let handle = app.clone();
-            let posted = app.run_on_main_thread(move || {
-                if let Err(err) = controller.check_pointer(&handle) {
-                    tracing::debug!(%err, "edge watch failed");
-                }
-            });
-            if posted.is_err() {
+            if app
+                .run_on_main_thread(move || {
+                    if let Err(err) = controller.check_pointer(&handle) {
+                        tracing::debug!(%err, "edge watch failed");
+                    }
+                })
+                .is_err()
+            {
                 return; // the app is shutting down
             }
         });
@@ -160,45 +174,47 @@ impl PanelController {
 
     fn check_pointer(&self, app: &AppHandle) -> Result<()> {
         let config = self.config();
-        if config.pinned || config.hover_strip_width == 0 {
+        if config.pinned {
             return Ok(());
         }
-
         let Some(provider) = window_provider() else {
             return Ok(());
         };
-        let Some(screen) = provider.screen_at_pointer()? else {
-            return Ok(());
-        };
-        let Some(pointer) = pointer_location() else {
+        let Some((px, py)) = pointer_location() else {
             return Ok(());
         };
 
-        let strip = config.hover_strip_width as f64;
-        let at_edge = match config.edge {
-            ScreenEdge::Right => pointer.0 >= screen.x + screen.width - strip,
-            ScreenEdge::Left => pointer.0 <= screen.x + strip,
-        };
+        let screen = self.screen.lock().map(|s| s.clone()).unwrap_or(None);
+        let (x, y, width, height) = provider.island_rect(&config, screen.as_deref())?;
+        let margin = config.hover_margin as f64;
 
-        if at_edge && !self.is_visible() {
-            self.show(app, PanelActivation::Passive)?;
+        if !self.is_expanded() {
+            // Both axes: drifting along the far edge of the screen well above
+            // or below the tab should not open the panel.
+            let near = px >= x - margin
+                && px <= x + width + margin
+                && py >= y - margin
+                && py <= y + height + margin;
+            if near {
+                self.expand(app, PanelActivation::Passive)?;
+            }
             return Ok(());
         }
 
-        // Only a hover-revealed panel closes itself: one the user summoned
+        // Only a hover-opened panel closes itself: one the user summoned
         // deliberately stays until they dismiss it.
-        if self.is_visible() && self.from_hover.load(Ordering::Relaxed) {
-            let panel_edge = match config.edge {
-                ScreenEdge::Right => screen.x + screen.width - config.width as f64,
-                ScreenEdge::Left => screen.x + config.width as f64,
-            };
-            let strayed = match config.edge {
-                ScreenEdge::Right => pointer.0 < panel_edge - HIDE_MARGIN,
-                ScreenEdge::Left => pointer.0 > panel_edge + HIDE_MARGIN,
-            };
-            if strayed {
-                self.hide(app)?;
-            }
+        if !self.from_hover.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let expanded_left = match config.edge {
+            runtime_adapter::ScreenEdge::Right => x + width - config.width as f64,
+            runtime_adapter::ScreenEdge::Left => x,
+        };
+        let expanded_right = expanded_left + config.width as f64;
+        let strayed = px < expanded_left - COLLAPSE_MARGIN || px > expanded_right + COLLAPSE_MARGIN;
+        if strayed {
+            self.collapse(app)?;
         }
         Ok(())
     }

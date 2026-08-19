@@ -10,7 +10,9 @@ pub mod port;
 pub mod process;
 pub mod spawn;
 
-pub use desktop::{PanelActivation, PanelConfig, RawWindow, ScreenEdge, ScreenInfo, WindowProvider};
+pub use desktop::{
+    PanelActivation, PanelConfig, PanelState, RawWindow, ScreenEdge, ScreenInfo, WindowProvider,
+};
 pub use port::{PortBinding, PortProvider, Protocol};
 pub use process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
 pub use spawn::SpawnProvider;

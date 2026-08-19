@@ -6,6 +6,7 @@ import type {
   DaemonInfo,
   Discovery,
   PanelConfig,
+  PanelState,
   LogLine,
   PortOwner,
   ProjectView,
@@ -16,6 +17,9 @@ import type {
 
 /** The channel `lib.rs` re-emits daemon events on. */
 const EVENT_CHANNEL = "runtime://event";
+
+/** The channel the panel controller announces its size on. */
+const PANEL_STATE_CHANNEL = "panel://state";
 
 export const api = {
   listProjects: () => invoke<ProjectView[]>("list_projects"),
@@ -68,6 +72,16 @@ export const api = {
  */
 export function onRuntimeEvent(handler: (event: RuntimeEvent) => void) {
   return listen<RuntimeEvent>(EVENT_CHANNEL, (message) => handler(message.payload));
+}
+
+/**
+ * Follow the panel between its tab and expanded sizes.
+ *
+ * Pushed rather than polled: the native window is resizing either way, and the
+ * content has to change in the same frame to avoid a flash of the wrong layout.
+ */
+export function onPanelState(handler: (state: PanelState) => void) {
+  return listen<PanelState>(PANEL_STATE_CHANNEL, (message) => handler(message.payload));
 }
 
 /** Open a service's URL in the user's browser, not in the app's webview. */

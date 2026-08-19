@@ -175,15 +175,29 @@ panel that steals focus on every click.
 It also joins all Spaces and sits at `NSStatusWindowLevel`, so it does not
 vanish when the user switches Space or opens a full-screen app.
 
-Four entry points, one state machine:
+The panel is never absent. At rest it is a slim tab against the screen edge, so
+expanding is a *resize* rather than an appearance — which makes it discoverable
+(an invisible hover strip is something you have to be told about) and gives the
+expansion something to animate, since there is already a window on screen.
 
 ```
-hidden ──hover──▶ shown (passive: keeps the editor's focus)
-   ▲                 │
-   └──pointer left───┘
-hidden ──shortcut / menu bar──▶ shown (focused: keyboard works)
-pinned ─────────────────────────▶ always shown, never auto-hides
+island ──pointer reaches the tab──▶ expanded (passive: keeps the editor's focus)
+  ▲                                    │
+  └────pointer leaves the panel────────┘
+island ──shortcut / menu bar──▶ expanded (focused: keyboard works)
+pinned ────────────────────────▶ expanded always
 ```
+
+The tab is click-through while resting (`setIgnoresMouseEvents`), so a permanent
+strip at the screen edge never swallows a click meant for the window underneath.
+That costs nothing, because proximity is found by polling the pointer rather
+than by receiving events.
+
+The window itself is transparent and the panel draws its own rounded background;
+without that the window paints an opaque rectangle and the rounded corners show
+as white squares. On macOS that needs Tauri's `macos-private-api` feature, which
+rules out the Mac App Store — not a distribution channel for a tool that manages
+local processes anyway.
 
 The distinction between passive and focused is the reason the panel exists in
 this form: a pointer reveal must not disturb what you are typing into, while a

@@ -15,14 +15,15 @@
 
 use std::ffi::c_void;
 
-use objc2::runtime::AnyClass;
+use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{msg_send, ClassType};
 use objc2_app_kit::{
-    NSPanel, NSScreen, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSAnimationContext, NSColor, NSPanel, NSScreen, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 use runtime_adapter::desktop::{
-    PanelActivation, PanelConfig, RawWindow, ScreenEdge, ScreenInfo, WindowProvider,
+    PanelActivation, PanelConfig, PanelState, RawWindow, ScreenEdge, ScreenInfo, WindowProvider,
 };
 use runtime_types::{Result, RuntimeError};
 
@@ -59,6 +60,24 @@ impl MacWindowProvider {
     }
 }
 
+impl MacWindowProvider {
+    /// The screen to dock to: the requested one, else the one under the
+    /// pointer, else the first available.
+    fn resolve_screen(&self, screen: Option<&str>) -> Result<ScreenInfo> {
+        let requested = match screen {
+            Some(id) => self
+                .screens()?
+                .into_iter()
+                .find(|candidate| candidate.id == id),
+            None => None,
+        };
+        requested
+            .or(self.screen_at_pointer()?)
+            .or_else(|| self.screens().ok().and_then(|s| s.into_iter().next()))
+            .ok_or_else(|| RuntimeError::internal("no screen available for the panel"))
+    }
+}
+
 impl WindowProvider for MacWindowProvider {
     unsafe fn adopt_panel(&self, handle: RawWindow) -> Result<()> {
         let window = unsafe { Self::window(handle)? };
@@ -80,6 +99,13 @@ impl WindowProvider for MacWindowProvider {
         let style = window.styleMask() | NSWindowStyleMask::NonactivatingPanel;
         window.setStyleMask(style);
         window.setLevel(PANEL_WINDOW_LEVEL);
+
+        // Without this the window paints an opaque rectangle behind the
+        // content, and the rounded corners the CSS draws show white squares.
+        window.setOpaque(false);
+        let clear = NSColor::clearColor();
+        window.setBackgroundColor(Some(&clear));
+        window.setHasShadow(true);
 
         // Follow the user across Spaces and sit over full-screen apps rather
         // than being confined to the Space it was created on.
@@ -124,46 +150,45 @@ impl WindowProvider for MacWindowProvider {
         Ok(())
     }
 
-    unsafe fn show_panel(
+    unsafe fn apply_state(
         &self,
         handle: RawWindow,
         config: &PanelConfig,
         screen: Option<&str>,
+        state: PanelState,
         activation: PanelActivation,
     ) -> Result<()> {
         let window = unsafe { Self::window(handle)? };
+        let target = self.resolve_screen(screen)?;
+        let frame = frame_for(&target, config, state);
 
-        let target = match screen {
-            Some(id) => self
-                .screens()?
-                .into_iter()
-                .find(|candidate| candidate.id == id)
-                .or(self.screen_at_pointer()?),
-            None => self.screen_at_pointer()?,
-        };
-        let Some(target) = target.or_else(|| self.screens().ok().and_then(|s| s.into_iter().next()))
-        else {
-            return Err(RuntimeError::internal("no screen available for the panel"));
-        };
+        // The tab is on screen permanently, so it must not swallow clicks meant
+        // for whatever is underneath. Proximity is detected by polling the
+        // pointer, which works regardless of who receives the events.
+        window.setIgnoresMouseEvents(state == PanelState::Island);
 
-        let frame = frame_for(&target, config);
-        window.setFrame_display(frame, true);
-
+        // Order front before animating: a window that is not on screen has
+        // nothing to animate, and the first expansion would simply appear.
         match activation {
             // `orderFrontRegardless` shows the panel without activating the
             // application, which is what keeps the editor's focus intact.
             PanelActivation::Passive => window.orderFrontRegardless(),
-            PanelActivation::Focused => {
-                window.makeKeyAndOrderFront(None);
-            }
+            PanelActivation::Focused => window.makeKeyAndOrderFront(None),
         }
+
+        set_frame_animated(window, frame, config.animation_ms);
         Ok(())
     }
 
-    unsafe fn hide_panel(&self, handle: RawWindow) -> Result<()> {
-        let window = unsafe { Self::window(handle)? };
-        window.orderOut(None);
-        Ok(())
+    fn island_rect(&self, config: &PanelConfig, screen: Option<&str>) -> Result<(f64, f64, f64, f64)> {
+        let target = self.resolve_screen(screen)?;
+        let frame = frame_for(&target, config, PanelState::Island);
+        Ok((
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height,
+        ))
     }
 
     fn screens(&self) -> Result<Vec<ScreenInfo>> {
@@ -218,21 +243,54 @@ impl WindowProvider for MacWindowProvider {
     }
 }
 
-/// Where the panel sits on a screen.
+/// Where the panel sits on a screen, at a given size.
 ///
 /// Cocoa's origin is bottom-left, so a vertically centred panel is placed from
 /// the bottom up rather than the top down.
-fn frame_for(screen: &ScreenInfo, config: &PanelConfig) -> NSRect {
-    let width = config.width as f64;
-    let height = (screen.height * config.height_ratio.clamp(0.1, 1.0)).min(screen.height);
-    let y = screen.y + (screen.height - height) / 2.0;
+fn frame_for(screen: &ScreenInfo, config: &PanelConfig, state: PanelState) -> NSRect {
+    let (width, height) = match state {
+        PanelState::Island => (
+            config.island_width as f64,
+            (config.island_height as f64).min(screen.height),
+        ),
+        PanelState::Expanded => (
+            config.width as f64,
+            (screen.height * config.height_ratio.clamp(0.1, 1.0)).min(screen.height),
+        ),
+    };
 
+    let y = screen.y + (screen.height - height) / 2.0;
     let x = match config.edge {
         ScreenEdge::Right => screen.x + screen.width - width,
         ScreenEdge::Left => screen.x,
     };
 
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+
+/// Animate the window to a new frame.
+///
+/// The expansion has to be animated for the panel to read as sliding out of the
+/// edge rather than appearing on top of the screen; `NSAnimationContext` drives
+/// the window's own animator so the webview resizes with it.
+fn set_frame_animated(window: &NSWindow, frame: NSRect, duration_ms: u32) {
+    if duration_ms == 0 {
+        window.setFrame_display(frame, true);
+        return;
+    }
+
+    // SAFETY: standard AppKit animation grouping on the main thread; `animator`
+    // returns a proxy that forwards `setFrame:display:` through the animation.
+    unsafe {
+        NSAnimationContext::beginGrouping();
+        let context = NSAnimationContext::currentContext();
+        context.setDuration(duration_ms as f64 / 1000.0);
+
+        let animator: *mut AnyObject = msg_send![window, animator];
+        let _: () = msg_send![animator, setFrame: frame, display: true];
+
+        NSAnimationContext::endGrouping();
+    }
 }
 
 fn contains(frame: NSRect, point: NSPoint) -> bool {
@@ -264,42 +322,63 @@ mod tests {
     }
 
     #[test]
-    fn the_right_edge_puts_the_panel_flush_against_it() {
+    fn the_right_edge_puts_both_states_flush_against_it() {
         let config = PanelConfig {
             edge: ScreenEdge::Right,
             width: 300,
+            island_width: 10,
             ..PanelConfig::default()
         };
-        let frame = frame_for(&screen(), &config);
 
-        assert_eq!(frame.origin.x + frame.size.width, 1440.0);
-        assert_eq!(frame.size.width, 300.0);
+        let expanded = frame_for(&screen(), &config, PanelState::Expanded);
+        assert_eq!(expanded.origin.x + expanded.size.width, 1440.0);
+        assert_eq!(expanded.size.width, 300.0);
+
+        // The tab has to share the outer edge, or expanding would look like the
+        // panel jumping sideways rather than growing out of it.
+        let island = frame_for(&screen(), &config, PanelState::Island);
+        assert_eq!(island.origin.x + island.size.width, 1440.0);
+        assert_eq!(island.size.width, 10.0);
     }
 
     #[test]
-    fn the_left_edge_starts_at_the_screen_origin() {
+    fn the_left_edge_starts_at_the_screen_origin_in_both_states() {
         let config = PanelConfig {
             edge: ScreenEdge::Left,
             ..PanelConfig::default()
         };
-        assert_eq!(frame_for(&screen(), &config).origin.x, 0.0);
+        assert_eq!(frame_for(&screen(), &config, PanelState::Expanded).origin.x, 0.0);
+        assert_eq!(frame_for(&screen(), &config, PanelState::Island).origin.x, 0.0);
     }
 
     #[test]
-    fn the_panel_is_centred_vertically_and_never_taller_than_the_screen() {
+    fn both_states_share_a_vertical_centre() {
         let config = PanelConfig {
             height_ratio: 0.8,
+            island_height: 96,
             ..PanelConfig::default()
         };
-        let frame = frame_for(&screen(), &config);
-        assert_eq!(frame.size.height, 720.0);
-        assert_eq!(frame.origin.y, 90.0);
+        let expanded = frame_for(&screen(), &config, PanelState::Expanded);
+        let island = frame_for(&screen(), &config, PanelState::Island);
 
+        assert_eq!(expanded.size.height, 720.0);
+        // Same midpoint, so the panel grows symmetrically out of the tab.
+        assert_eq!(
+            expanded.origin.y + expanded.size.height / 2.0,
+            island.origin.y + island.size.height / 2.0
+        );
+    }
+
+    #[test]
+    fn the_panel_is_never_taller_than_the_screen() {
         let oversized = PanelConfig {
             height_ratio: 2.0,
             ..PanelConfig::default()
         };
-        assert_eq!(frame_for(&screen(), &oversized).size.height, 900.0);
+        assert_eq!(
+            frame_for(&screen(), &oversized, PanelState::Expanded).size.height,
+            900.0
+        );
     }
 
     /// A secondary display sits at a non-zero origin; the panel must dock to
@@ -320,7 +399,7 @@ mod tests {
             width: 320,
             ..PanelConfig::default()
         };
-        let frame = frame_for(&secondary, &config);
+        let frame = frame_for(&secondary, &config, PanelState::Expanded);
         assert_eq!(frame.origin.x, 1440.0 + 2560.0 - 320.0);
     }
 }

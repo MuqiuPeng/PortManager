@@ -49,6 +49,11 @@ pub fn run() {
                 tracing::warn!(%err, "the edge panel is unavailable on this platform");
             } else {
                 let controller = app.state::<Arc<PanelController>>().inner().clone();
+                // Rest as a tab straight away: the panel is meant to be visible
+                // from the moment the app starts, not discovered by accident.
+                if let Err(err) = controller.rest(&handle) {
+                    tracing::warn!(%err, "could not dock the panel");
+                }
                 controller.watch_edge(&handle);
                 register_shortcut(&handle);
             }

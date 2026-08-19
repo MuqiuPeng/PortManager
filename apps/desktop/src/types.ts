@@ -93,9 +93,15 @@ export interface PanelConfig {
   edge: "left" | "right";
   width: number;
   height_ratio: number;
+  island_width: number;
+  island_height: number;
+  hover_margin: number;
+  animation_ms: number;
   pinned: boolean;
-  hover_strip_width: number;
 }
+
+/** The two sizes the panel lives at. */
+export type PanelState = "island" | "expanded";
 
 /** A project the runtime found on its own. */
 export interface Discovery {
