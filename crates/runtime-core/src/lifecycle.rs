@@ -163,6 +163,14 @@ impl Runtime {
     ) -> Result<RuntimeInstance> {
         let mut command = self.adapter().spawn().build(&service.command)?;
         command.current_dir(&service.cwd);
+
+        // `.env` first, then whatever the service declares: an explicit value
+        // in the registry is a correction, and a correction has to win.
+        let workspace = self.require_workspace(&service.workspace_id)?;
+        let dotenv = crate::dotenv::load(&workspace.path, &service.cwd);
+        for (key, value) in &dotenv.variables {
+            command.env(key, value);
+        }
         for (key, value) in &service.env {
             command.env(key, value);
         }
@@ -221,6 +229,12 @@ impl Runtime {
                 port.map(|p| format!(", port {p}")).unwrap_or_default()
             ),
         )?;
+        // Never silent: a service behaving differently because of a file nobody
+        // mentioned is worse than one missing a variable.
+        if !dotenv.is_empty() {
+            self.logs_arc()
+                .append(&service.id, LogStream::System, dotenv.describe())?;
+        }
 
         let mut tasks = Vec::new();
         if let Some(stdout) = child.stdout.take() {

@@ -184,6 +184,12 @@ inferred:
 
 See [config/runtime.example.json](config/runtime.example.json) for every field.
 
+`.env` and `.env.local` are loaded from the project root and the service's own
+directory before it starts — the same convention Compose, Next and Vite follow —
+with the service's own declared variables taking precedence. Which files were
+read is written to the service's log, so a service never behaves differently
+because of a file nobody mentioned.
+
 Inference is a starting point, not a verdict. Correct it in place and write the
 result out:
 

@@ -8,6 +8,7 @@
 pub mod detect;
 pub mod discover;
 pub mod docker;
+pub mod dotenv;
 pub mod events;
 pub mod git;
 pub mod health;

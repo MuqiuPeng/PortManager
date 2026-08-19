@@ -122,6 +122,25 @@ minute rather than paid for on each lookup. The CLI is located the same way the
 daemon is — a daemon started by the bundled app inherits a minimal PATH that
 contains no `docker`.
 
+## Environment
+
+`.env` and `.env.local` are read from the workspace root and then the service's
+own directory, so a package in a monorepo can override the repository. The
+service's declared variables are applied on top: an explicit value in the
+registry is a correction, and a correction has to win.
+
+Compose, Next and Vite all do this, and a developer running the command by hand
+usually has direnv or a `source` in the way — so spawning it without them starts
+a *different* process than the one they would have started, and the difference
+surfaces as a missing variable deep inside the service.
+
+Which files were read is written to the service's log. Loading environment
+silently would make behaviour depend on a file nobody mentioned.
+
+Parsing is deliberately plain `KEY=VALUE` with no interpolation. A file meaning
+something subtler is doing more than this should guess at, and the service can
+be given explicit variables instead.
+
 ## Starting
 
 Spawning is not starting. A process can be created and be dead a moment later —
