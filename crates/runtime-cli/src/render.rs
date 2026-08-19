@@ -170,6 +170,11 @@ pub fn service_detail(view: &ServiceView) -> String {
     if let Some(port) = view.actual_port {
         out.push_str(&format!("  port      {port}\n"));
     }
+    if !view.service.env.is_empty() {
+        // Names only: a value here is usually a credential.
+        let names: Vec<&str> = view.service.env.keys().map(String::as_str).collect();
+        out.push_str(&format!("  env       {}\n", names.join(", ")));
+    }
     if let Some(url) = &view.url {
         out.push_str(&format!("  url       {url}\n"));
     }

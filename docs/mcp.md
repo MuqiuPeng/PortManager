@@ -50,7 +50,9 @@ if the attribution matters to you.
 | `get_project_runtime` | One project's workspaces, services, ports and owners |
 | `list_services` | Services with live status, optionally scoped to a project |
 | `get_service` | One service's command, cwd, status, port and URL |
-| `update_service` | Correct an inferred port, command, cwd or type |
+| `update_service` | Correct how a service starts: command, environment, port, cwd, type, conflict policy |
+| `add_service` | Declare a service detection did not find |
+| `remove_service` | Forget a service definition (stops nothing) |
 | `export_config` | The project's services as a committable `.runtime.json` |
 
 ### Lifecycle
@@ -133,6 +135,22 @@ check_port(port: 3000)
      started by cli
    Suggested alternative: 3003
 ```
+
+**"It won't start."**
+
+```
+start_service(service: "billing-scheduler")
+-> 'billing-scheduler' exited immediately (code 1): Error: [db] DATABASE_URL is not set
+
+update_service(service: "billing-scheduler",
+               env: { DATABASE_URL: "postgres://localhost:5432/app" })
+start_service(service: "billing-scheduler")
+```
+
+Variables passed this way are merged with the ones already set, and win over any
+`.env` file. `update_service` reports the *names* it holds, never the values —
+confirming a variable was set does not require putting a credential in the
+transcript.
 
 **"I made a worktree for this branch — run it without clobbering main."**
 

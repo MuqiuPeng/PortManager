@@ -192,10 +192,20 @@ function registerTools(
     {
       title: "Correct a service",
       description:
-        "Change a declared service's port, command, working directory or type. Service definitions come from inference, which guesses — a framework's default port is often not the one a project actually uses. Correcting the port is also what lets the runtime recognise an already-running service as that service.",
+        "Change how a service starts: its command, port, working directory, environment or conflict policy. Service definitions come from inference, which guesses — a framework's default port is often not the one a project uses, and a repository with `dev` and `dev:local` scripts may need the second one. This is the tool for acting on a failed start: set the variable it said was missing, or point it at the command that works. Correcting the port is also what lets the runtime recognise an already-running service as that service.",
       inputSchema: {
         service: z.string().describe(SERVICE_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        command: z
+          .string()
+          .optional()
+          .describe("The command that starts it, e.g. 'pnpm run dev:local'."),
+        env: z
+          .record(z.string())
+          .optional()
+          .describe(
+            "Environment variables, merged with the ones already set — passing one does not drop the others. These win over any .env file. Use this when a start fails on a missing variable.",
+          ),
         port: z
           .number()
           .int()
@@ -203,25 +213,49 @@ function registerTools(
           .max(65535)
           .optional()
           .describe("The port this service should use."),
-        command: z.string().optional(),
+        clear_port: z
+          .boolean()
+          .optional()
+          .describe("Forget the port entirely, for a service that has none."),
         cwd: z.string().optional().describe("Absolute, or relative to the workspace."),
+        rename: z.string().optional(),
         service_type: z
           .enum(["web", "api", "worker", "database", "cache", "container", "custom"])
           .optional(),
         on_conflict: z
           .enum(["reuse", "allocate-next", "fail", "ask", "kill-existing"])
-          .optional(),
+          .optional()
+          .describe(
+            "What to do when the port is taken. 'fail' is right for a service that hardcodes its port, where being moved to another one cannot work.",
+          ),
+        auto_start: z.boolean().optional(),
       },
     },
-    async ({ service, project, port, command, cwd, service_type, on_conflict }) => {
+    async ({
+      service,
+      project,
+      command,
+      env,
+      port,
+      clear_port,
+      cwd,
+      rename,
+      service_type,
+      on_conflict,
+      auto_start,
+    }) => {
       const patch: Record<string, unknown> = {};
-      // `[port]` rather than `port`: the wire format distinguishes "set it to
-      // this" from "leave it alone", and an absent key means the latter.
-      if (port !== undefined) patch.preferred_port = port;
+      // An absent key means "leave it alone" and an explicit null means "clear
+      // it", so the two have to be distinguishable here as well.
+      if (clear_port) patch.preferred_port = null;
+      else if (port !== undefined) patch.preferred_port = port;
       if (command !== undefined) patch.command = command;
+      if (env !== undefined) patch.env = env;
       if (cwd !== undefined) patch.cwd = cwd;
+      if (rename !== undefined) patch.name = rename;
       if (service_type !== undefined) patch.service_type = service_type;
       if (on_conflict !== undefined) patch.conflict_policy = on_conflict;
+      if (auto_start !== undefined) patch.auto_start = auto_start;
 
       if (Object.keys(patch).length === 0) {
         return {
@@ -235,6 +269,62 @@ function registerTools(
         (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
       );
     },
+  );
+
+  server.registerTool(
+    "add_service",
+    {
+      title: "Declare a service",
+      description:
+        "Declare a service that detection did not find — a script it could not infer, a second process a project needs. Registers the definition only; nothing is started.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        name: z.string().describe("What to call it, e.g. 'worker'."),
+        command: z.string().describe("The command that starts it."),
+        port: z.number().int().min(1).max(65535).optional(),
+        cwd: z
+          .string()
+          .optional()
+          .describe("Absolute, or relative to the project root. Defaults to the root."),
+        service_type: z
+          .enum(["web", "api", "worker", "database", "cache", "container", "custom"])
+          .optional(),
+      },
+    },
+    async ({ project, name, command, port, cwd, service_type }) =>
+      run(
+        "add_service",
+        {
+          selector: project,
+          name,
+          command,
+          port: port ?? null,
+          cwd: cwd ?? null,
+          type: service_type ?? null,
+        },
+        (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
+      ),
+  );
+
+  server.registerTool(
+    "remove_service",
+    {
+      title: "Remove a service",
+      description:
+        "Remove a service definition. Nothing running is stopped — this forgets how to start it, not the process itself. Use it for a service detection invented that the project does not have.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ service, project }) =>
+      run("remove_service", { service, project: project ?? null }, (body) =>
+        body.type === "done"
+          ? body.ok
+            ? "Removed."
+            : "There was no such service."
+          : unexpected(body),
+      ),
   );
 
   server.registerTool(

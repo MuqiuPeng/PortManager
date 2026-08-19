@@ -46,6 +46,7 @@ export interface ServiceView {
   command: string;
   cwd: string;
   preferred_port?: number;
+  env?: Record<string, string>;
   status: ServiceStatus;
   instance?: RuntimeInstance;
   actual_port?: number;

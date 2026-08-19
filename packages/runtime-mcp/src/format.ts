@@ -125,6 +125,13 @@ export function formatServiceDetail(service: ServiceView): string {
   ];
   if (service.url) lines.push(`  url      ${service.url}`);
   if (service.preferred_port) lines.push(`  prefers  :${service.preferred_port}`);
+
+  // Names only. Confirming that a variable was set does not require putting its
+  // value — which is usually a credential — into an agent's transcript.
+  const names = Object.keys(service.env ?? {});
+  if (names.length > 0) {
+    lines.push(`  env      ${names.sort().join(", ")}`);
+  }
   return lines.join("\n");
 }
 
