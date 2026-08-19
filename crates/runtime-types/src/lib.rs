@@ -17,6 +17,6 @@ pub use model::{
     Project, RuntimeInstance, Service, ServiceStatus, ServiceType, StartedBy, Workspace,
 };
 pub use view::{
-    DaemonInfo, HealthReport, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView,
-    StartOutcome, WorkspaceView,
+    DaemonInfo, ExternalService, HealthReport, PortOwner, PortReservation, PortStatus, ProjectView,
+    ServiceView, StartOutcome, WorkspaceView,
 };

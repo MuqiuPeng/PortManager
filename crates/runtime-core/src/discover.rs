@@ -287,6 +287,20 @@ fn walk_into(directory: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// True when a path lives inside a hidden directory.
+///
+/// Agent tooling keeps scratch worktrees in places like `.claude/worktrees`;
+/// they are checkouts as far as git is concerned but not projects a developer
+/// manages, and they come and go.
+pub fn is_tool_managed_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .starts_with('.')
+    })
+}
+
 fn has_marker(directory: &Path) -> bool {
     MARKERS.iter().any(|marker| directory.join(marker).exists())
 }

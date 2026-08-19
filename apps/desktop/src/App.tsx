@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
 import { DiscoveryPanel } from "./components/DiscoveryPanel";
+import { ExternalRow } from "./components/ExternalRow";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
@@ -265,7 +266,8 @@ export default function App() {
                         )}
                       </header>
 
-                      {workspace.services.length === 0 ? (
+                      {workspace.services.length === 0 &&
+                      (workspace.external ?? []).length === 0 ? (
                         <p className="empty">No services detected.</p>
                       ) : (
                         workspace.services.map((service: ServiceView) => (
@@ -284,6 +286,10 @@ export default function App() {
                           />
                         ))
                       )}
+
+                      {(workspace.external ?? []).map((item) => (
+                        <ExternalRow external={item} key={`${item.port}-${item.pid}`} />
+                      ))}
                     </section>
                   ))}
                 </div>

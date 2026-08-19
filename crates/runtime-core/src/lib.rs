@@ -20,15 +20,15 @@ pub mod store;
 pub mod supervisor;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    DaemonInfo, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result,
-    RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, Workspace,
-    WorkspaceId, WorkspaceView,
+    DaemonInfo, ExternalService, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView,
+    Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView,
+    Workspace, WorkspaceId, WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -44,6 +44,9 @@ pub struct Runtime {
     logs: Arc<LogStore>,
     supervisor: Arc<Supervisor>,
     docker: Arc<Docker>,
+    /// Resolving one port walks the process table, so answering "what is
+    /// listening" for a whole machine would do it dozens of times over.
+    port_owners: Mutex<Option<(Instant, Vec<PortOwner>)>>,
     events: EventBus,
     started_at: Instant,
 }
@@ -86,6 +89,7 @@ impl Runtime {
             logs: Arc::new(LogStore::default()),
             supervisor: Arc::new(Supervisor::new()),
             docker: Arc::new(Docker::new()),
+            port_owners: Mutex::new(None),
             events: EventBus::new(),
             started_at: Instant::now(),
         }
@@ -273,6 +277,15 @@ impl Runtime {
             if entry.is_main || !entry.path.exists() {
                 continue;
             }
+            // Worktrees under a hidden directory belong to a tool — Claude
+            // Code keeps them in `.claude/worktrees` — not to the developer.
+            // Registering them copies every service into a checkout that will
+            // be deleted, dilutes the running count, and burns a port offset
+            // that a real branch should have had.
+            if discover::is_tool_managed_path(&entry.path) {
+                tracing::debug!(path = %entry.path.display(), "skipping a tool-managed worktree");
+                continue;
+            }
             let known = self.store.find_workspace_by_path(&entry.path)?.is_some();
             let workspace = self.register_workspace(project_id, &entry.path)?;
             if !known {
@@ -350,11 +363,25 @@ impl Runtime {
         if let Some(found) = projects.iter().find(|p| p.id.as_str() == selector) {
             return Ok(found.clone());
         }
-        if let Some(found) = projects
+        let by_name: Vec<&Project> = projects
             .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(selector))
-        {
-            return Ok(found.clone());
+            .filter(|p| p.name.eq_ignore_ascii_case(selector))
+            .collect();
+        match by_name.as_slice() {
+            [only] => return Ok((*only).clone()),
+            // Two checkouts of unrelated repositories can share a name. Picking
+            // one silently is how an agent restarts the wrong project.
+            [_, ..] => {
+                let options = by_name
+                    .iter()
+                    .map(|p| p.root_path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(RuntimeError::invalid(format!(
+                    "'{selector}' matches several projects: {options}. Use a path or an id."
+                )));
+            }
+            [] => {}
         }
         if let Ok(path) = canonicalize(Path::new(selector)) {
             if let Some(found) = projects
@@ -449,7 +476,14 @@ impl Runtime {
         if matches.is_empty() {
             return Err(RuntimeError::not_found("service", selector));
         }
-        if branch.is_none() {
+
+        // Preferring the primary checkout disambiguates `main` from a worktree
+        // of the *same* project. Applying it across projects would silently
+        // pick one of several unrelated services with the same name.
+        let single_project = matches
+            .iter()
+            .all(|(workspace, _)| workspace.project_id == matches[0].0.project_id);
+        if branch.is_none() && single_project {
             if let Some((_, service)) = matches.iter().find(|(workspace, _)| !workspace.worktree) {
                 return Ok(service.clone());
             }
@@ -458,8 +492,15 @@ impl Runtime {
             let options = matches
                 .iter()
                 .map(|(workspace, service)| {
+                    let project = self
+                        .store
+                        .get_project(&workspace.project_id)
+                        .ok()
+                        .flatten()
+                        .map(|p| p.name)
+                        .unwrap_or_default();
                     format!(
-                        "{}/{}",
+                        "{project}/{}/{}",
                         workspace.git_branch.as_deref().unwrap_or("-"),
                         service.name
                     )
@@ -476,21 +517,30 @@ impl Runtime {
     // ---- views ---------------------------------------------------------
 
     pub fn project_view(&self, project: &Project) -> Result<ProjectView> {
+        let owners = self.port_owners()?;
         let mut workspaces = Vec::new();
         let mut running = 0;
         let mut total = 0;
+        let mut external_total = 0;
 
         for workspace in self.store.list_workspaces(&project.id)? {
             let mut services = Vec::new();
             for service in self.store.list_services(&workspace.id)? {
-                let view = self.service_view(&service)?;
+                let view = self.service_view_with(&service, &owners)?;
                 total += 1;
                 if view.status.is_live() {
                     running += 1;
                 }
                 services.push(view);
             }
-            workspaces.push(WorkspaceView { workspace, services });
+
+            let external = self.external_services(&workspace, &services, &owners);
+            external_total += external.len();
+            workspaces.push(WorkspaceView {
+                workspace,
+                services,
+                external,
+            });
         }
 
         Ok(ProjectView {
@@ -498,28 +548,68 @@ impl Runtime {
             workspaces,
             running_services: running,
             total_services: total,
+            external_services: external_total,
         })
+    }
+
+    /// Live ports in a checkout that none of its declared services explain.
+    ///
+    /// The alternative — pinning each observation to whichever declared service
+    /// looks closest — would be a guess, and a service reported as running when
+    /// something else is on its port is worse than an honest gap.
+    fn external_services(
+        &self,
+        workspace: &Workspace,
+        services: &[ServiceView],
+        owners: &[PortOwner],
+    ) -> Vec<ExternalService> {
+        let claimed: Vec<u16> = services.iter().filter_map(|view| view.actual_port).collect();
+
+        owners
+            .iter()
+            .filter(|owner| owner.workspace_id.as_ref() == Some(&workspace.id))
+            .filter(|owner| !claimed.contains(&owner.port))
+            .map(|owner| ExternalService {
+                port: owner.port,
+                pid: owner.pid,
+                container: owner.container.clone(),
+                cwd: owner.cwd.clone(),
+                command_line: owner.command_line.clone(),
+                url: Some(format!("http://localhost:{}", owner.port)),
+            })
+            .collect()
     }
 
     /// A service with its current process state resolved against the OS.
     pub fn service_view(&self, service: &Service) -> Result<ServiceView> {
+        let owners = self.port_owners()?;
+        self.service_view_with(service, &owners)
+    }
+
+    fn service_view_with(&self, service: &Service, owners: &[PortOwner]) -> Result<ServiceView> {
         let (status, instance) = self.current_state(service)?;
+
         // Only report a port while something is actually bound to it. A stopped
         // service showing `:3005` reads as "it is on 3005", which is precisely
         // the confusion this tool exists to remove.
-        let actual_port = if status.is_live() {
-            instance
+        let mut status = status;
+        let mut managed = false;
+        let mut actual_port = None;
+
+        if status.is_live() {
+            managed = true;
+            actual_port = instance
                 .as_ref()
                 .and_then(|i| i.port)
-                .or_else(|| self.supervisor.port(&service.id).ok().flatten())
-        } else {
-            None
-        };
+                .or_else(|| self.supervisor.port(&service.id).ok().flatten());
+        } else if let Some(port) = self.adopted_port(service, owners)? {
+            // Started outside the runtime — from a terminal, or by whoever was
+            // here before it was. It is listening on the port this service
+            // declares, so calling it stopped would contradict the port table.
+            status = ServiceStatus::Healthy;
+            actual_port = Some(port);
+        }
 
-        // Anything with a port gets a URL except the two kinds where HTTP is
-        // certainly wrong. The service type is a *guess* made by inference, so
-        // gating a useful button on it means a misclassified dev server
-        // silently loses its "open" action.
         let url = actual_port.and_then(|port| match service.service_type {
             runtime_types::ServiceType::Database | runtime_types::ServiceType::Cache => None,
             _ => Some(format!("http://localhost:{port}")),
@@ -531,7 +621,26 @@ impl Runtime {
             instance,
             actual_port,
             url,
+            managed,
         })
+    }
+
+    /// The port a service is already listening on, if it is.
+    ///
+    /// Deliberately strict: the declared port must be taken *and* held from
+    /// inside this service's own checkout. Either half alone would attribute
+    /// an unrelated process to the service.
+    fn adopted_port(&self, service: &Service, owners: &[PortOwner]) -> Result<Option<u16>> {
+        let workspace = self.require_workspace(&service.workspace_id)?;
+        let Some(expected) = ports::PortResolver::preferred_port(service, &workspace) else {
+            return Ok(None);
+        };
+        Ok(owners
+            .iter()
+            .find(|owner| {
+                owner.port == expected && owner.workspace_id.as_ref() == Some(&workspace.id)
+            })
+            .map(|owner| owner.port))
     }
 
     /// Reconcile the stored instance for a service against the live process
@@ -572,9 +681,46 @@ impl Runtime {
 
     /// Everything listening on this machine, resolved to projects where possible.
     ///
+    /// Cached briefly: resolving one port walks the process table to follow the
+    /// ancestor chain, so answering for every port on a busy machine would do
+    /// that dozens of times in a row.
+    pub fn port_owners(&self) -> Result<Vec<PortOwner>> {
+        /// Short enough that a service started a moment ago shows up, long
+        /// enough that rendering a whole project costs one scan.
+        const TTL: Duration = Duration::from_millis(1_500);
+
+        if let Ok(cache) = self.port_owners.lock() {
+            if let Some((at, owners)) = cache.as_ref() {
+                if at.elapsed() < TTL {
+                    return Ok(owners.clone());
+                }
+            }
+        }
+
+        let owners = self.scan_ports()?;
+        if let Ok(mut cache) = self.port_owners.lock() {
+            *cache = Some((Instant::now(), owners.clone()));
+        }
+        Ok(owners)
+    }
+
+    /// Drop the cached view, so a change this runtime just made is visible at
+    /// once rather than up to a TTL later.
+    pub(crate) fn invalidate_port_owners(&self) {
+        if let Ok(mut cache) = self.port_owners.lock() {
+            *cache = None;
+        }
+    }
+
+    /// Everything listening on this machine, resolved to projects where possible.
+    ///
     /// One row per (port, pid): a server that binds both IPv4 and IPv6 appears
     /// twice in the socket table but is one thing to the user.
     pub fn list_ports(&self) -> Result<Vec<PortOwner>> {
+        self.port_owners()
+    }
+
+    fn scan_ports(&self) -> Result<Vec<PortOwner>> {
         let resolver = self.resolver();
         let mut owners: Vec<PortOwner> = Vec::new();
         for binding in self.adapter.port().listening_ports()? {

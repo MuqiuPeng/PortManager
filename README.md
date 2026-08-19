@@ -195,6 +195,12 @@ identical `com.docker.docker` rows. Compose labels resolve them to their project
 and service, and the compose file's directory makes them discoverable like any
 other project. Read-only: compose still owns starting and stopping them.
 
+**Running is running, whoever started it.** A service found already listening on
+its port is reported as running and marked unmanaged — claiming otherwise while
+the port table shows it up is the contradiction this tool exists to remove. Live
+ports that no declared service explains are listed as external rather than
+guessed at.
+
 **A port is a lease, not an observation.** A service claims its port before the
 process starts, so a conflict is reported as an answer rather than discovered as
 a failed boot. Worktrees get a stable offset from the primary checkout, so

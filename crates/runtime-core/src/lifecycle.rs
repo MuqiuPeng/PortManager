@@ -120,6 +120,8 @@ impl Runtime {
         let port = reservation.as_ref().map(|r| r.port);
         let instance = self.spawn_service(&service, port, &options).await?;
 
+        // What is listening just changed; a cached answer would be wrong.
+        self.invalidate_port_owners();
         if let Some(port) = port {
             self.resolver().activate(port)?;
             self.events.publish(RuntimeEvent::PortLeaseChanged {
@@ -350,6 +352,18 @@ impl Runtime {
         let (status, instance) = self.current_state(&service)?;
 
         let Some(mut instance) = instance else {
+            // It may well be running — just not by us. Saying "not running"
+            // would contradict the view the caller is looking at.
+            let view = self.service_view(&service)?;
+            if view.status.is_live() && !view.managed {
+                return Err(RuntimeError::NotPermitted {
+                    pid: 0,
+                    reason: format!(
+                        "'{}' is running but was not started by the runtime; stop it where it was started",
+                        service.name
+                    ),
+                });
+            }
             return Err(RuntimeError::NotRunning {
                 service: service.name.clone(),
             });
@@ -406,6 +420,7 @@ impl Runtime {
             self.store().release_lease(port)?;
         }
         self.supervisor().remove(&service.id)?;
+        self.invalidate_port_owners();
         self.events().publish(RuntimeEvent::ServiceStatusChanged {
             service_id: service.id.clone(),
             status: ServiceStatus::Stopped,

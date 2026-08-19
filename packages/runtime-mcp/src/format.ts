@@ -54,8 +54,10 @@ export function formatDiscoveries(items: Discovery[]): string {
 }
 
 export function formatProjectRuntime(project: ProjectView): string {
+  const external = project.external_services ?? 0;
   const lines = [
-    `${project.name} — ${project.running_services}/${project.total_services} running`,
+    `${project.name} — ${project.running_services}/${project.total_services} running` +
+      (external > 0 ? `, ${external} started outside the runtime` : ""),
     `  ${project.root_path}`,
   ];
 
@@ -69,6 +71,12 @@ export function formatProjectRuntime(project: ProjectView): string {
     }
     for (const service of workspace.services) {
       lines.push(`  ${formatService(service)}`);
+    }
+    // Named but not attributed: knowing something is on :3001 in this checkout
+    // is useful; deciding which declared service it is would be a guess.
+    for (const item of workspace.external ?? []) {
+      const what = item.container ?? item.command_line?.split(/\s+/)[0] ?? `pid ${item.pid}`;
+      lines.push(`  (external) :${item.port} ${what} — not started by the runtime`);
     }
   }
   return lines.join("\n");
@@ -86,9 +94,11 @@ export function formatService(service: ServiceView): string {
   const owner =
     instance && instance.started_by !== "unknown" ? `, started by ${instance.started_by}` : "";
   const pid = instance ? `, pid ${instance.pid}` : "";
+  // Worth saying plainly: stop_service cannot act on this one.
+  const unmanaged = live && service.managed === false ? ", started outside the runtime" : "";
   // The id comes last so the line stays readable, but is always available for
   // a follow-up call that must be unambiguous.
-  return `${service.name} ${port} ${service.status}${owner}${pid} [id ${service.id}]`;
+  return `${service.name} ${port} ${service.status}${owner}${pid}${unmanaged} [id ${service.id}]`;
 }
 
 export function formatServices(services: ServiceView[]): string {

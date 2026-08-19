@@ -778,3 +778,16 @@ button {
 .link:hover {
   color: var(--accent);
 }
+
+/* An external row is a real thing running, but not one this app controls. */
+.service.external {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.dot.external-dot {
+  background: var(--live);
+  opacity: 1;
+  box-shadow: inset 0 0 0 1.5px var(--surface);
+}

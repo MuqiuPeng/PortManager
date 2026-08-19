@@ -5,7 +5,7 @@
 
 use runtime_core::discover::Discovery;
 use runtime_types::{
-    DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
+    DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
     ServiceView, StartOutcome, Workspace,
 };
 
@@ -43,9 +43,16 @@ pub fn projects(views: &[ProjectView]) -> String {
         if index > 0 {
             out.push('\n');
         }
+        // Something being up is what the dot means, whoever started it.
+        let live = view.running_services > 0 || view.external_services > 0;
+        let external = if view.external_services > 0 {
+            format!(", {} external", view.external_services)
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "{} {}  {}/{} running\n",
-            if view.running_services > 0 { "●" } else { "○" },
+            "{} {}  {}/{} running{external}\n",
+            if live { "●" } else { "○" },
             view.project.name,
             view.running_services,
             view.total_services
@@ -67,6 +74,9 @@ pub fn projects(views: &[ProjectView]) -> String {
             for service in &workspace.services {
                 out.push_str(&format!("    {}\n", service_line(service)));
             }
+            for external in &workspace.external {
+                out.push_str(&format!("    {}\n", external_line(external)));
+            }
         }
     }
     out
@@ -77,13 +87,35 @@ pub fn service_line(view: &ServiceView) -> String {
         .actual_port
         .map(|port| format!(":{port}"))
         .unwrap_or_else(|| "-".to_string());
+    // A service found already listening cannot be stopped from here, and
+    // saying so is more useful than a status that implies it can.
+    let note = if view.status.is_live() && !view.managed {
+        "  (started elsewhere)"
+    } else {
+        ""
+    };
     format!(
-        "{} {:<12} {:<8} {}",
+        "{} {:<12} {:<8} {}{note}",
         status_dot(view.status),
         view.service.name,
         port,
         status_label(view.status)
     )
+}
+
+/// A live port in this checkout that no declared service explains.
+fn external_line(external: &ExternalService) -> String {
+    let what = external
+        .container
+        .clone()
+        .or_else(|| {
+            external
+                .command_line
+                .as_ref()
+                .map(|command| command.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        })
+        .unwrap_or_else(|| format!("pid {}", external.pid));
+    format!("◆ {:<12} :{:<7} {}", "(external)", external.port, what)
 }
 
 pub fn services(views: &[ServiceView]) -> String {

@@ -26,6 +26,33 @@ pub struct ServiceView {
     pub actual_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// True when the runtime started what is running.
+    ///
+    /// A service found already listening on its port is reported as running —
+    /// claiming otherwise while the port table shows it up is the kind of
+    /// contradiction this tool exists to remove — but it cannot be stopped or
+    /// restarted from here, because the runtime does not own it.
+    #[serde(default)]
+    pub managed: bool,
+}
+
+/// Something listening inside a project that no declared service accounts for.
+///
+/// Reported rather than guessed at: a process in Loom's directory on `:3001`
+/// is certainly part of Loom, but deciding *which* declared service it is
+/// would be a guess, and a wrong one is worse than an honest "unaccounted for".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalService {
+    pub port: u16,
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +60,9 @@ pub struct WorkspaceView {
     #[serde(flatten)]
     pub workspace: Workspace,
     pub services: Vec<ServiceView>,
+    /// Ports live in this checkout that no declared service explains.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external: Vec<ExternalService>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,8 +70,12 @@ pub struct ProjectView {
     #[serde(flatten)]
     pub project: Project,
     pub workspaces: Vec<WorkspaceView>,
+    /// Declared services that are up, however they were started.
     pub running_services: usize,
     pub total_services: usize,
+    /// Live ports in this project that no declared service explains.
+    #[serde(default)]
+    pub external_services: usize,
 }
 
 /// What is actually listening on a port right now, resolved back to a project.

@@ -157,27 +157,89 @@ fn detect_node(
     let Some(scripts) = scripts else { return };
 
     // `dev` is the script a developer actually runs; `start` is the fallback.
-    for (script, service_name) in [("dev", "web"), ("start", "web"), ("api", "api"), ("worker", "worker")] {
-        if !scripts.contains_key(script) {
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for (script, service_name) in [
+        ("dev", "web"),
+        ("start", "web"),
+        ("api", "api"),
+        ("worker", "worker"),
+    ] {
+        if scripts.contains_key(script) {
+            candidates.push((script.to_string(), service_name.to_string()));
+        }
+    }
+
+    // Monorepos name their scripts after the thing they run: `api:dev`,
+    // `scheduler:dev`, `web:dev`. Without these a workspace root with a dozen
+    // scripts is detected as having no services at all.
+    for script in scripts.keys() {
+        let Some(name) = script
+            .strip_suffix(":dev")
+            .or_else(|| script.strip_prefix("dev:"))
+        else {
+            continue;
+        };
+        if name.is_empty() || !is_service_like(name) {
             continue;
         }
+        candidates.push((script.clone(), name.to_string()));
+    }
+
+    for (script, service_name) in candidates {
         if services.iter().any(|s| s.name == service_name) {
             continue;
         }
         let command = format!("{manager} run {script}");
         services.push(DetectedService {
-            service_type: guess_type(service_name, &command),
-            name: service_name.to_string(),
+            service_type: guess_type(&service_name, &command),
             port: if service_name == "web" {
                 default_port
             } else {
                 None
             },
+            name: service_name,
             command,
             cwd: None,
             reason: format!("package.json scripts.{script}"),
         });
     }
+}
+
+/// Actions that happen to be spelled like a `:dev` script but do not start a
+/// local server.
+///
+/// `deploy:dev` deploys to a development *environment*. Offering it as a
+/// startable service would let a single "start deploy" ship code — the kind of
+/// default that has to be wrong-by-construction, not merely discouraged.
+const NON_SERVICE_SCRIPTS: &[&str] = &[
+    "deploy",
+    "remove",
+    "destroy",
+    "publish",
+    "release",
+    "build",
+    "test",
+    "e2e",
+    "lint",
+    "format",
+    "typecheck",
+    "check",
+    "clean",
+    "migrate",
+    "seed",
+    "generate",
+    "codegen",
+    "install",
+    "setup",
+    "prepare",
+    "db",
+];
+
+fn is_service_like(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    !NON_SERVICE_SCRIPTS
+        .iter()
+        .any(|action| name == *action || name.starts_with(&format!("{action}:")))
 }
 
 fn package_manager(pkg: &serde_json::Value) -> &'static str {
@@ -292,5 +354,29 @@ fn guess_type(name: &str, command: &str) -> ServiceType {
         ServiceType::Web
     } else {
         ServiceType::Custom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monorepo_dev_scripts_become_services() {
+        assert!(is_service_like("api"));
+        assert!(is_service_like("scheduler"));
+        assert!(is_service_like("web"));
+    }
+
+    #[test]
+    fn deployment_scripts_never_become_services() {
+        // `deploy:dev` ships code. A runtime that offers it as something to
+        // start is one agent instruction away from a deployment nobody asked
+        // for, so this is excluded by construction rather than by warning.
+        assert!(!is_service_like("deploy"));
+        assert!(!is_service_like("deploy:scheduler"));
+        assert!(!is_service_like("remove"));
+        assert!(!is_service_like("publish"));
+        assert!(!is_service_like("db"));
     }
 }

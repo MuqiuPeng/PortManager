@@ -30,14 +30,21 @@ export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Pro
                 className={project.id === selectedId ? "project selected" : "project"}
                 onClick={() => onSelect(project.id)}
               >
+                {/* Something being up is what the dot means, whoever started it. */}
                 <span
-                  className={project.running_services > 0 ? "dot live" : "dot"}
+                  className={
+                    project.running_services > 0 || (project.external_services ?? 0) > 0
+                      ? "dot live"
+                      : "dot"
+                  }
                   aria-hidden
                 />
                 <span className="project-body">
                   <span className="project-name">{project.name}</span>
                   <span className="project-meta">
                     {project.running_services}/{project.total_services} running
+                    {(project.external_services ?? 0) > 0 &&
+                      ` · ${project.external_services} external`}
                   </span>
                 </span>
               </button>

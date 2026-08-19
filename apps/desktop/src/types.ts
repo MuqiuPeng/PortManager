@@ -77,16 +77,30 @@ export interface ServiceView {
   instance?: RuntimeInstance;
   actual_port?: number;
   url?: string;
+  /** False when the runtime found it already running and cannot stop it. */
+  managed?: boolean;
+}
+
+/** A live port in a checkout that no declared service explains. */
+export interface ExternalService {
+  port: number;
+  pid: number;
+  container?: string;
+  cwd?: string;
+  command_line?: string;
+  url?: string;
 }
 
 export interface WorkspaceView extends Workspace {
   services: ServiceView[];
+  external?: ExternalService[];
 }
 
 export interface ProjectView extends Project {
   workspaces: WorkspaceView[];
   running_services: number;
   total_services: number;
+  external_services?: number;
 }
 
 export interface PanelConfig {

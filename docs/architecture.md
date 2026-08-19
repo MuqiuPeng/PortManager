@@ -129,6 +129,28 @@ own `package.json` is not reported as a separate project.
 Registration is idempotent and records only what is already there; it starts and
 stops nothing.
 
+## Declared, adopted, and observed
+
+A service the runtime started is one of three things it can report, and
+conflating them is how a project view ends up saying `0/3 running` while the
+port table shows three of its ports live.
+
+* **Managed** — the runtime started it, holds its process identity, and can
+  stop or restart it.
+* **Adopted** — the port the service declares is listening, held from inside
+  that service's own checkout. Reported as running, marked unmanaged: real, but
+  not ours to stop.
+* **External** — a live port in the checkout that no declared service explains.
+  Listed separately rather than pinned to whichever service looks closest,
+  because that would be a guess, and a service shown as running when something
+  else holds its port is worse than an honest gap.
+
+Adoption is deliberately strict: the declared port must match *and* be held
+from inside the workspace. Either half alone attributes unrelated processes to
+a service. In practice most already-running services land in the third bucket,
+because an inferred default port (Next.js 3000) rarely matches what is actually
+running (3007) — which is the honest answer, not a shortcoming to paper over.
+
 ## Port -> project resolution
 
 ```

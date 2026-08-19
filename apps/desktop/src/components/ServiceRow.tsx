@@ -33,6 +33,8 @@ export function ServiceRow({
 }: Props) {
   const live = isLive(service.status);
   const owner = service.instance?.started_by;
+  // Found already listening: real, but not ours to stop or restart.
+  const external = live && service.managed === false;
 
   return (
     <div
@@ -52,7 +54,11 @@ export function ServiceRow({
           {service.status}
           {/* Who started it is the answer to "why is this running?", so it sits
               next to the status rather than hidden in a detail pane. */}
-          {live && owner && owner !== "unknown" ? ` · started by ${OWNER_LABELS[owner]}` : ""}
+          {external
+            ? " · not started by the runtime"
+            : live && owner && owner !== "unknown"
+              ? ` · started by ${OWNER_LABELS[owner]}`
+              : ""}
         </span>
       </span>
 
@@ -66,7 +72,7 @@ export function ServiceRow({
             Open
           </button>
         )}
-        {live ? (
+        {external ? null : live ? (
           <>
             <button className="ghost" onClick={onRestart} disabled={busy}>
               Restart
