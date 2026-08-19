@@ -18,6 +18,7 @@ use crate::detect;
 use crate::docker::Docker;
 use crate::git;
 use crate::store::Store;
+use crate::strip_verbatim;
 use runtime_types::Result;
 
 /// Files that mark a directory as the root of a project.
@@ -144,7 +145,11 @@ pub fn discover(
     }
 
     for root in roots {
-        for candidate in walk(root, MAX_SCAN_DEPTH) {
+        // A caller that resolved the path with `std::fs::canonicalize` hands us
+        // an extended-length root, and every directory the walk builds beneath
+        // it would inherit the prefix.
+        let root = strip_verbatim(root.clone());
+        for candidate in walk(&root, MAX_SCAN_DEPTH) {
             found.entry(candidate.clone()).or_insert_with(|| describe(&candidate));
         }
     }
@@ -320,16 +325,33 @@ fn is_skipped(directory: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows compares paths case-insensitively, and it reports them that way too:
+/// the same directory arrives as `C:\WINDOWS\system32` from one API and
+/// `C:\Windows\System32` from another. Matching those against the prefix list
+/// literally lets every system process through the filter. Case is meaningful
+/// everywhere else, so only Windows folds it.
+fn fold_case(text: &str) -> String {
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text.to_string()
+    }
+}
+
 fn is_system_path(path: &Path) -> bool {
-    let text = path.to_string_lossy();
+    let text = fold_case(&path.to_string_lossy());
     if text == "/" {
         return true;
     }
-    if SYSTEM_FRAGMENTS.iter().any(|fragment| text.contains(fragment)) {
+    if SYSTEM_FRAGMENTS
+        .iter()
+        .any(|fragment| text.contains(&fold_case(fragment)))
+    {
         return true;
     }
     SYSTEM_PREFIXES.iter().any(|prefix| {
-        text == *prefix || text.starts_with(&format!("{prefix}{}", std::path::MAIN_SEPARATOR))
+        let prefix = fold_case(prefix);
+        text == prefix || text.starts_with(&format!("{prefix}{}", std::path::MAIN_SEPARATOR))
     })
 }
 
@@ -365,9 +387,18 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            assert!(is_system_path(Path::new("C:\\Windows\\System32")));
-            assert!(is_system_path(Path::new("C:\\Program Files\\nodejs")));
-            assert!(!is_system_path(Path::new("C:\\Users\\dev\\projects\\loom")));
+            assert!(is_system_path(Path::new(r"C:\Windows")));
+            assert!(is_system_path(Path::new(r"C:\Program Files\nodejs")));
+            // The casing the OS actually reports for a service's cwd. Compared
+            // literally these match nothing, which is how every system process
+            // used to get through the filter.
+            assert!(is_system_path(Path::new(r"C:\WINDOWS\system32")));
+            assert!(is_system_path(Path::new(r"c:\program files\nodejs")));
+            assert!(is_system_path(Path::new(
+                r"C:\Users\dev\AppData\Local\Temp\build-1234"
+            )));
+            assert!(!is_system_path(Path::new(r"E:\projects\loom")));
+            assert!(!is_system_path(Path::new(r"C:\Users\dev\projects\loom")));
         }
 
         // The case that motivated the filter, and the one that is the same

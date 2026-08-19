@@ -2492,9 +2492,32 @@ fn canonicalize(path: &Path) -> Result<PathBuf> {
     } else {
         path.to_path_buf()
     };
-    std::fs::canonicalize(&expanded).map_err(|err| {
+    let resolved = std::fs::canonicalize(&expanded).map_err(|err| {
         RuntimeError::io(format!("cannot resolve {}: {err}", expanded.display()))
-    })
+    })?;
+    Ok(strip_verbatim(resolved))
+}
+
+/// Drop Windows' extended-length `\\?\` prefix.
+///
+/// `std::fs::canonicalize` always returns one. It is a legal path for most of
+/// Win32 but not all of it — `cmd.exe` refuses it as a working directory, which
+/// is how every service is launched — and nothing else reports paths that way,
+/// so a root stored in that shape matches neither a process working directory
+/// nor `git rev-parse` output.
+pub(crate) fn strip_verbatim(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    let text = path.to_string_lossy().into_owned();
+    // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share`.
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
 }
 
 /// Why restarting a supervised entry would fail, when it would.

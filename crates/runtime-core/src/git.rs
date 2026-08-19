@@ -32,7 +32,7 @@ pub struct WorktreeEntry {
 
 /// Read git state for a directory, or `None` when it is not a repository.
 pub fn info(path: &Path) -> Option<GitInfo> {
-    let root = PathBuf::from(run(path, &["rev-parse", "--show-toplevel"])?);
+    let root = git_path(&run(path, &["rev-parse", "--show-toplevel"])?);
 
     // `--git-dir` points into `.git/worktrees/<name>` for a linked worktree,
     // while `--git-common-dir` always points at the primary `.git`. Comparing
@@ -47,7 +47,7 @@ pub fn info(path: &Path) -> Option<GitInfo> {
     let main_root = if is_worktree {
         common_dir
             .as_deref()
-            .map(PathBuf::from)
+            .map(git_path)
             .and_then(|dir| dir.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| root.clone())
     } else {
@@ -80,7 +80,7 @@ pub fn worktrees(path: &Path) -> Result<Vec<WorktreeEntry>> {
                 entries.push(entry);
             }
             current = Some(WorktreeEntry {
-                path: PathBuf::from(raw.trim()),
+                path: git_path(raw.trim()),
                 branch: None,
                 commit: None,
                 is_main: entries.is_empty(),
@@ -101,6 +101,19 @@ pub fn worktrees(path: &Path) -> Result<Vec<WorktreeEntry>> {
     Ok(entries)
 }
 
+/// Turn a path as git prints it into the spelling the rest of the system uses.
+///
+/// git reports POSIX separators on every platform — `E:/projects/app` — while
+/// working directories and `canonicalize` give `E:\projects\app` on Windows.
+/// Left alone, the two spellings of one directory become two projects.
+fn git_path(text: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(text.replace('/', "\\"))
+    } else {
+        PathBuf::from(text)
+    }
+}
+
 fn run(cwd: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .args(args)
@@ -117,5 +130,32 @@ fn run(cwd: &Path, args: &[&str]) -> Option<String> {
         None
     } else {
         Some(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_paths_use_the_platform_separator() {
+        let path = git_path("E:/projects/app");
+        if cfg!(windows) {
+            assert_eq!(path, PathBuf::from(r"E:\projects\app"));
+        } else {
+            assert_eq!(path, PathBuf::from("E:/projects/app"));
+        }
+    }
+
+    /// The repository this test runs in, read through the real `git` binary.
+    #[test]
+    fn info_reports_a_root_in_the_platform_spelling() {
+        let Some(info) = info(Path::new(env!("CARGO_MANIFEST_DIR"))) else {
+            return; // not a checkout; nothing to assert
+        };
+        let text = info.main_root.to_string_lossy().into_owned();
+        if cfg!(windows) {
+            assert!(!text.contains('/'), "forward slashes survived: {text}");
+        }
     }
 }
