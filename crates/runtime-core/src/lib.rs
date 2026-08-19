@@ -87,6 +87,16 @@ impl Runtime {
         ))
     }
 
+    /// An ephemeral runtime that still captures output to files.
+    ///
+    /// Capture files are what keep a service alive when nothing is reading, so
+    /// testing that property needs them.
+    pub fn in_memory_with_logs(directory: impl AsRef<Path>) -> Result<Self> {
+        let mut runtime = Self::in_memory()?;
+        runtime.logs = Arc::new(LogStore::persistent(logs::DEFAULT_CAPACITY, directory)?);
+        Ok(runtime)
+    }
+
     pub fn with_parts(adapter: Arc<dyn PlatformAdapter>, store: Arc<Store>) -> Self {
         Self {
             adapter,

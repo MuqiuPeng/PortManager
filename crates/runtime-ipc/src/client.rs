@@ -115,16 +115,46 @@ pub async fn connect_or_start() -> Result<Client> {
     wait_for_daemon(STARTUP_TIMEOUT).await
 }
 
-/// Launch the daemon detached from the calling process.
+/// Launch the daemon, detached from whoever launched it.
+///
+/// The detaching is the point. A daemon left in its launcher's process group
+/// dies with it: Ctrl-C in the terminal that ran a `runtime` command, or any
+/// signal aimed at the desktop app's group, takes it down — and with it the
+/// supervision of every service it started. Those services survive, because
+/// each gets its own group, but they become orphans nobody is watching.
+///
+/// The daemon is meant to outlive every client. That has to be arranged, not
+/// assumed.
 pub fn spawn_daemon() -> Result<()> {
     let binary = daemon_binary()?;
-    std::process::Command::new(&binary)
+    let mut command = std::process::Command::new(&binary);
+    command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    detach(&mut command);
+
+    command
         .spawn()
         .map_err(|err| RuntimeError::io(format!("failed to start {}: {err}", binary.display())))?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn detach(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // A group of its own, so a signal to the launcher's group misses it.
+    command.process_group(0);
+}
+
+#[cfg(windows)]
+fn detach(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    /// Ctrl-C in the launching console does not reach it.
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    /// No console of its own, and none inherited.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
 }
 
 /// Locate the daemon binary.

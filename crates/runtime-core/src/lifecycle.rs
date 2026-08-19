@@ -182,8 +182,23 @@ impl Runtime {
         command.env("LOCAL_RUNTIME_SERVICE", &service.name);
         command.env("LOCAL_RUNTIME_SERVICE_ID", service.id.as_str());
         command.stdin(Stdio::null());
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
+
+        // A file, not a pipe. A pipe has a read end, and that read end belongs
+        // to the daemon: when the daemon dies the pipe breaks and the next
+        // thing the service prints kills it with SIGPIPE. Capturing output must
+        // not put the daemon in the service's critical path.
+        let capture = self.logs_arc().capture_paths(&service.id);
+        match &capture {
+            Some((out, err)) => {
+                command.stdout(Stdio::from(open_capture(out)?));
+                command.stderr(Stdio::from(open_capture(err)?));
+            }
+            // No log directory — an in-memory store, which is what tests use.
+            None => {
+                command.stdout(Stdio::piped());
+                command.stderr(Stdio::piped());
+            }
+        }
 
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(false);
@@ -237,11 +252,22 @@ impl Runtime {
         }
 
         let mut tasks = Vec::new();
-        if let Some(stdout) = child.stdout.take() {
-            tasks.push(self.pump_logs(service.id.clone(), stdout, LogStream::Stdout));
-        }
-        if let Some(stderr) = child.stderr.take() {
-            tasks.push(self.pump_logs(service.id.clone(), stderr, LogStream::Stderr));
+        match &capture {
+            Some((out, err)) => {
+                // Tail from where the file already ends: a restarted service
+                // appends to the same file, and its predecessor's output has
+                // been ingested already.
+                tasks.push(self.tail_capture(service.id.clone(), out.clone(), LogStream::Stdout));
+                tasks.push(self.tail_capture(service.id.clone(), err.clone(), LogStream::Stderr));
+            }
+            None => {
+                if let Some(stdout) = child.stdout.take() {
+                    tasks.push(self.pump_logs(service.id.clone(), stdout, LogStream::Stdout));
+                }
+                if let Some(stderr) = child.stderr.take() {
+                    tasks.push(self.pump_logs(service.id.clone(), stderr, LogStream::Stderr));
+                }
+            }
         }
         tasks.push(self.watch_exit(service.clone(), instance.clone(), child));
         tasks.push(self.watch_health(service.clone(), instance.clone()));
@@ -305,6 +331,75 @@ impl Runtime {
             service: service.name.clone(),
             exit_code,
             detail,
+        })
+    }
+
+    /// Follow a capture file, turning new lines into log entries.
+    ///
+    /// Polling rather than watching: the file is local, appended by one writer,
+    /// and a filesystem watcher would be a dependency and a permission for
+    /// something a 150ms read already does.
+    fn tail_capture(
+        &self,
+        service_id: ServiceId,
+        path: std::path::PathBuf,
+        stream: LogStream,
+    ) -> tokio::task::JoinHandle<()> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let logs = self.logs_arc();
+        let events = self.events().clone();
+
+        tokio::spawn(async move {
+            // Start at the end: whatever is already in the file belongs to an
+            // earlier run and has been ingested.
+            let mut offset = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            let mut partial = String::new();
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+
+                let Ok(mut file) = std::fs::File::open(&path) else {
+                    continue;
+                };
+                let length = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+                if length < offset {
+                    // Truncated or rotated underneath us; start over.
+                    offset = 0;
+                    partial.clear();
+                }
+                if length == offset {
+                    continue;
+                }
+                if file.seek(SeekFrom::Start(offset)).is_err() {
+                    continue;
+                }
+
+                let mut buffer = Vec::new();
+                if file.read_to_end(&mut buffer).is_err() {
+                    continue;
+                }
+                offset += buffer.len() as u64;
+                partial.push_str(&String::from_utf8_lossy(&buffer));
+
+                // Whatever follows the last newline is an unfinished line; keep
+                // it until the rest arrives rather than splitting a message.
+                let tail = match partial.rfind('\n') {
+                    Some(index) => partial.split_off(index + 1),
+                    None => continue,
+                };
+                let complete = std::mem::replace(&mut partial, tail);
+
+                for line in complete.lines() {
+                    match logs.append(&service_id, stream, line.to_string()) {
+                        Ok(entry) => events.publish(RuntimeEvent::Log(entry)),
+                        Err(err) => {
+                            tracing::warn!(%err, "dropping log line");
+                            return;
+                        }
+                    }
+                }
+            }
         })
     }
 
@@ -653,6 +748,18 @@ impl Runtime {
         }
         Ok(stopped)
     }
+}
+
+/// Open a capture file for appending, creating it if needed.
+fn open_capture(path: &std::path::Path) -> Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| RuntimeError::io(format!("cannot open {}: {err}", path.display())))
 }
 
 /// Without an explicit check, a service with a port is judged by whether that

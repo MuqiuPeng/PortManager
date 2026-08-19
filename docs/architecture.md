@@ -163,6 +163,20 @@ leads somewhere.
 
 ## Logs
 
+Services write into capture files, not into a pipe.
+
+A pipe has a read end, and that read end belongs to the daemon. When the daemon
+dies the pipe breaks, and the next thing a service prints kills it with
+`SIGPIPE` — so capturing output quietly made every service's life depend on the
+daemon's, which is the one thing the daemon must not be for. It went unnoticed
+because the first services tested were Node servers, and Node ignores `SIGPIPE`;
+a shell loop dies immediately.
+
+The daemon tails those files (`<service id>.out` and `.err`) from wherever they
+already end, turning new lines into entries. Output written while the daemon was
+down stays in the capture file but is not ingested — the daemon resumes at the
+end rather than replaying.
+
 A bounded ring buffer per service answers reads; a file beside it is what makes
 the answer survive a daemon restart. That matters because "why did it die?" is
 asked *after* the thing died — often after the daemon was restarted too, which

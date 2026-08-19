@@ -10,6 +10,11 @@
 //! Reads are cursor-based so an agent can ask "what is new since seq N" instead
 //! of re-reading the whole buffer, which is the difference between a useful
 //! tool call and a context blowout.
+//!
+//! Services write into *capture files* rather than into a pipe held by the
+//! daemon. A pipe would tie every service's life to the daemon's: when the
+//! daemon dies the read end closes, and the next thing the service prints kills
+//! it with `SIGPIPE`. A file has no other end to lose.
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
@@ -156,12 +161,25 @@ impl LogStore {
             .map(|log| log.next_seq.saturating_sub(1)))
     }
 
+    /// Where a service's raw output is captured.
+    ///
+    /// `None` for an in-memory store, which is what tests use.
+    pub fn capture_paths(&self, service_id: &ServiceId) -> Option<(PathBuf, PathBuf)> {
+        let directory = self.directory.as_ref()?;
+        Some((
+            directory.join(format!("{}.out", service_id.as_str())),
+            directory.join(format!("{}.err", service_id.as_str())),
+        ))
+    }
+
     pub fn clear(&self, service_id: &ServiceId) -> Result<()> {
         let mut guard = self.lock()?;
         guard.remove(service_id);
         if let Some(directory) = &self.directory {
             let _ = std::fs::remove_file(log_path(directory, service_id));
             let _ = std::fs::remove_file(rotated_path(directory, service_id));
+            let _ = std::fs::remove_file(directory.join(format!("{}.out", service_id.as_str())));
+            let _ = std::fs::remove_file(directory.join(format!("{}.err", service_id.as_str())));
         }
         Ok(())
     }
@@ -186,7 +204,9 @@ impl LogStore {
             let id = name
                 .trim_end_matches(".log")
                 .trim_end_matches(".1")
-                .trim_end_matches(".log");
+                .trim_end_matches(".log")
+                .trim_end_matches(".out")
+                .trim_end_matches(".err");
             if keep.iter().any(|service| service.as_str() == id) {
                 continue;
             }

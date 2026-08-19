@@ -743,3 +743,49 @@ fn a_deleted_service_stays_deleted() {
     let after = runtime.get_project(&view.project.id).unwrap();
     assert_eq!(after.total_services, 0);
 }
+
+/// The daemon dying must not take the services with it.
+///
+/// Output used to go through a pipe held by the daemon. When the daemon died
+/// the read end closed, and the next thing a service printed killed it with
+/// SIGPIPE — so capturing logs quietly made every service's life depend on the
+/// daemon's, which is the one thing the daemon is not supposed to be for.
+#[tokio::test]
+async fn a_service_writing_output_does_not_depend_on_a_reader() {
+    let logs = tempfile::tempdir().unwrap();
+    // Long-lived on purpose: `start_service` spends its own grace period
+    // watching for an immediate failure, so a short command would simply have
+    // finished by the time this asserts anything.
+    let config = r#"{ "name": "chatty", "services": {
+        "loop": { "command": "while true; do echo tick; sleep 0.2; done" } } }"#;
+    let dir = repo(&[(".runtime.json", config)]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .unwrap();
+    let pid = runtime
+        .service_view(&service)
+        .unwrap()
+        .instance
+        .expect("an instance")
+        .pid;
+
+    // Drop everything the runtime holds — the tailing tasks, the child handle,
+    // the log store. This is what a killed daemon leaves behind.
+    drop(runtime);
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let alive = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string()])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+    assert!(alive, "the service died when nothing was reading its output");
+
+    let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+}
