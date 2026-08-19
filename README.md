@@ -66,6 +66,12 @@ pnpm install
 pnpm tauri dev          # or: pnpm tauri build
 ```
 
+Always launch it through the Tauri CLI. `cargo build` produces a **dev** binary
+whatever the profile — `tauri-build` takes that from the CLI's environment, not
+from cargo — and a dev binary loads its frontend from the Vite server rather
+than from itself, so running `target/debug/runtime-desktop` directly opens a
+blank window. It prints an explanation to stderr when that happens.
+
 The window shows projects in a sidebar and, per workspace, the services with
 their live status, port and owner. Selecting a service streams its output; the
 Ports tab lists everything listening on the machine, registered or not.
