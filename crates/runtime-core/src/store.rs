@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS port_leases (
 );
 CREATE INDEX IF NOT EXISTS idx_leases_service ON port_leases(service_id);
 
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id           TEXT PRIMARY KEY,
     provider     TEXT NOT NULL,
@@ -579,6 +584,36 @@ impl Store {
                 )
                 .map_err(sqlite_err)?;
             Ok(removed)
+        })
+    }
+
+    // ---- settings ------------------------------------------------------
+    //
+    // Opaque strings on purpose. The panel's geometry means nothing to the
+    // daemon, but keeping it here is what makes it survive reinstalling the
+    // app, and gives one answer to "where is the state" rather than two.
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sqlite_err)
+        })
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+            .map_err(sqlite_err)?;
+            Ok(())
         })
     }
 

@@ -746,6 +746,16 @@ impl Runtime {
         self.store.release_lease(port)
     }
 
+    // ---- settings ------------------------------------------------------
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        self.store.get_setting(key)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.store.set_setting(key, value)
+    }
+
     // ---- logs ----------------------------------------------------------
 
     pub fn read_logs(

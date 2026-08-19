@@ -429,6 +429,7 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
             out
         }
         ResponseBody::Logs { items } => render::logs(items),
+        ResponseBody::Setting { value } => value.clone().unwrap_or_else(|| "(unset)".to_string()),
         ResponseBody::Sessions { items } => items
             .iter()
             .map(|session| format!("{} {} ({})", session.id, session.client, session.provider))

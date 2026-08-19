@@ -242,6 +242,17 @@ impl Dispatcher {
                 })
             }
 
+            // ---- settings ----------------------------------------------
+
+            Request::GetSetting { key } => Ok(ResponseBody::Setting {
+                value: runtime.get_setting(&key)?,
+            }),
+
+            Request::SetSetting { key, value } => {
+                runtime.set_setting(&key, &value)?;
+                Ok(ResponseBody::Done { ok: true })
+            }
+
             // ---- sessions ----------------------------------------------
 
             Request::ListSessions => Ok(ResponseBody::Sessions { items: runtime.store().list_sessions()? }),

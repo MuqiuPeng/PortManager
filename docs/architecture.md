@@ -278,6 +278,16 @@ A panel revealed by hovering is also not "already open" as far as the shortcut
 is concerned — pressing it focuses rather than dismisses, or the key appears to
 do nothing.
 
-Edge detection polls the pointer every 90ms on the main thread. The alternative,
+Settings live in the daemon's `settings` table as an opaque JSON blob. The
+geometry means nothing to the daemon, but keeping it there is what makes it
+survive reinstalling the bundle, and leaves one answer to "where is the state"
+instead of two. A blob it cannot parse — an older layout — falls back to
+defaults with a warning rather than blocking the settings screen.
+
+Rebinding the shortcut registers the new accelerator *before* releasing the old
+one, so a combination another app already owns is refused with the previous one
+still in force.
+
+Edge detection polls the pointer every 80ms on the main thread. The alternative,
 a global `CGEventTap`, would demand Accessibility permission for something this
 small; polling asks for nothing and is imperceptible.

@@ -145,6 +145,15 @@ pub enum Request {
         since_seq: Option<u64>,
     },
 
+    /// Read a stored setting. Values are opaque to the daemon.
+    GetSetting {
+        key: String,
+    },
+    SetSetting {
+        key: String,
+        value: String,
+    },
+
     ListSessions,
     RegisterSession {
         provider: String,
@@ -184,6 +193,7 @@ pub enum ResponseBody {
     Ports { items: Vec<PortOwner> },
     Reservation(PortReservation),
     Logs { items: Vec<LogLine> },
+    Setting { value: Option<String> },
     Sessions { items: Vec<AgentSession> },
     Session(AgentSession),
     Done { ok: bool },

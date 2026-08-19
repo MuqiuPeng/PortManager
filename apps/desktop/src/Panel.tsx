@@ -30,9 +30,9 @@ export default function Panel() {
 
   useEffect(() => {
     void refresh();
-    void api.getPanelConfig().then((config) => {
-      setPinned(config.pinned);
-      setEdge(config.edge);
+    void api.getPanelSettings().then((settings) => {
+      setPinned(settings.pinned);
+      setEdge(settings.edge);
     });
   }, [refresh]);
 
@@ -91,8 +91,8 @@ export default function Panel() {
   async function togglePinned() {
     const next = !pinned;
     setPinned(next);
-    const config = await api.getPanelConfig();
-    await api.setPanelConfig({ ...config, pinned: next });
+    const settings = await api.getPanelSettings();
+    await api.setPanelSettings({ ...settings, pinned: next });
   }
 
   if (state === "island") {

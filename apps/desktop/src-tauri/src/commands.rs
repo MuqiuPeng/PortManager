@@ -222,25 +222,70 @@ pub async fn daemon_info(state: State<'_, DaemonHandle>) -> CmdResult<DaemonInfo
 
 use std::sync::Arc;
 
-use runtime_adapter::PanelConfig;
+use runtime_adapter::ScreenInfo;
 use tauri::AppHandle;
 
-use crate::panel::PanelController;
+use crate::panel;
+use crate::panel::{PanelController, PanelSettings};
 
+/// Panel settings, as stored by the daemon.
 #[tauri::command]
-pub fn get_panel_config(controller: State<'_, Arc<PanelController>>) -> PanelConfig {
-    controller.config()
+pub async fn get_panel_settings(
+    state: State<'_, DaemonHandle>,
+    controller: State<'_, Arc<PanelController>>,
+) -> CmdResult<PanelSettings> {
+    // The daemon is the record; the controller is a live copy of it.
+    match call(&state, Request::GetSetting { key: panel::SETTINGS_KEY.to_string() }).await? {
+        ResponseBody::Setting { value: Some(raw) } => match serde_json::from_str(&raw) {
+            Ok(settings) => Ok(settings),
+            // A stored blob from an older layout should not brick the screen.
+            Err(err) => {
+                tracing::warn!(%err, "stored panel settings are unreadable; using defaults");
+                Ok(controller.settings())
+            }
+        },
+        _ => Ok(controller.settings()),
+    }
 }
 
 #[tauri::command]
-pub fn set_panel_config(
+pub async fn set_panel_settings(
     app: AppHandle,
+    state: State<'_, DaemonHandle>,
     controller: State<'_, Arc<PanelController>>,
-    config: PanelConfig,
+    settings: PanelSettings,
 ) -> CmdResult<()> {
+    let previous = controller.settings();
+    controller.set_screen(settings.screen.clone());
+
+    // Re-registering only when it changed avoids a window where no shortcut is
+    // registered at all.
+    if settings.shortcut != previous.shortcut {
+        crate::rebind_shortcut(&app, &previous.shortcut, &settings.shortcut)
+            .map_err(|err| err.to_string())?;
+        controller.set_shortcut(settings.shortcut.clone());
+    }
+
     controller
-        .set_config(&app, config)
-        .map_err(|err| err.to_string())
+        .set_config(&app, settings.config.clone())
+        .map_err(|err| err.to_string())?;
+
+    let raw = serde_json::to_string(&settings).map_err(|err| err.to_string())?;
+    call(
+        &state,
+        Request::SetSetting {
+            key: panel::SETTINGS_KEY.to_string(),
+            value: raw,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// Screens the panel can be docked to, for the settings screen.
+#[tauri::command]
+pub fn list_screens() -> Vec<ScreenInfo> {
+    panel::screens()
 }
 
 /// Collapse the panel from inside it — Escape, or after an action completes.

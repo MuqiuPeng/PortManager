@@ -103,6 +103,9 @@ underneath.
 | Menu bar icon | Same, on left click |
 | Pin | Keeps it expanded, no auto-collapse |
 
+Edge, size, animation and the shortcut are all editable under **Settings** in the
+main window. They are stored by the daemon, so they survive reinstalling the app.
+
 The app is a menu-bar accessory while the main window is closed — no Dock icon,
 no place in ⌘-Tab — and a normal foreground app while it is open, because macOS
 withholds full-screen support from accessory apps. Closing the main window

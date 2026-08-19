@@ -5,8 +5,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   DaemonInfo,
   Discovery,
-  PanelConfig,
+  PanelSettings,
   PanelState,
+  ScreenInfo,
   LogLine,
   PortOwner,
   ProjectView,
@@ -55,9 +56,12 @@ export const api = {
 
   daemonInfo: () => invoke<DaemonInfo>("daemon_info"),
 
-  getPanelConfig: () => invoke<PanelConfig>("get_panel_config"),
+  getPanelSettings: () => invoke<PanelSettings>("get_panel_settings"),
 
-  setPanelConfig: (config: PanelConfig) => invoke<void>("set_panel_config", { config }),
+  setPanelSettings: (settings: PanelSettings) =>
+    invoke<void>("set_panel_settings", { settings }),
+
+  listScreens: () => invoke<ScreenInfo[]>("list_screens"),
 
   hidePanel: () => invoke<void>("hide_panel"),
 

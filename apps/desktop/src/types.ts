@@ -114,6 +114,23 @@ export interface PanelConfig {
   pinned: boolean;
 }
 
+/** Panel geometry plus everything else it remembers between launches. */
+export interface PanelSettings extends PanelConfig {
+  shortcut: string;
+  /** Screen id to dock to; absent follows the pointer. */
+  screen?: string;
+}
+
+export interface ScreenInfo {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale_factor: number;
+  primary: boolean;
+}
+
 /** The two sizes the panel lives at. */
 export type PanelState = "island" | "expanded";
 

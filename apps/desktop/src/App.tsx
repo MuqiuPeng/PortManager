@@ -6,10 +6,11 @@ import { ExternalRow } from "./components/ExternalRow";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
+import { Settings } from "./components/Settings";
 import { ServiceRow } from "./components/ServiceRow";
 import type { Discovery, LogLine, PortOwner, ProjectView, ServiceView } from "./types";
 
-type Tab = "services" | "ports" | "discover";
+type Tab = "services" | "ports" | "discover" | "settings";
 
 /** Ports change without any event of their own, so that tab polls. */
 const PORT_POLL_MS = 4000;
@@ -203,6 +204,12 @@ export default function App() {
           >
             Discover
           </button>
+          <button
+            className={tab === "settings" ? "tab active" : "tab"}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
         </nav>
       </header>
 
@@ -215,7 +222,11 @@ export default function App() {
         </div>
       )}
 
-      {tab === "discover" ? (
+      {tab === "settings" ? (
+        <main className="ports-pane">
+          <Settings />
+        </main>
+      ) : tab === "discover" ? (
         <main className="ports-pane">
           <DiscoveryPanel
             discoveries={discoveries}

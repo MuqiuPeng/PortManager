@@ -23,9 +23,6 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 /// The channel the frontend listens on for daemon events.
 const EVENT_CHANNEL: &str = "runtime://event";
 
-/// Chosen for a low chance of collision; configurable from the panel.
-const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Alt+L";
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -63,6 +60,7 @@ pub fn run() {
                 }
                 controller.watch_edge(&handle);
                 register_shortcut(&handle);
+                restore_settings(handle.clone());
             }
             Ok(())
         })
@@ -81,8 +79,9 @@ pub fn run() {
             commands::list_ports,
             commands::check_port,
             commands::daemon_info,
-            commands::get_panel_config,
-            commands::set_panel_config,
+            commands::get_panel_settings,
+            commands::set_panel_settings,
+            commands::list_screens,
             commands::hide_panel,
             commands::open_main_window,
         ])
@@ -115,10 +114,31 @@ fn register_shortcut(app: &AppHandle) {
         return;
     }
 
+    bind_shortcut(app, panel::DEFAULT_SHORTCUT);
+}
+
+fn bind_shortcut(app: &AppHandle, shortcut: &str) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    if let Err(err) = app.global_shortcut().register(DEFAULT_SHORTCUT) {
-        tracing::warn!(%err, shortcut = DEFAULT_SHORTCUT, "could not register the shortcut");
+    if let Err(err) = app.global_shortcut().register(shortcut) {
+        // Another app may already own it. The tray and the screen edge still
+        // work, so this is a degraded state rather than a failure.
+        tracing::warn!(%err, shortcut, "could not register the shortcut");
     }
+}
+
+/// Move the global shortcut, keeping the old one only if the new one is refused.
+pub(crate) fn rebind_shortcut(
+    app: &AppHandle,
+    previous: &str,
+    next: &str,
+) -> runtime_types::Result<()> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    app.global_shortcut()
+        .register(next)
+        .map_err(|err| runtime_types::RuntimeError::invalid(format!("{next} is unavailable: {err}")))?;
+    let _ = app.global_shortcut().unregister(previous);
+    Ok(())
 }
 
 /// Menu-bar item on macOS, system tray on Windows.
@@ -248,6 +268,37 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// Load the stored panel settings once the daemon is reachable.
+///
+/// Asynchronous because it needs the daemon, which may still be starting; the
+/// panel meanwhile rests with defaults rather than waiting for it.
+fn restore_settings(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let handle = app.state::<DaemonHandle>().inner().clone();
+        let request = runtime_ipc::protocol::Request::GetSetting {
+            key: panel::SETTINGS_KEY.to_string(),
+        };
+        let Ok(runtime_ipc::protocol::ResponseBody::Setting { value: Some(raw) }) =
+            handle.call(request).await
+        else {
+            return;
+        };
+        let Ok(settings) = serde_json::from_str::<panel::PanelSettings>(&raw) else {
+            tracing::warn!("stored panel settings are unreadable; keeping defaults");
+            return;
+        };
+
+        let controller = app.state::<Arc<PanelController>>().inner().clone();
+        if settings.shortcut != panel::DEFAULT_SHORTCUT {
+            let _ = rebind_shortcut(&app, panel::DEFAULT_SHORTCUT, &settings.shortcut);
+        }
+        controller.load(settings.clone());
+        if let Err(err) = controller.set_config(&app, settings.config) {
+            tracing::warn!(%err, "could not apply stored panel settings");
+        }
+    });
 }
 
 /// Subscribe to the daemon's event stream and re-emit it to the frontend.

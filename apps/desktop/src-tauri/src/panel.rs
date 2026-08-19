@@ -32,6 +32,15 @@ pub const PANEL_LABEL: &str = "panel";
 /// The frontend listens on this to switch between tab and full content.
 pub const STATE_CHANNEL: &str = "panel://state";
 
+/// Where the panel's geometry is stored.
+///
+/// In the daemon rather than beside the app, so it survives reinstalling the
+/// bundle and there is one answer to "where is the state" instead of two.
+pub const SETTINGS_KEY: &str = "desktop.panel";
+
+/// Chosen for a low chance of collision; changeable from the settings screen.
+pub const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Alt+L";
+
 /// How often the pointer is checked against the tab.
 ///
 /// Cheap enough to be unnoticeable and fast enough to feel immediate; a global
@@ -44,8 +53,36 @@ const HOVER_POLL: Duration = Duration::from_millis(80);
 /// on its way to a button.
 const COLLAPSE_MARGIN: f64 = 32.0;
 
+/// Everything the panel remembers between launches.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PanelSettings {
+    #[serde(flatten)]
+    pub config: PanelConfig,
+    /// The global shortcut that summons the panel.
+    #[serde(default = "default_shortcut")]
+    pub shortcut: String,
+    /// Screen to dock to; `None` follows the pointer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<String>,
+}
+
+fn default_shortcut() -> String {
+    DEFAULT_SHORTCUT.to_string()
+}
+
+impl Default for PanelSettings {
+    fn default() -> Self {
+        Self {
+            config: PanelConfig::default(),
+            shortcut: default_shortcut(),
+            screen: None,
+        }
+    }
+}
+
 pub struct PanelController {
     config: Mutex<PanelConfig>,
+    shortcut: Mutex<String>,
     /// Screen id to dock to; `None` follows the pointer.
     screen: Mutex<Option<String>>,
     expanded: AtomicBool,
@@ -58,6 +95,7 @@ impl Default for PanelController {
     fn default() -> Self {
         Self {
             config: Mutex::new(PanelConfig::default()),
+            shortcut: Mutex::new(default_shortcut()),
             screen: Mutex::new(None),
             expanded: AtomicBool::new(false),
             from_hover: AtomicBool::new(false),
@@ -72,6 +110,43 @@ impl PanelController {
 
     pub fn config(&self) -> PanelConfig {
         self.config.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    pub fn settings(&self) -> PanelSettings {
+        PanelSettings {
+            config: self.config(),
+            shortcut: self
+                .shortcut
+                .lock()
+                .map(|s| s.clone())
+                .unwrap_or_else(|_| default_shortcut()),
+            screen: self.screen.lock().map(|s| s.clone()).unwrap_or(None),
+        }
+    }
+
+    /// Adopt settings read back from the daemon, without re-saving them.
+    pub fn load(&self, settings: PanelSettings) {
+        if let Ok(mut guard) = self.config.lock() {
+            *guard = settings.config;
+        }
+        if let Ok(mut guard) = self.shortcut.lock() {
+            *guard = settings.shortcut;
+        }
+        if let Ok(mut guard) = self.screen.lock() {
+            *guard = settings.screen;
+        }
+    }
+
+    pub fn set_screen(&self, screen: Option<String>) {
+        if let Ok(mut guard) = self.screen.lock() {
+            *guard = screen;
+        }
+    }
+
+    pub fn set_shortcut(&self, shortcut: String) {
+        if let Ok(mut guard) = self.shortcut.lock() {
+            *guard = shortcut;
+        }
     }
 
     pub fn set_config(&self, app: &AppHandle, config: PanelConfig) -> Result<()> {
@@ -235,6 +310,13 @@ where
 pub fn panel_window(app: &AppHandle) -> Result<WebviewWindow> {
     app.get_webview_window(PANEL_LABEL)
         .ok_or_else(|| RuntimeError::not_found("window", PANEL_LABEL))
+}
+
+/// Screens the panel can dock to.
+pub fn screens() -> Vec<runtime_adapter::ScreenInfo> {
+    window_provider()
+        .and_then(|provider| provider.screens().ok())
+        .unwrap_or_default()
 }
 
 /// Turn the panel into a real platform panel. Called once, before first show.
