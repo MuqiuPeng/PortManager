@@ -45,6 +45,7 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
     Object.entries(service.env ?? {}).map(([key, value]) => ({ key, value })),
   );
   const [busy, setBusy] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const originalKeys = useMemo(() => Object.keys(service.env ?? {}), [service.env]);
@@ -80,8 +81,11 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
     }
   }
 
+  // Two steps rather than `window.confirm`, which the webview does not
+  // implement — it returns false, so the button silently did nothing.
   async function remove() {
-    if (!window.confirm(`Remove the definition of "${service.name}"? Nothing running is stopped.`)) {
+    if (!confirmingRemove) {
+      setConfirmingRemove(true);
       return;
     }
     setBusy(true);
@@ -207,8 +211,11 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
 
         <footer className="sheet-foot">
           <button className="ghost danger" onClick={() => void remove()} disabled={busy}>
-            Remove service
+            {confirmingRemove ? "Really remove?" : "Remove service"}
           </button>
+          {confirmingRemove && (
+            <span className="unit">nothing running is stopped</span>
+          )}
           <span className="spacer" />
           <button className="ghost" onClick={onClose} disabled={busy}>
             Cancel

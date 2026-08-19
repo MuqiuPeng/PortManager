@@ -1009,3 +1009,7 @@ button {
 .inline-hint {
   margin: 2px 0 0;
 }
+
+.sheet.narrow {
+  width: min(420px, calc(100vw - 48px));
+}

@@ -314,6 +314,18 @@ Two things still poll, because the daemon has no event for them: the ports table
 (the socket table changes without the runtime's involvement) and log tailing,
 which uses the `since_seq` cursor so each tick transfers only new lines.
 
+## Dialogs
+
+The webview implements none of the JavaScript panel callbacks, so `alert`,
+`confirm` and `prompt` do nothing and return null or false. Three controls were
+built on them and were silently dead: adding a service, scanning a folder, and
+removing a service — the last being a destructive action whose button appeared
+to work and did not.
+
+Anything that needs an answer from the user is an in-app sheet. Confirmation is
+a two-step button rather than a dialog: the first click arms it, the second
+performs it.
+
 ## Windows and activation
 
 The activation policy is not fixed: it follows the main window. `Regular` while

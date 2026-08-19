@@ -7,6 +7,7 @@ import { ExternalRow } from "./components/ExternalRow";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
+import { PromptSheet } from "./components/PromptSheet";
 import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
@@ -30,6 +31,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ServiceView | null>(null);
   const [loaded, setLoaded] = useState(false);
+  /** Which in-app prompt is open, if any. */
+  const [prompt, setPrompt] = useState<"add-service" | "scan-folder" | null>(null);
+  const [promptProject, setPromptProject] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const logCursor = useRef<number | undefined>(undefined);
@@ -180,24 +184,48 @@ export default function App() {
   }
 
   /** Declare something detection did not find. */
-  async function handleAddService(projectName: string) {
-    const name = window.prompt("Service name, e.g. worker");
-    if (!name?.trim()) return;
-    const command = window.prompt(`Command to start "${name.trim()}"`);
-    if (!command?.trim()) return;
-    await act(() => api.addService(projectName, name.trim(), command.trim()));
+  async function handleAddService(projectName: string, name: string, command: string) {
+    await act(() => api.addService(projectName, name, command));
   }
 
   /** Scanning a folder finds projects that are not currently running. */
-  async function handleScanFolder() {
-    const path = window.prompt("Folder to scan for projects");
-    if (!path?.trim()) return;
+  async function handleScanFolder(path: string) {
     setTab("discover");
-    await scan([path.trim()]);
+    await scan([path]);
   }
 
   return (
     <div className="app">
+      {prompt === "add-service" && promptProject && (
+        <PromptSheet
+          title={`New service in ${promptProject}`}
+          fields={[
+            { label: "Name", placeholder: "worker" },
+            { label: "Command", placeholder: "pnpm run worker", mono: true },
+          ]}
+          hint="Port, environment and the rest can be set afterwards with Edit."
+          onCancel={() => setPrompt(null)}
+          onConfirm={([name, command]) => {
+            setPrompt(null);
+            void handleAddService(promptProject, name, command);
+          }}
+        />
+      )}
+
+      {prompt === "scan-folder" && (
+        <PromptSheet
+          title="Scan a folder"
+          confirmLabel="Scan"
+          fields={[{ label: "Folder", placeholder: "/Users/you/code", mono: true }]}
+          hint="Projects that are running are found without this; a folder scan also finds stopped ones."
+          onCancel={() => setPrompt(null)}
+          onConfirm={([path]) => {
+            setPrompt(null);
+            void handleScanFolder(path);
+          }}
+        />
+      )}
+
       {editing && (
         <ServiceEditor
           service={editing}
@@ -260,7 +288,7 @@ export default function App() {
             onAdd={handleAddDiscovered}
             onAddAll={handleAddAll}
             onRescan={() => void scan()}
-            onAddByPath={handleScanFolder}
+            onAddByPath={() => setPrompt("scan-folder")}
           />
         </main>
       ) : tab === "ports" ? (
@@ -304,7 +332,10 @@ export default function App() {
                         <button
                           className="ghost"
                           disabled={busy}
-                          onClick={() => void handleAddService(project.name)}
+                          onClick={() => {
+                            setPromptProject(project.name);
+                            setPrompt("add-service");
+                          }}
                         >
                           + Service
                         </button>
