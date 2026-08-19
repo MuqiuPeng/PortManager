@@ -9,6 +9,7 @@ interface Props {
   onStop: () => void;
   onRestart: () => void;
   onOpen: () => void;
+  onEdit: () => void;
 }
 
 const OWNER_LABELS: Record<StartedBy, string> = {
@@ -30,6 +31,7 @@ export function ServiceRow({
   onStop,
   onRestart,
   onOpen,
+  onEdit,
 }: Props) {
   const live = isLive(service.status);
   const owner = service.instance?.started_by;
@@ -67,6 +69,10 @@ export function ServiceRow({
       </span>
 
       <span className="service-actions" onClick={(event) => event.stopPropagation()}>
+        {/* Detection guesses; this is where the guess gets corrected. */}
+        <button className="ghost" onClick={onEdit} title="Edit how this starts">
+          Edit
+        </button>
         {service.url && live && (
           <button className="ghost" onClick={onOpen} title={service.url}>
             Open

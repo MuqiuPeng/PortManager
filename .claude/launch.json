@@ -1,11 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "desktop-ui",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/desktop", "dev"],
-      "port": 1420
-    }
+    { "name": "desktop-ui", "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/desktop", "dev"], "port": 1420 }
   ]
 }

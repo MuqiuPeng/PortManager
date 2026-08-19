@@ -8,6 +8,7 @@ import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
 import { Settings } from "./components/Settings";
+import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import type { Discovery, LogLine, PortOwner, ProjectView, ServiceView } from "./types";
 
@@ -27,6 +28,8 @@ export default function App() {
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<ServiceView | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const logCursor = useRef<number | undefined>(undefined);
@@ -35,6 +38,7 @@ export default function App() {
     try {
       const next = await api.listProjects();
       setProjects(next);
+      setLoaded(true);
       setError(null);
       setSelectedProject((current) => {
         if (current && next.some((project) => project.id === current)) return current;
@@ -48,7 +52,7 @@ export default function App() {
   const scan = useCallback(async (paths: string[] = []) => {
     setScanning(true);
     try {
-      setDiscoveries(await api.discoverProjects(paths));
+      setDiscoveries((await api.discoverProjects(paths)) ?? []);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -63,13 +67,17 @@ export default function App() {
 
   // Nothing registered means the user has not told the runtime anything yet —
   // so find their projects rather than showing them an empty list and asking.
+  //
+  // Gated on the first load having *happened*: the list starts empty, so
+  // without this every launch flashes the Discover tab before the projects
+  // arrive.
   const autoScanned = useRef(false);
   useEffect(() => {
-    if (autoScanned.current || projects.length > 0) return;
+    if (!loaded || autoScanned.current || projects.length > 0) return;
     autoScanned.current = true;
     setTab("discover");
     void scan();
-  }, [projects.length, scan]);
+  }, [loaded, projects.length, scan]);
 
   // Live updates: anything the daemon does — from this window, the CLI or an
   // agent — lands here without polling.
@@ -171,7 +179,16 @@ export default function App() {
     await scan();
   }
 
-  /// Scanning a folder finds projects that are not currently running.
+  /** Declare something detection did not find. */
+  async function handleAddService(projectName: string) {
+    const name = window.prompt("Service name, e.g. worker");
+    if (!name?.trim()) return;
+    const command = window.prompt(`Command to start "${name.trim()}"`);
+    if (!command?.trim()) return;
+    await act(() => api.addService(projectName, name.trim(), command.trim()));
+  }
+
+  /** Scanning a folder finds projects that are not currently running. */
   async function handleScanFolder() {
     const path = window.prompt("Folder to scan for projects");
     if (!path?.trim()) return;
@@ -181,6 +198,13 @@ export default function App() {
 
   return (
     <div className="app">
+      {editing && (
+        <ServiceEditor
+          service={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => void refreshProjects()}
+        />
+      )}
       <header className="titlebar">
         <span className="brand">Local Runtime</span>
         <nav className="tabs">
@@ -276,6 +300,14 @@ export default function App() {
                         {workspace.worktree && (
                           <span className="badge">worktree +{workspace.port_offset}</span>
                         )}
+                        <span className="spacer" />
+                        <button
+                          className="ghost"
+                          disabled={busy}
+                          onClick={() => void handleAddService(project.name)}
+                        >
+                          + Service
+                        </button>
                       </header>
 
                       {workspace.services.length === 0 &&
@@ -296,6 +328,7 @@ export default function App() {
                             onOpen={() =>
                               act(() => openExternal(service.url as string))
                             }
+                            onEdit={() => setEditing(service)}
                           />
                         ))
                       )}

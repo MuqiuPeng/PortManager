@@ -194,9 +194,13 @@ Inference is a starting point, not a verdict. Correct it in place and write the
 result out:
 
 ```bash
-runtime service set web --port 3007
+runtime service set web --port 3007 --command "pnpm run dev:local"
+runtime service set web --env DATABASE_URL=postgres://localhost:5432/app
 runtime export --write            # writes .runtime.json at the project root
 ```
+
+The same edits are available from the desktop app (**Edit** on any service) and
+from MCP, so an agent that reads "DATABASE_URL is not set" can set it.
 
 Correcting the port is also what lets the runtime recognise an already-running
 service *as* that service, rather than listing it as an unexplained port.

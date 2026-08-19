@@ -240,6 +240,12 @@ pub struct ServicePatch {
     pub conflict_policy: Option<ConflictPolicy>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Variables to drop.
+    ///
+    /// `env` merges, so that setting one variable does not silently discard the
+    /// others — which leaves no way to remove one. This is that way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_env: Vec<String>,
 }
 
 /// Distinguish an absent field from one explicitly set to `null`.
@@ -286,6 +292,9 @@ impl ServicePatch {
         // Merged rather than replaced: setting one variable should not drop
         // the others.
         service.env.extend(self.env);
+        for key in self.remove_env {
+            service.env.remove(&key);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -401,5 +410,34 @@ mod tests {
         // Environment is merged: setting one variable must not drop the others.
         assert_eq!(service.env.get("A").map(String::as_str), Some("1"));
         assert_eq!(service.env.get("B").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn a_variable_can_be_removed_even_though_env_merges() {
+        let mut service = Service {
+            id: ServiceId::from("svc"),
+            workspace_id: WorkspaceId::from("ws"),
+            name: "web".to_string(),
+            service_type: ServiceType::Web,
+            command: "pnpm dev".to_string(),
+            cwd: PathBuf::from("/repo"),
+            env: BTreeMap::from([
+                ("KEEP".to_string(), "1".to_string()),
+                ("DROP".to_string(), "2".to_string()),
+            ]),
+            preferred_port: None,
+            health_check: None,
+            auto_start: false,
+            conflict_policy: ConflictPolicy::AllocateNext,
+        };
+
+        ServicePatch {
+            remove_env: vec!["DROP".to_string()],
+            ..Default::default()
+        }
+        .apply(&mut service);
+
+        assert_eq!(service.env.get("KEEP").map(String::as_str), Some("1"));
+        assert!(!service.env.contains_key("DROP"));
     }
 }

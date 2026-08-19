@@ -13,6 +13,7 @@ import type {
   PortOwner,
   ProjectView,
   RuntimeEvent,
+  ServicePatch,
   ServiceView,
   StartOutcome,
 } from "./types";
@@ -36,6 +37,20 @@ export const api = {
     invoke<boolean>("remove_project", { selector }),
 
   getService: (service: string) => invoke<ServiceView>("get_service", { service }),
+
+  updateService: (service: string, patch: ServicePatch) =>
+    invoke<ServiceView>("update_service", { service, patch }),
+
+  addService: (project: string, name: string, command: string, port?: number, cwd?: string) =>
+    invoke<ServiceView>("add_service", {
+      project,
+      name,
+      command,
+      port: port ?? null,
+      cwd: cwd || null,
+    }),
+
+  removeService: (service: string) => invoke<boolean>("remove_service", { service }),
 
   startService: (service: string) =>
     invoke<StartOutcome>("start_service", { service }),

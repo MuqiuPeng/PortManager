@@ -190,6 +190,9 @@ enum ServiceCommand {
         /// KEY=VALUE, repeatable. Merged with the existing environment.
         #[arg(long = "env")]
         env: Vec<String>,
+        /// Variable to drop, repeatable.
+        #[arg(long = "unset-env")]
+        unset_env: Vec<String>,
     },
 
     /// Declare a service detection did not find.
@@ -337,6 +340,7 @@ async fn run(cli: Cli) -> Result<String> {
             rename,
             on_conflict,
             env,
+            unset_env,
         }) => {
             let patch = runtime_types::ServicePatch {
                 name: rename,
@@ -359,6 +363,7 @@ async fn run(cli: Cli) -> Result<String> {
                     .map(parse_conflict_policy)
                     .transpose()?,
                 env: parse_env(&env)?,
+                remove_env: unset_env,
             };
             if patch.is_empty() {
                 return Err(RuntimeError::invalid(

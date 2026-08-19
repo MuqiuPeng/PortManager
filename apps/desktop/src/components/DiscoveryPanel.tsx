@@ -26,7 +26,8 @@ export function DiscoveryPanel({
   onRescan,
   onAddByPath,
 }: Props) {
-  const unregistered = discoveries.filter((item) => !item.registered);
+  const found = discoveries ?? [];
+  const unregistered = found.filter((item) => !item.registered);
 
   return (
     <section className="discovery">
@@ -36,9 +37,9 @@ export function DiscoveryPanel({
           <p className="discovery-sub">
             {scanning
               ? "Scanning…"
-              : discoveries.length === 0
+              : found.length === 0
                 ? "Nothing found yet. Anything listening on a port is detected automatically."
-                : `${discoveries.length} project${discoveries.length === 1 ? "" : "s"}, ${unregistered.length} not added yet.`}
+                : `${found.length} project${found.length === 1 ? "" : "s"}, ${unregistered.length} not added yet.`}
           </p>
         </div>
         <div className="discovery-actions">
@@ -57,7 +58,7 @@ export function DiscoveryPanel({
       </header>
 
       <div className="discovery-list">
-        {discoveries.map((item) => (
+        {found.map((item) => (
           <div className="discovery-item" key={item.root_path}>
             <span className={item.running ? "dot live" : "dot"} aria-hidden />
 

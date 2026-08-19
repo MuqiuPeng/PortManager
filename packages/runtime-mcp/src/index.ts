@@ -206,6 +206,10 @@ function registerTools(
           .describe(
             "Environment variables, merged with the ones already set — passing one does not drop the others. These win over any .env file. Use this when a start fails on a missing variable.",
           ),
+        unset_env: z
+          .array(z.string())
+          .optional()
+          .describe("Variables to drop. Needed because `env` merges rather than replaces."),
         port: z
           .number()
           .int()
@@ -236,6 +240,7 @@ function registerTools(
       project,
       command,
       env,
+      unset_env,
       port,
       clear_port,
       cwd,
@@ -251,6 +256,7 @@ function registerTools(
       else if (port !== undefined) patch.preferred_port = port;
       if (command !== undefined) patch.command = command;
       if (env !== undefined) patch.env = env;
+      if (unset_env !== undefined) patch.remove_env = unset_env;
       if (cwd !== undefined) patch.cwd = cwd;
       if (rename !== undefined) patch.name = rename;
       if (service_type !== undefined) patch.service_type = service_type;

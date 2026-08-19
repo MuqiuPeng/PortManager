@@ -5,7 +5,7 @@
 //! and MCP do not get.
 
 use runtime_core::discover::Discovery;
-use runtime_types::ContainerView;
+use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceView,
@@ -103,6 +103,69 @@ pub async fn get_service(
     };
     match call(&state, request).await? {
         ResponseBody::Service(view) => Ok(view),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Correct how a service starts.
+///
+/// Detection guesses, and the guess is often close but wrong — a default port
+/// the project does not use, the `dev` script where `dev:local` is the one that
+/// works. Without this the only remedy is the CLI.
+#[tauri::command]
+pub async fn update_service(
+    state: State<'_, DaemonHandle>,
+    service: String,
+    patch: ServicePatch,
+) -> CmdResult<ServiceView> {
+    let request = Request::UpdateService {
+        project: None,
+        service,
+        patch,
+    };
+    match call(&state, request).await? {
+        ResponseBody::Service(view) => Ok(view),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+pub async fn add_service(
+    state: State<'_, DaemonHandle>,
+    project: String,
+    name: String,
+    command: String,
+    port: Option<u16>,
+    cwd: Option<String>,
+) -> CmdResult<ServiceView> {
+    let request = Request::AddService {
+        selector: project,
+        name,
+        config: runtime_types::ServiceConfig {
+            command,
+            port,
+            cwd: cwd.map(Into::into),
+            service_type: None,
+            env: Default::default(),
+            health: None,
+            auto_start: false,
+            on_conflict: None,
+        },
+    };
+    match call(&state, request).await? {
+        ResponseBody::Service(view) => Ok(view),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+pub async fn remove_service(state: State<'_, DaemonHandle>, service: String) -> CmdResult<bool> {
+    let request = Request::RemoveService {
+        project: None,
+        service,
+    };
+    match call(&state, request).await? {
+        ResponseBody::Done { ok } => Ok(ok),
         other => Err(unexpected(&other)),
     }
 }

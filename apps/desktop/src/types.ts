@@ -72,6 +72,7 @@ export interface ServiceView {
   command: string;
   cwd: string;
   preferred_port?: number;
+  env?: Record<string, string>;
   auto_start: boolean;
   status: ServiceStatus;
   instance?: RuntimeInstance;
@@ -89,6 +90,25 @@ export interface ExternalService {
   cwd?: string;
   command_line?: string;
   url?: string;
+}
+
+/**
+ * Changes to a service. Every field optional: correcting a port should not
+ * mean restating the command.
+ */
+export interface ServicePatch {
+  name?: string;
+  command?: string;
+  cwd?: string;
+  service_type?: ServiceType;
+  /** `null` clears the port; omitted leaves it alone. */
+  preferred_port?: number | null;
+  auto_start?: boolean;
+  conflict_policy?: string;
+  /** Merged with what is already set. */
+  env?: Record<string, string>;
+  /** Variables to drop, since `env` merges. */
+  remove_env?: string[];
 }
 
 /** A container compose defines for a checkout, running or not. */
