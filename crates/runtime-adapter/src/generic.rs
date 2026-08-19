@@ -10,7 +10,7 @@ use std::process::Command;
 
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use runtime_types::{Result, RuntimeError};
-use sysinfo::{Pid, ProcessesToUpdate, Signal, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System, UpdateKind};
 
 use crate::port::{PortBinding, PortProvider, Protocol};
 use crate::process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
@@ -24,9 +24,36 @@ impl GenericProcessProvider {
         Self
     }
 
+    /// Exactly the fields [`Self::convert`] reads.
+    ///
+    /// `refresh_processes` would ask for memory, cpu and disk — which nothing
+    /// here uses — and not for cwd or argv, which are the two fields
+    /// port-to-project resolution is built on.
+    fn refresh_kind() -> ProcessRefreshKind {
+        ProcessRefreshKind::new()
+            .with_cwd(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always)
+            .with_exe(UpdateKind::OnlyIfNotSet)
+    }
+
     fn snapshot() -> System {
         let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, true);
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, Self::refresh_kind());
+        system
+    }
+
+    /// One process rather than the whole table.
+    ///
+    /// `process_info` is called once per listening socket, and reading every
+    /// process to answer for one means opening a handle to each of them —
+    /// hundreds of times over, for a question about a single pid.
+    fn snapshot_of(pid: Pid) -> System {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            Self::refresh_kind(),
+        );
         system
     }
 
@@ -60,8 +87,8 @@ impl ProcessProvider for GenericProcessProvider {
     }
 
     fn process_info(&self, pid: u32) -> Result<Option<ProcessInfo>> {
-        let system = Self::snapshot();
         let key = Pid::from_u32(pid);
+        let system = Self::snapshot_of(key);
         Ok(system.process(key).map(|process| Self::convert(key, process)))
     }
 

@@ -114,14 +114,28 @@ fn git_path(text: &str) -> PathBuf {
     }
 }
 
+/// Keeps a console window from flashing for every `git` invocation.
+///
+/// The daemon and the desktop app have no console of their own, so Windows
+/// gives each console child a brand new one. `git` is called six times per
+/// directory and a scan covers hundreds of directories, which turns discovery
+/// into a burst of black rectangles across the screen.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 fn run(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
