@@ -564,3 +564,157 @@ button {
   font-size: 11px;
   padding-top: 4px;
 }
+
+/* ---- panel ------------------------------------------------------------ */
+
+/* The panel is a floating slab, not a document window: it gets its own
+   rounded background because it has no title bar to sit under. */
+.is-panel body {
+  background: transparent;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.panel-count {
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.panel-error {
+  padding: 6px 10px;
+  color: var(--danger);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+}
+
+.panel-row:hover {
+  background: var(--surface-alt);
+}
+
+.panel-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-service {
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.panel-project {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-row-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.panel-row-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+/* Actions stay out of the way until the row is under the pointer — the panel
+   is read at a glance far more often than it is clicked. */
+.panel-row:hover .panel-row-actions,
+.panel-row-actions:focus-within {
+  opacity: 1;
+}
+
+.icon-button {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.icon-button.active {
+  color: var(--accent);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.panel-foot {
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.link {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link:hover {
+  color: var(--accent);
+}

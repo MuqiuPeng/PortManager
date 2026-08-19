@@ -11,12 +11,16 @@
 
 #![cfg(target_os = "macos")]
 
+mod panel;
 mod process;
 mod spawn;
 
 use runtime_adapter::generic::GenericPortProvider;
-use runtime_adapter::{PlatformAdapter, PortProvider, ProcessProvider, SpawnProvider};
+use runtime_adapter::{
+    PlatformAdapter, PortProvider, ProcessProvider, SpawnProvider, WindowProvider,
+};
 
+pub use panel::{raw_window, MacWindowProvider};
 pub use process::MacProcessProvider;
 pub use spawn::MacSpawnProvider;
 
@@ -25,6 +29,7 @@ pub struct MacosAdapter {
     process: MacProcessProvider,
     port: GenericPortProvider,
     spawn: MacSpawnProvider,
+    window: MacWindowProvider,
 }
 
 impl MacosAdapter {
@@ -48,5 +53,9 @@ impl PlatformAdapter for MacosAdapter {
 
     fn spawn(&self) -> &dyn SpawnProvider {
         &self.spawn
+    }
+
+    fn window(&self) -> Option<&dyn WindowProvider> {
+        Some(&self.window)
     }
 }

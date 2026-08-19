@@ -81,7 +81,42 @@ shipped version, and the output format is localised.
 refresh `sysinfo` performs on every call. Only worth doing if `doctor` shows the
 process walk is slow, or if `sysinfo` turns out not to report cwd.
 
-### 5. PowerShell shell selection
+### 5. The edge panel
+
+`crates/runtime-adapter/src/desktop.rs` declares `WindowProvider`; macOS
+implements it in `adapter-macos/src/panel.rs`. The Windows side is not written.
+
+What the trait needs:
+
+- `adopt_panel` — the equivalent of macOS's non-activating `NSPanel`. On
+  Windows that is `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` (plus `WS_EX_TOPMOST`),
+  set with `SetWindowLongPtr(GWL_EXSTYLE)` on the HWND Tauri hands you.
+  `WS_EX_NOACTIVATE` is the whole point: clicking the panel must not take focus
+  from the editor.
+- `show_panel` / `hide_panel` — `SetWindowPos` with `SWP_NOACTIVATE` for the
+  passive case, `SetForegroundWindow` for the focused one.
+- `screens` / `screen_at_pointer` — `EnumDisplayMonitors` + `GetMonitorInfo`
+  for the work area (the equivalent of `visibleFrame`, excluding the taskbar),
+  and `GetCursorPos`.
+
+Two things to carry over from the macOS implementation:
+
+**Verify the style actually applied.** `adopt_panel` on macOS reads the style
+mask back and returns an error naming the window class if the non-activating
+bit did not stick, because a silently failed adoption looks fine at startup and
+only shows up later as a panel that steals focus. Do the same with
+`GetWindowLongPtr`.
+
+**Coordinates differ.** Cocoa's origin is bottom-left and Y grows upward;
+Win32's is top-left. `frame_for` in `panel.rs` centres the panel from the bottom
+for that reason — the Windows version centres from the top.
+
+Do **not** use `SHAppBarMessage` to reserve desktop work area. The plan calls
+for an overlay, and an AppBar would push every other window aside for something
+that is on screen for a few seconds at a time. macOS has no equivalent, so the
+two platforms would also diverge.
+
+### 6. PowerShell shell selection
 
 `shell()` returns `cmd.exe /C`, which is the safe default: it always exists and
 resolves the `.cmd` shims npm and pnpm install. Users living in PowerShell

@@ -20,7 +20,7 @@ the full product plan.
 | 1 | Daemon, IPC, SQLite, registry, lifecycle, CLI | **done** |
 | 2 | Tauri desktop MVP | **done** |
 | 3 | MCP server | **done** |
-| 4 | Native edge sidebar | not started |
+| 4 | Native edge sidebar | **done** (macOS) |
 | 5 | Project intelligence | partly done (detection, worktrees, stable ports) |
 | 6 | Agent-aware runtime | partly done (`started_by`, sessions, kill safety) |
 
@@ -81,7 +81,25 @@ It holds no state of its own — closing it stops nothing, and a service started
 from the CLI or by an agent appears in the window immediately through the
 daemon's event stream.
 
-The edge-docked side panel is Phase 4 and is deliberately not built yet.
+### The panel
+
+An edge-docked panel gives the common case — glance at what is running, start or
+stop one thing — without switching windows. Four ways in, one state machine:
+
+| | |
+|---|---|
+| `⌘⌥L` | Summons it **focused**, so the keyboard works |
+| Menu bar icon | Same, on left click |
+| Screen edge | Hovering reveals it **without taking focus** from your editor |
+| Pin | Keeps it docked, no auto-hide |
+
+The app runs as a menu-bar accessory: no Dock icon, no place in ⌘-Tab. Closing
+the main window leaves the panel and the tray, which is the resting state.
+
+Clicking the panel must never steal focus, which on macOS means a real
+`NSPanel` rather than the `NSWindow` Tauri creates — see
+[docs/architecture.md](docs/architecture.md#the-edge-panel). Windows is not
+implemented yet; [docs/windows.md](docs/windows.md) has the plan.
 
 ## Coding agents
 

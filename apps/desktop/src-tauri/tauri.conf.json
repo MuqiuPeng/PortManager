@@ -12,11 +12,26 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Local Runtime",
         "width": 1120,
         "height": 720,
         "minWidth": 760,
         "minHeight": 480
+      },
+      {
+        "label": "panel",
+        "url": "index.html#panel",
+        "title": "Local Runtime Panel",
+        "width": 300,
+        "height": 720,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": true,
+        "visible": false
       }
     ],
     "security": {

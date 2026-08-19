@@ -10,6 +10,7 @@ pub mod port;
 pub mod process;
 pub mod spawn;
 
+pub use desktop::{PanelActivation, PanelConfig, RawWindow, ScreenEdge, ScreenInfo, WindowProvider};
 pub use port::{PortBinding, PortProvider, Protocol};
 pub use process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
 pub use spawn::SpawnProvider;
@@ -22,6 +23,15 @@ pub trait PlatformAdapter: Send + Sync + 'static {
     fn process(&self) -> &dyn ProcessProvider;
     fn port(&self) -> &dyn PortProvider;
     fn spawn(&self) -> &dyn SpawnProvider;
+
+    /// Edge-docked panel support, when the platform has it.
+    ///
+    /// Optional rather than required: the daemon never needs it, and a platform
+    /// without a native panel implementation should still be able to run
+    /// everything else.
+    fn window(&self) -> Option<&dyn WindowProvider> {
+        None
+    }
 }
 
 /// The portable fallback, used on platforms without a native adapter.

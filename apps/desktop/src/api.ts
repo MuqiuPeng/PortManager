@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   DaemonInfo,
   Discovery,
+  PanelConfig,
   LogLine,
   PortOwner,
   ProjectView,
@@ -49,6 +50,14 @@ export const api = {
   listPorts: () => invoke<PortOwner[]>("list_ports"),
 
   daemonInfo: () => invoke<DaemonInfo>("daemon_info"),
+
+  getPanelConfig: () => invoke<PanelConfig>("get_panel_config"),
+
+  setPanelConfig: (config: PanelConfig) => invoke<void>("set_panel_config", { config }),
+
+  hidePanel: () => invoke<void>("hide_panel"),
+
+  openMainWindow: () => invoke<void>("open_main_window"),
 };
 
 /**

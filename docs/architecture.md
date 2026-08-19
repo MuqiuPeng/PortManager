@@ -162,3 +162,36 @@ from a terminal appear in the window without polling.
 Two things still poll, because the daemon has no event for them: the ports table
 (the socket table changes without the runtime's involvement) and log tailing,
 which uses the `since_seq` cursor so each tick transfers only new lines.
+
+## The edge panel
+
+The panel's defining property is that clicking it does not take focus from the
+editor. On macOS that is `NSWindowStyleMask::NonactivatingPanel`, which the
+window server honours only for `NSPanel` — and Tauri creates an `NSWindow`. So
+`adapter-macos` swaps the class at runtime, then verifies the style mask took;
+a silently failed adoption looks fine at startup and only surfaces later as a
+panel that steals focus on every click.
+
+It also joins all Spaces and sits at `NSStatusWindowLevel`, so it does not
+vanish when the user switches Space or opens a full-screen app.
+
+Four entry points, one state machine:
+
+```
+hidden ──hover──▶ shown (passive: keeps the editor's focus)
+   ▲                 │
+   └──pointer left───┘
+hidden ──shortcut / menu bar──▶ shown (focused: keyboard works)
+pinned ─────────────────────────▶ always shown, never auto-hides
+```
+
+The distinction between passive and focused is the reason the panel exists in
+this form: a pointer reveal must not disturb what you are typing into, while a
+deliberate keystroke should, or you cannot type into what you just summoned.
+A panel revealed by hovering is also not "already open" as far as the shortcut
+is concerned — pressing it focuses rather than dismisses, or the key appears to
+do nothing.
+
+Edge detection polls the pointer every 90ms on the main thread. The alternative,
+a global `CGEventTap`, would demand Accessibility permission for something this
+small; polling asks for nothing and is imperceptible.

@@ -217,3 +217,41 @@ pub async fn daemon_info(state: State<'_, DaemonHandle>) -> CmdResult<DaemonInfo
         other => Err(unexpected(&other)),
     }
 }
+
+// ---- panel ---------------------------------------------------------------
+
+use std::sync::Arc;
+
+use runtime_adapter::PanelConfig;
+use tauri::AppHandle;
+
+use crate::panel::PanelController;
+
+#[tauri::command]
+pub fn get_panel_config(controller: State<'_, Arc<PanelController>>) -> PanelConfig {
+    controller.config()
+}
+
+#[tauri::command]
+pub fn set_panel_config(
+    app: AppHandle,
+    controller: State<'_, Arc<PanelController>>,
+    config: PanelConfig,
+) -> CmdResult<()> {
+    controller
+        .set_config(&app, config)
+        .map_err(|err| err.to_string())
+}
+
+/// Dismiss the panel from inside it — Escape, or after an action completes.
+#[tauri::command]
+pub fn hide_panel(app: AppHandle, controller: State<'_, Arc<PanelController>>) -> CmdResult<()> {
+    controller.hide(&app).map_err(|err| err.to_string())
+}
+
+/// Jump from the panel to the full window, for logs and anything else the
+/// compact view deliberately leaves out.
+#[tauri::command]
+pub fn open_main_window(app: AppHandle) {
+    crate::show_main_window(&app);
+}

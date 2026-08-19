@@ -89,6 +89,14 @@ export interface ProjectView extends Project {
   total_services: number;
 }
 
+export interface PanelConfig {
+  edge: "left" | "right";
+  width: number;
+  height_ratio: number;
+  pinned: boolean;
+  hover_strip_width: number;
+}
+
 /** A project the runtime found on its own. */
 export interface Discovery {
   root_path: string;
