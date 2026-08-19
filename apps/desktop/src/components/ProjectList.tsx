@@ -13,14 +13,14 @@ export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Pro
     <nav className="sidebar">
       <div className="sidebar-head">
         <span className="sidebar-title">Projects</span>
-        <button className="ghost" onClick={onAdd} disabled={busy} title="Register a project">
+        <button className="ghost" onClick={onAdd} disabled={busy} title="Find projects">
           +
         </button>
       </div>
 
       {projects.length === 0 ? (
         <p className="empty">
-          No projects yet. Add one to see what it is running.
+          Nothing added yet — check the Discover tab.
         </p>
       ) : (
         <ul className="project-list">

@@ -89,6 +89,19 @@ export interface ProjectView extends Project {
   total_services: number;
 }
 
+/** A project the runtime found on its own. */
+export interface Discovery {
+  root_path: string;
+  name: string;
+  /** True when something inside it is listening right now. */
+  running: boolean;
+  ports?: number[];
+  markers?: string[];
+  git_branch?: string;
+  suggested_services?: string[];
+  registered: boolean;
+}
+
 export interface PortOwner {
   port: number;
   pid: number;

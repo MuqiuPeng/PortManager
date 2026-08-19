@@ -44,8 +44,8 @@ The binaries land in `target/release`:
 # check the platform adapter can see this machine
 runtime doctor
 
-# register a project; services are inferred from package.json, pyproject.toml, …
-runtime project add ~/code/dossh
+# find your projects — no configuration, no paths to type
+runtime scan --add
 
 # start it and wait until it answers
 runtime start web --wait
@@ -72,8 +72,9 @@ from cargo — and a dev binary loads its frontend from the Vite server rather
 than from itself, so running `target/debug/runtime-desktop` directly opens a
 blank window. It prints an explanation to stderr when that happens.
 
-The window shows projects in a sidebar and, per workspace, the services with
-their live status, port and owner. Selecting a service streams its output; the
+On first run the window scans for projects instead of showing an empty list and
+asking you to register them. Beyond that it shows projects in a sidebar and, per
+workspace, the services with their live status, port and owner. Selecting a service streams its output; the
 Ports tab lists everything listening on the machine, registered or not.
 
 It holds no state of its own — closing it stops nothing, and a service started
@@ -103,6 +104,7 @@ protocol does not offer them, so the MCP server cannot expose them. See
 
 ```
 runtime list                        every project, workspace and service
+runtime scan [--path DIR] [--add]   find projects automatically
 runtime project add|list|show|remove
 runtime service list|show
 runtime start <service> [--port N] [--on-conflict P] [--wait]
@@ -150,6 +152,12 @@ See [config/runtime.example.json](config/runtime.example.json) for every field.
 ## Design notes
 
 Three properties are worth knowing before reading the code:
+
+**Projects are found, not declared.** Every listening socket resolves to a pid,
+a working directory and from there a repository root, so the runtime can list
+the projects on a machine without being told where any of them are — and
+without false positives, since every one it reports is running something right
+now. `--path` adds a directory walk for projects that happen to be stopped.
 
 **A port is a lease, not an observation.** A service claims its port before the
 process starts, so a conflict is reported as an answer rather than discovered as

@@ -91,7 +91,7 @@ mod imp {
 
     pub async fn connect(path: &Path) -> Result<Connection> {
         let stream = UnixStream::connect(path).await.map_err(|err| {
-            RuntimeError::Io(format!("cannot reach the daemon at {}: {err}", path.display()))
+            RuntimeError::io(format!("cannot reach the daemon at {}: {err}", path.display()))
         })?;
         Ok(Connection::new(stream))
     }
@@ -116,7 +116,7 @@ mod imp {
                 .first_pipe_instance(true)
                 .create(&name)
                 .map_err(|err| {
-                    RuntimeError::Io(format!("cannot create named pipe {name}: {err}"))
+                    RuntimeError::io(format!("cannot create named pipe {name}: {err}"))
                 })?;
             Ok(Self {
                 name,
@@ -140,7 +140,7 @@ mod imp {
     pub async fn connect(path: &Path) -> Result<Connection> {
         let name = path.to_string_lossy().to_string();
         let client = ClientOptions::new().open(&name).map_err(|err| {
-            RuntimeError::Io(format!("cannot reach the daemon at {name}: {err}"))
+            RuntimeError::io(format!("cannot reach the daemon at {name}: {err}"))
         })?;
         Ok(Connection::new(client))
     }

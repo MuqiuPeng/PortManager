@@ -48,7 +48,7 @@ impl Client {
 
         loop {
             let Some(frame) = self.connection.recv::<Frame>().await? else {
-                return Err(RuntimeError::Io(
+                return Err(RuntimeError::io(
                     "the daemon closed the connection".to_string(),
                 ));
             };
@@ -123,7 +123,7 @@ pub fn spawn_daemon() -> Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|err| RuntimeError::Io(format!("failed to start {}: {err}", binary.display())))?;
+        .map_err(|err| RuntimeError::io(format!("failed to start {}: {err}", binary.display())))?;
     Ok(())
 }
 
@@ -154,7 +154,7 @@ pub async fn wait_for_daemon(timeout: Duration) -> Result<Client> {
             return Ok(client);
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(RuntimeError::Io(format!(
+            return Err(RuntimeError::io(format!(
                 "the daemon did not come up within {}s; run `runtime-daemon` directly to see why",
                 timeout.as_secs()
             )));

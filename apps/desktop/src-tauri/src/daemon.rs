@@ -45,7 +45,7 @@ impl DaemonHandle {
             Ok(response) => Ok(response),
             // A transport error means the connection is dead, not that the
             // request was invalid — drop it and try once on a fresh one.
-            Err(RuntimeError::Io(_)) => {
+            Err(RuntimeError::Io { .. }) => {
                 *guard = None;
                 let mut client = runtime_ipc::client::connect_or_start().await?;
                 let response = client.call(request).await?;

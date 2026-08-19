@@ -38,6 +38,20 @@ enum Command {
     /// Show every project, workspace and service.
     List,
 
+    /// Find projects on this machine automatically.
+    ///
+    /// Always reports what is listening right now, resolved back to its
+    /// repository. Pass --path to also walk a directory tree for projects that
+    /// are not running.
+    Scan {
+        /// Directory tree to search, repeatable.
+        #[arg(long)]
+        path: Vec<PathBuf>,
+        /// Register everything found instead of only reporting it.
+        #[arg(long)]
+        add: bool,
+    },
+
     /// Manage projects.
     #[command(subcommand)]
     Project(ProjectCommand),
@@ -206,10 +220,22 @@ async fn run(cli: Cli) -> Result<String> {
     let response = match cli.command {
         Command::List => client.call(Request::ListProjects).await?,
 
+        Command::Scan { path, add } => {
+            let mut paths = Vec::new();
+            for candidate in path {
+                paths.push(std::fs::canonicalize(&candidate).map_err(|err| {
+                    RuntimeError::io(format!("{}: {err}", candidate.display()))
+                })?);
+            }
+            client
+                .call(Request::DiscoverProjects { paths, adopt: add })
+                .await?
+        }
+
         Command::Project(ProjectCommand::List) => client.call(Request::ListProjects).await?,
         Command::Project(ProjectCommand::Add { path, name }) => {
             let path = std::fs::canonicalize(&path)
-                .map_err(|err| RuntimeError::Io(format!("{}: {err}", path.display())))?;
+                .map_err(|err| RuntimeError::io(format!("{}: {err}", path.display())))?;
             client.call(Request::AddProject { path, name }).await?
         }
         Command::Project(ProjectCommand::Show { selector }) => {
@@ -362,7 +388,7 @@ async fn run(cli: Cli) -> Result<String> {
         Command::Worktree(WorktreeCommand::Add { path }) => {
             let selector = project.unwrap_or_else(|| ".".to_string());
             let path = std::fs::canonicalize(&path)
-                .map_err(|err| RuntimeError::Io(format!("{}: {err}", path.display())))?;
+                .map_err(|err| RuntimeError::io(format!("{}: {err}", path.display())))?;
             client
                 .call(Request::RegisterWorktree { selector, path })
                 .await?
@@ -383,6 +409,7 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         ResponseBody::Pong { protocol_version } => format!("pong (protocol {protocol_version})"),
         ResponseBody::Info(info) => render::daemon_info(info),
         ResponseBody::Projects { items } => render::projects(items),
+        ResponseBody::Discoveries { items } => render::discoveries(items),
         ResponseBody::Project(view) => render::projects(std::slice::from_ref(view)),
         ResponseBody::Workspaces { items } => render::workspaces(items),
         ResponseBody::Workspace(item) => render::workspaces(std::slice::from_ref(item)),

@@ -53,6 +53,17 @@ impl Dispatcher {
 
             Request::ListProjects => Ok(ResponseBody::Projects { items: runtime.list_projects()? }),
 
+            Request::DiscoverProjects { paths, adopt } => {
+                if adopt {
+                    // Report the whole picture afterwards, not just the new
+                    // rows, so the caller sees the resulting state.
+                    runtime.adopt_discovered(&paths)?;
+                }
+                Ok(ResponseBody::Discoveries {
+                    items: runtime.discover_projects(&paths)?,
+                })
+            }
+
             Request::GetProject { selector } => {
                 let project = runtime.resolve_project(&selector)?;
                 Ok(ResponseBody::Project(runtime.project_view(&project)?))

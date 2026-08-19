@@ -3,6 +3,7 @@
 //! Two audiences: a human scanning a table, and a script reading `--json`.
 //! Both render the same data from the daemon, never a locally recomputed view.
 
+use runtime_core::discover::Discovery;
 use runtime_types::{
     DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
     ServiceView, StartOutcome, Workspace,
@@ -202,12 +203,13 @@ pub fn ports(owners: &[PortOwner]) -> String {
         // Include the branch: two worktrees of one project otherwise render as
         // the same row, which is exactly the ambiguity this table exists to
         // remove.
-        let label = match (&owner.project_name, &owner.service_name) {
-            (Some(project), Some(service)) => match &owner.git_branch {
-                Some(branch) => format!("{project}/{branch}/{service}"),
-                None => format!("{project}/{service}"),
-            },
-            (Some(project), None) => project.clone(),
+        // The branch is known for anything resolved through a workspace, even
+        // when the runtime did not start it and so cannot name the service.
+        let label = match (&owner.project_name, &owner.git_branch, &owner.service_name) {
+            (Some(project), Some(branch), Some(service)) => format!("{project}/{branch}/{service}"),
+            (Some(project), Some(branch), None) => format!("{project}/{branch}"),
+            (Some(project), None, Some(service)) => format!("{project}/{service}"),
+            (Some(project), None, None) => project.clone(),
             _ => "-".to_string(),
         };
         out.push_str(&format!(
@@ -283,4 +285,68 @@ pub fn daemon_info(info: &DaemonInfo) -> String {
         info.database_path.display(),
         info.uptime_seconds
     )
+}
+
+pub fn discoveries(items: &[Discovery]) -> String {
+    if items.is_empty() {
+        return "Found nothing. Pass --path to scan a directory tree, or add a project explicitly with `runtime project add <path>`.".to_string();
+    }
+
+    let mut out = String::new();
+    let (running, idle): (Vec<_>, Vec<_>) = items.iter().partition(|item| item.running);
+
+    if !running.is_empty() {
+        out.push_str("Running now\n");
+        for item in &running {
+            out.push_str(&discovery_line(item));
+        }
+    }
+    if !idle.is_empty() {
+        if !running.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Found on disk\n");
+        for item in &idle {
+            out.push_str(&discovery_line(item));
+        }
+    }
+
+    let new = items.iter().filter(|item| !item.registered).count();
+    if new > 0 {
+        out.push_str(&format!(
+            "\n{new} not registered yet. Add them with `runtime scan --add`."
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+fn discovery_line(item: &Discovery) -> String {
+    let ports = if item.ports.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "  {}",
+            item.ports
+                .iter()
+                .map(|port| format!(":{port}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+    let mark = if item.registered { "✓" } else { " " };
+    let branch = item
+        .git_branch
+        .as_deref()
+        .map(|branch| format!(" ({branch})"))
+        .unwrap_or_default();
+
+    let mut line = format!("{mark} {:<22}{}{}\n", item.name, ports, branch);
+    line.push_str(&format!("    {}\n", item.root_path.display()));
+    if !item.suggested_services.is_empty() {
+        line.push_str(&format!(
+            "    services: {}\n",
+            item.suggested_services.join(", ")
+        ));
+    }
+    line
 }

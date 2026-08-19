@@ -6,6 +6,7 @@
 //! type — which is what keeps the three from drifting into three behaviours.
 
 pub mod detect;
+pub mod discover;
 pub mod events;
 pub mod git;
 pub mod health;
@@ -280,6 +281,37 @@ impl Runtime {
             result.push(workspace);
         }
         Ok(result)
+    }
+
+    /// Find projects on this machine without being told where they are.
+    ///
+    /// Always includes projects inferred from what is currently listening;
+    /// `roots` adds directory trees to walk for projects that are stopped.
+    pub fn discover_projects(&self, roots: &[PathBuf]) -> Result<Vec<discover::Discovery>> {
+        discover::discover(&self.store, self.adapter.as_ref(), roots)
+    }
+
+    /// Register everything discovery found that is not registered yet.
+    ///
+    /// Returns the projects that were added. Registration only records what is
+    /// already there — no process is started, stopped or otherwise touched.
+    pub fn adopt_discovered(&self, roots: &[PathBuf]) -> Result<Vec<ProjectView>> {
+        let mut added = Vec::new();
+        for discovery in self.discover_projects(roots)? {
+            if discovery.registered {
+                continue;
+            }
+            match self.add_project(&discovery.root_path, None) {
+                Ok(view) => added.push(view),
+                // One unreadable directory should not abandon the whole sweep.
+                Err(err) => tracing::warn!(
+                    path = %discovery.root_path.display(),
+                    %err,
+                    "skipping a discovered project"
+                ),
+            }
+        }
+        Ok(added)
     }
 
     pub fn list_projects(&self) -> Result<Vec<ProjectView>> {
@@ -585,6 +617,6 @@ fn canonicalize(path: &Path) -> Result<PathBuf> {
         path.to_path_buf()
     };
     std::fs::canonicalize(&expanded).map_err(|err| {
-        RuntimeError::Io(format!("cannot resolve {}: {err}", expanded.display()))
+        RuntimeError::io(format!("cannot resolve {}: {err}", expanded.display()))
     })
 }

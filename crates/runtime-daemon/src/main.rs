@@ -61,7 +61,7 @@ async fn run(args: Args) -> Result<()> {
     // Refuse to start a second daemon: two authorities over the same state is
     // exactly the failure mode the daemon exists to prevent.
     if runtime_ipc::client::is_running().await {
-        return Err(runtime_types::RuntimeError::AlreadyExists(format!(
+        return Err(runtime_types::RuntimeError::already_exists(format!(
             "a daemon is already listening at {}",
             socket_path.display()
         )));
@@ -129,7 +129,7 @@ async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Resul
         let frame = match events.as_mut() {
             Some(receiver) => {
                 tokio::select! {
-                    incoming = connection.recv::<Frame>() => incoming?,
+                    incoming = connection.recv::<serde_json::Value>() => incoming?,
                     event = receiver.recv() => {
                         match event {
                             Ok(event) => {
@@ -150,12 +150,35 @@ async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Resul
                     }
                 }
             }
-            None => connection.recv::<Frame>().await?,
+            None => connection.recv::<serde_json::Value>().await?,
         };
 
-        let Some(Frame::Request { id, request }) = frame else {
-            // End of stream, or a frame only a server should send.
-            return Ok(());
+        // Parsed leniently: a client built against a newer protocol sends
+        // methods this daemon does not know, and answering "unknown request"
+        // is far easier to diagnose than dropping the connection.
+        let Some(value) = frame else {
+            return Ok(()); // end of stream
+        };
+        let request = match serde_json::from_value::<Frame>(value.clone()) {
+            Ok(Frame::Request { id, request }) => Some((id, request)),
+            // A frame only a server should send; ignore it rather than reply.
+            Ok(_) => None,
+            Err(err) => {
+                let id = value.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                connection
+                    .send(&Frame::error(
+                        id,
+                        runtime_types::RuntimeError::invalid(format!(
+                            "this daemon (protocol {}) cannot handle the request: {err}",
+                            runtime_ipc::PROTOCOL_VERSION
+                        )),
+                    ))
+                    .await?;
+                continue;
+            }
+        };
+        let Some((id, request)) = request else {
+            continue;
         };
 
         if matches!(request, Request::Subscribe) {

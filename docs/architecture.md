@@ -77,6 +77,30 @@ two, closing out instances whose process is gone and releasing their leases.
 Without that step the state drifts a little further from reality after every
 crash.
 
+## Discovery
+
+The same chain that answers "who owns :3000" answers "what projects are on this
+machine":
+
+```
+listening socket -> pid -> cwd -> git root (or nearest manifest) -> project
+```
+
+Nothing is configured and nothing is guessed: every project reported this way
+is demonstrably running something. A directory walk (bounded to three levels,
+skipping `node_modules`, `target`, `.venv` and friends) covers projects that are
+stopped, and is opt-in because it touches directories the user did not name.
+
+Two filters do the real work. System prefixes (`/System`, `/Library`,
+`/usr`, `%ProgramFiles%`) and sandbox fragments (`/Library/Containers/`) are
+never projects — without them a chat app's container directory looks exactly
+like one, because it has a working directory and it is listening on a port. And
+a candidate directory is never descended into, so a vendored dependency with its
+own `package.json` is not reported as a separate project.
+
+Registration is idempotent and records only what is already there; it starts and
+stops nothing.
+
 ## Port -> project resolution
 
 ```

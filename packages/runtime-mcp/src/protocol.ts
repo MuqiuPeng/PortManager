@@ -62,6 +62,18 @@ export interface ProjectView extends Project {
   total_services: number;
 }
 
+/** A project the runtime found on its own. */
+export interface Discovery {
+  root_path: string;
+  name: string;
+  running: boolean;
+  ports?: number[];
+  markers?: string[];
+  git_branch?: string;
+  suggested_services?: string[];
+  registered: boolean;
+}
+
 export interface PortOwner {
   port: number;
   pid: number;
@@ -137,6 +149,7 @@ export type ResponseBody =
   | { type: "pong"; protocol_version: number }
   | ({ type: "info" } & DaemonInfo)
   | { type: "projects"; items: ProjectView[] }
+  | { type: "discoveries"; items: Discovery[] }
   | ({ type: "project" } & ProjectView)
   | { type: "workspaces"; items: Workspace[] }
   | ({ type: "workspace" } & Workspace)

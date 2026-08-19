@@ -485,3 +485,82 @@ button {
   padding: 12px 0;
   margin: 0;
 }
+
+/* ---- discovery -------------------------------------------------------- */
+
+.discovery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.discovery-head h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.discovery-sub {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+}
+
+.discovery-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.discovery-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.discovery-item + .discovery-item {
+  margin-top: 6px;
+}
+
+.discovery-item .dot {
+  margin-top: 4px;
+}
+
+.discovery-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.discovery-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.discovery-name {
+  font-weight: 500;
+}
+
+.badge.port {
+  font-family: var(--mono);
+  color: var(--live);
+  background: color-mix(in srgb, var(--live) 14%, transparent);
+}
+
+.discovery-services {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.discovery-added {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding-top: 4px;
+}

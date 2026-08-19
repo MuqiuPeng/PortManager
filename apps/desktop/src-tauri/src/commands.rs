@@ -4,6 +4,7 @@
 //! adds no logic of its own: anything computed here would be something the CLI
 //! and MCP do not get.
 
+use runtime_core::discover::Discovery;
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceView,
@@ -31,6 +32,26 @@ fn unexpected(response: &ResponseBody) -> String {
 pub async fn list_projects(state: State<'_, DaemonHandle>) -> CmdResult<Vec<ProjectView>> {
     match call(&state, Request::ListProjects).await? {
         ResponseBody::Projects { items } => Ok(items),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Find projects without the user having to name them.
+///
+/// The empty state calls this automatically: being told to register your own
+/// projects by hand is exactly the friction this tool exists to remove.
+#[tauri::command]
+pub async fn discover_projects(
+    state: State<'_, DaemonHandle>,
+    paths: Vec<String>,
+    adopt: bool,
+) -> CmdResult<Vec<Discovery>> {
+    let request = Request::DiscoverProjects {
+        paths: paths.into_iter().map(Into::into).collect(),
+        adopt,
+    };
+    match call(&state, request).await? {
+        ResponseBody::Discoveries { items } => Ok(items),
         other => Err(unexpected(&other)),
     }
 }

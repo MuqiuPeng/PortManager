@@ -1,7 +1,14 @@
 //! Errors that cross process boundaries.
 //!
-//! The daemon serialises these to the CLI and MCP, so the variants are part of
-//! the public protocol and each carries enough context to act on.
+//! The daemon serialises these to the CLI, the desktop app and MCP, so the
+//! variants are part of the public protocol and each carries enough context to
+//! act on.
+//!
+//! Every variant uses **named fields**, never a newtype. Serde cannot place an
+//! internal tag on a newtype variant wrapping a string, so `Io(String)` would
+//! serialise to an error at runtime — and since that happens while writing the
+//! response, the daemon would drop the connection instead of reporting
+//! anything. `serialises_every_variant` below guards against reintroducing one.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +18,8 @@ pub enum RuntimeError {
     #[error("{kind} not found: {id}")]
     NotFound { kind: String, id: String },
 
-    #[error("{0}")]
-    AlreadyExists(String),
+    #[error("{message}")]
+    AlreadyExists { message: String },
 
     #[error("port {port} is in use by {holder}")]
     PortConflict { port: u16, holder: String },
@@ -29,17 +36,17 @@ pub enum RuntimeError {
     #[error("refusing to terminate pid {pid}: {reason}")]
     NotPermitted { pid: u32, reason: String },
 
-    #[error("{0}")]
-    InvalidInput(String),
+    #[error("{message}")]
+    InvalidInput { message: String },
 
-    #[error("not supported on this platform: {0}")]
-    Unsupported(String),
+    #[error("not supported on this platform: {message}")]
+    Unsupported { message: String },
 
-    #[error("{0}")]
-    Io(String),
+    #[error("{message}")]
+    Io { message: String },
 
-    #[error("{0}")]
-    Internal(String),
+    #[error("{message}")]
+    Internal { message: String },
 }
 
 impl RuntimeError {
@@ -50,23 +57,91 @@ impl RuntimeError {
         }
     }
 
-    pub fn invalid(msg: impl Into<String>) -> Self {
-        Self::InvalidInput(msg.into())
+    pub fn already_exists(message: impl Into<String>) -> Self {
+        Self::AlreadyExists {
+            message: message.into(),
+        }
     }
 
-    pub fn internal(msg: impl Into<String>) -> Self {
-        Self::Internal(msg.into())
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self::InvalidInput {
+            message: message.into(),
+        }
     }
 
-    pub fn unsupported(msg: impl Into<String>) -> Self {
-        Self::Unsupported(msg.into())
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self::Unsupported {
+            message: message.into(),
+        }
+    }
+
+    pub fn io(message: impl Into<String>) -> Self {
+        Self::Io {
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: message.into(),
+        }
     }
 }
 
 impl From<std::io::Error> for RuntimeError {
     fn from(value: std::io::Error) -> Self {
-        Self::Io(value.to_string())
+        Self::io(value.to_string())
     }
 }
 
 pub type Result<T, E = RuntimeError> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every variant must survive a JSON round trip.
+    ///
+    /// A newtype variant compiles fine and only fails when serialised, which in
+    /// production means a dropped connection carrying no diagnosis at all.
+    #[test]
+    fn serialises_every_variant() {
+        let variants = [
+            RuntimeError::not_found("service", "web"),
+            RuntimeError::already_exists("a daemon is already listening"),
+            RuntimeError::PortConflict {
+                port: 3000,
+                holder: "dossh/main/web".to_string(),
+            },
+            RuntimeError::NoPortAvailable {
+                from: 3000,
+                to: 3100,
+            },
+            RuntimeError::AlreadyRunning {
+                service: "web".to_string(),
+                pid: 42,
+            },
+            RuntimeError::NotRunning {
+                service: "web".to_string(),
+            },
+            RuntimeError::NotPermitted {
+                pid: 42,
+                reason: "not started by the runtime".to_string(),
+            },
+            RuntimeError::invalid("bad selector"),
+            RuntimeError::unsupported("edge panels"),
+            RuntimeError::io("connection refused"),
+            RuntimeError::internal("lock poisoned"),
+        ];
+
+        for error in variants {
+            let encoded = serde_json::to_string(&error)
+                .unwrap_or_else(|err| panic!("{error:?} cannot be serialised: {err}"));
+            let decoded: RuntimeError = serde_json::from_str(&encoded)
+                .unwrap_or_else(|err| panic!("{encoded} cannot be decoded: {err}"));
+            assert_eq!(decoded, error);
+            // The rendered message is what a human or an agent actually reads.
+            assert!(!error.to_string().is_empty());
+        }
+    }
+}

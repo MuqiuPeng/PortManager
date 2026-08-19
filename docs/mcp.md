@@ -46,6 +46,7 @@ if the attribution matters to you.
 | Tool | Purpose |
 |---|---|
 | `list_projects` | Every registered project and how much of it is running |
+| `discover_projects` | Find projects without being told where they are; optionally register them |
 | `get_project_runtime` | One project's workspaces, services, ports and owners |
 | `list_services` | Services with live status, optionally scoped to a project |
 | `get_service` | One service's command, cwd, status, port and URL |
@@ -92,6 +93,16 @@ run arbitrary code, and it cannot terminate a process the runtime did not start
 unmanaged processes.
 
 ## Typical exchanges
+
+**"What am I running?" (nothing registered yet)**
+
+```
+list_projects              -> No projects are registered.
+discover_projects()        -> dossh (demo/payment-walkthrough) :3000 :5555
+                              loom (multi-user-isolation) :3001 :8001
+                              not registered
+discover_projects(adopt: true)
+```
 
 **"Start this project's frontend and API."**
 

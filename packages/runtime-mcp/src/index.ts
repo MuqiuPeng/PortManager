@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { DaemonClient, resolveEndpoint } from "./client.js";
 import {
+  formatDiscoveries,
   formatHealth,
   formatLogs,
   formatPortStatus,
@@ -110,6 +111,31 @@ function registerTools(
     async () =>
       run("list_projects", undefined, (body) =>
         body.type === "projects" ? formatProjects(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "discover_projects",
+    {
+      title: "Discover projects",
+      description:
+        "Find projects on this machine without being told where they are. Always reports what is listening right now, resolved back to its repository; pass paths to also search directory trees for projects that are stopped. Use this when list_projects is empty or the project you need is not registered.",
+      inputSchema: {
+        paths: z
+          .array(z.string())
+          .optional()
+          .describe("Absolute directory trees to search, in addition to running processes."),
+        adopt: z
+          .boolean()
+          .optional()
+          .describe(
+            "Register everything found instead of only reporting it. Registration records what is already there; it never starts or stops anything.",
+          ),
+      },
+    },
+    async ({ paths, adopt }) =>
+      run("discover_projects", { paths: paths ?? [], adopt: adopt ?? false }, (body) =>
+        body.type === "discoveries" ? formatDiscoveries(body.items) : unexpected(body),
       ),
   );
 

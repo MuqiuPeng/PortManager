@@ -205,7 +205,7 @@ impl ProcessProvider for MacProcessProvider {
         match Self::process_group(identity.pid) {
             Some(pgid) if pgid as u32 == identity.pid => {
                 Self::signal_group(pgid, signal).map_err(|err| {
-                    RuntimeError::Io(format!("killpg({pgid}) failed: {err}"))
+                    RuntimeError::io(format!("killpg({pgid}) failed: {err}"))
                 })?;
                 Ok(true)
             }

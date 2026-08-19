@@ -34,7 +34,7 @@ impl WindowsProcessProvider {
             .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|err| RuntimeError::Io(format!("taskkill failed to run: {err}")))?;
+            .map_err(|err| RuntimeError::io(format!("taskkill failed to run: {err}")))?;
 
         if output.status.success() {
             return Ok(true);
@@ -43,7 +43,7 @@ impl WindowsProcessProvider {
         if output.status.code() == Some(128) {
             return Ok(false);
         }
-        Err(RuntimeError::Io(format!(
+        Err(RuntimeError::io(format!(
             "taskkill /PID {pid} failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )))

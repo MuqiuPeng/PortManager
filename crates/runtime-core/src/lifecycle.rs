@@ -165,7 +165,7 @@ impl Runtime {
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(false);
         let mut child = command.spawn().map_err(|err| {
-            RuntimeError::Io(format!("failed to start '{}': {err}", service.command))
+            RuntimeError::io(format!("failed to start '{}': {err}", service.command))
         })?;
 
         let pid = child

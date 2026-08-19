@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
   DaemonInfo,
+  Discovery,
   LogLine,
   PortOwner,
   ProjectView,
@@ -17,6 +18,9 @@ const EVENT_CHANNEL = "runtime://event";
 
 export const api = {
   listProjects: () => invoke<ProjectView[]>("list_projects"),
+
+  discoverProjects: (paths: string[] = [], adopt = false) =>
+    invoke<Discovery[]>("discover_projects", { paths, adopt }),
 
   addProject: (path: string, name?: string) =>
     invoke<ProjectView>("add_project", { path, name: name || null }),

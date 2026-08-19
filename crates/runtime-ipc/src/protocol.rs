@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
     AgentSession, DaemonInfo, HealthReport, LogLine, PortOwner, PortReservation, PortStatus,
@@ -30,6 +31,16 @@ pub enum Request {
     Shutdown,
 
     ListProjects,
+    /// Find projects without being told where they are.
+    DiscoverProjects {
+        /// Extra directory trees to walk. Discovery from running processes
+        /// happens regardless.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        paths: Vec<PathBuf>,
+        /// Register everything found rather than only reporting it.
+        #[serde(default)]
+        adopt: bool,
+    },
     /// `selector` is an id, a name, or a path inside the project.
     GetProject {
         selector: String,
@@ -161,6 +172,7 @@ pub enum ResponseBody {
     Pong { protocol_version: u32 },
     Info(DaemonInfo),
     Projects { items: Vec<ProjectView> },
+    Discoveries { items: Vec<Discovery> },
     Project(ProjectView),
     Workspaces { items: Vec<Workspace> },
     Workspace(Workspace),

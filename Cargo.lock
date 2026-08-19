@@ -3326,6 +3326,7 @@ dependencies = [
 name = "runtime-desktop"
 version = "0.1.0"
 dependencies = [
+ "runtime-core",
  "runtime-ipc",
  "runtime-types",
  "serde",

@@ -111,7 +111,7 @@ impl PortProvider for GenericPortProvider {
             AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6,
             ProtocolFlags::TCP,
         )
-        .map_err(|err| RuntimeError::Io(format!("failed to read socket table: {err}")))?;
+        .map_err(|err| RuntimeError::io(format!("failed to read socket table: {err}")))?;
 
         let mut bindings: Vec<PortBinding> = Vec::new();
         for socket in sockets {

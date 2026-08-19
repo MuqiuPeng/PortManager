@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
+import { DiscoveryPanel } from "./components/DiscoveryPanel";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
 import { ServiceRow } from "./components/ServiceRow";
-import type { LogLine, PortOwner, ProjectView, ServiceView } from "./types";
+import type { Discovery, LogLine, PortOwner, ProjectView, ServiceView } from "./types";
 
-type Tab = "services" | "ports";
+type Tab = "services" | "ports" | "discover";
 
 /** Ports change without any event of their own, so that tab polls. */
 const PORT_POLL_MS = 4000;
@@ -20,6 +21,8 @@ export default function App() {
   const [ports, setPorts] = useState<PortOwner[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [tab, setTab] = useState<Tab>("services");
+  const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
+  const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,9 +42,31 @@ export default function App() {
     }
   }, []);
 
+  const scan = useCallback(async (paths: string[] = []) => {
+    setScanning(true);
+    try {
+      setDiscoveries(await api.discoverProjects(paths));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
   useEffect(() => {
     void refreshProjects();
   }, [refreshProjects]);
+
+  // Nothing registered means the user has not told the runtime anything yet —
+  // so find their projects rather than showing them an empty list and asking.
+  const autoScanned = useRef(false);
+  useEffect(() => {
+    if (autoScanned.current || projects.length > 0) return;
+    autoScanned.current = true;
+    setTab("discover");
+    void scan();
+  }, [projects.length, scan]);
 
   // Live updates: anything the daemon does — from this window, the CLI or an
   // agent — lands here without polling.
@@ -133,12 +158,22 @@ export default function App() {
     }
   }
 
-  async function handleAddProject() {
-    // A directory picker is Phase 5 polish; a path is enough to prove the
-    // registry end to end.
-    const path = window.prompt("Project path");
+  async function handleAddDiscovered(discovery: Discovery) {
+    await act(() => api.addProject(discovery.root_path));
+    await scan();
+  }
+
+  async function handleAddAll() {
+    await act(() => api.discoverProjects([], true));
+    await scan();
+  }
+
+  /// Scanning a folder finds projects that are not currently running.
+  async function handleScanFolder() {
+    const path = window.prompt("Folder to scan for projects");
     if (!path?.trim()) return;
-    await act(() => api.addProject(path.trim()));
+    setTab("discover");
+    await scan([path.trim()]);
   }
 
   return (
@@ -158,6 +193,15 @@ export default function App() {
           >
             Ports
           </button>
+          <button
+            className={tab === "discover" ? "tab active" : "tab"}
+            onClick={() => {
+              setTab("discover");
+              if (discoveries.length === 0) void scan();
+            }}
+          >
+            Discover
+          </button>
         </nav>
       </header>
 
@@ -170,7 +214,19 @@ export default function App() {
         </div>
       )}
 
-      {tab === "ports" ? (
+      {tab === "discover" ? (
+        <main className="ports-pane">
+          <DiscoveryPanel
+            discoveries={discoveries}
+            scanning={scanning}
+            busy={busy}
+            onAdd={handleAddDiscovered}
+            onAddAll={handleAddAll}
+            onRescan={() => void scan()}
+            onAddByPath={handleScanFolder}
+          />
+        </main>
+      ) : tab === "ports" ? (
         <main className="ports-pane">
           <PortTable ports={ports} />
         </main>
@@ -180,7 +236,10 @@ export default function App() {
             projects={projects}
             selectedId={selectedProject}
             onSelect={setSelectedProject}
-            onAdd={handleAddProject}
+            onAdd={() => {
+              setTab("discover");
+              void scan();
+            }}
             busy={busy}
           />
 

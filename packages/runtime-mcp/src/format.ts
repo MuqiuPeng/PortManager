@@ -5,6 +5,7 @@
 // Anything a caller might need to act on — ids, ports, pids — is still present.
 
 import type {
+  Discovery,
   HealthReport,
   LogLine,
   PortOwner,
@@ -27,6 +28,29 @@ export function formatProjects(projects: ProjectView[]): string {
         `  ${project.root_path}`,
     )
     .join("\n");
+}
+
+export function formatDiscoveries(items: Discovery[]): string {
+  if (items.length === 0) {
+    return "Found nothing. Pass paths to scan directory trees for projects that are not running.";
+  }
+
+  const lines = items.map((item) => {
+    const ports = (item.ports ?? []).map((port) => `:${port}`).join(" ");
+    const branch = item.git_branch ? ` (${item.git_branch})` : "";
+    const state = item.registered ? "registered" : "not registered";
+    const running = item.running ? ", running" : "";
+    const services = (item.suggested_services ?? []).length
+      ? `\n    services: ${(item.suggested_services ?? []).join(", ")}`
+      : "";
+    return `${item.name}${branch} ${ports}\n    ${item.root_path}\n    ${state}${running}${services}`;
+  });
+
+  const pending = items.filter((item) => !item.registered).length;
+  if (pending > 0) {
+    lines.push(`\n${pending} not registered. Call again with adopt: true to register them.`);
+  }
+  return lines.join("\n");
 }
 
 export function formatProjectRuntime(project: ProjectView): string {
