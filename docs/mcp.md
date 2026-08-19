@@ -77,6 +77,13 @@ if the attribution matters to you.
 | `reserve_port` | Claim a port before starting something yourself |
 | `release_port` | Drop a lease (does not stop anything) |
 
+### Containers
+
+| Tool | Purpose |
+|---|---|
+| `control_container` | Start, stop or restart a container by name |
+| `get_container_logs` | A container's own output, from Docker |
+
 ### Logs and git
 
 | Tool | Purpose |

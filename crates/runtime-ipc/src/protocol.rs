@@ -15,8 +15,8 @@ use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
     AgentSession, DaemonInfo, HealthReport, LogLine, PortOwner, PortReservation, PortStatus,
-    ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch, ServiceView,
-    StartOutcome, Workspace,
+    ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
+    ServiceView, StartOutcome, Workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -128,6 +128,22 @@ pub enum Request {
         session: Option<String>,
     },
 
+    /// Switch a container on or off.
+    ///
+    /// Named rather than by pid: a container id is stable, and `docker stop` is
+    /// a graceful operation on a restartable object, which is why this is
+    /// offered for containers the runtime did not create.
+    ControlContainer {
+        name: String,
+        /// start | stop | restart
+        action: String,
+    },
+    GetContainerLogs {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_lines: Option<usize>,
+    },
+
     GetHealth {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
@@ -212,6 +228,7 @@ pub enum ResponseBody {
     Workspace(Workspace),
     Services { items: Vec<ServiceView> },
     Config(ProjectConfig),
+    Container(ContainerView),
     Service(ServiceView),
     Started(StartOutcome),
     Health(HealthReport),

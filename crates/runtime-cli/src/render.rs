@@ -5,7 +5,7 @@
 
 use runtime_core::discover::Discovery;
 use runtime_types::{
-    DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
+    ContainerView, DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
     ServiceView, StartOutcome, Workspace,
 };
 
@@ -74,6 +74,9 @@ pub fn projects(views: &[ProjectView]) -> String {
             for service in &workspace.services {
                 out.push_str(&format!("    {}\n", service_line(service)));
             }
+            for container in &workspace.containers {
+                out.push_str(&format!("    {}\n", container_line(container)));
+            }
             for external in &workspace.external {
                 out.push_str(&format!("    {}\n", external_line(external)));
             }
@@ -100,6 +103,32 @@ pub fn service_line(view: &ServiceView) -> String {
         view.service.name,
         port,
         status_label(view.status)
+    )
+}
+
+/// A container compose defines for this checkout.
+pub fn container_line(view: &ContainerView) -> String {
+    let ports = if view.ports.is_empty() {
+        "-".to_string()
+    } else {
+        view.ports
+            .iter()
+            .map(|port| format!(":{port}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let health = view
+        .health
+        .as_deref()
+        .map(|health| format!(" ({health})"))
+        .unwrap_or_default();
+    format!(
+        "{} {:<12} {:<8} {}{health}  [container {}]",
+        if view.is_running() { "▣" } else { "▢" },
+        view.service.as_deref().unwrap_or(&view.name),
+        ports,
+        view.status,
+        view.name
     )
 }
 

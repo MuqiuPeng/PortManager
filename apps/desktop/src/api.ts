@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  ContainerView,
   DaemonInfo,
   Discovery,
   PanelSettings,
@@ -51,6 +52,9 @@ export const api = {
       maxLines,
       sinceSeq: sinceSeq ?? null,
     }),
+
+  controlContainer: (name: string, action: "start" | "stop" | "restart") =>
+    invoke<ContainerView>("control_container", { name, action }),
 
   listPorts: () => invoke<PortOwner[]>("list_ports"),
 

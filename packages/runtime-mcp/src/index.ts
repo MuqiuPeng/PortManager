@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { DaemonClient, resolveEndpoint } from "./client.js";
 import {
+  formatContainer,
   formatDiscoveries,
   formatHealth,
   formatLogs,
@@ -331,6 +332,47 @@ function registerTools(
         "restart_service",
         { service, project: project ?? null, ...attribution },
         (body) => (body.type === "started" ? formatStart(body) : unexpected(body)),
+      ),
+  );
+
+  // ---- containers ----------------------------------------------------
+
+  server.registerTool(
+    "control_container",
+    {
+      title: "Start or stop a container",
+      description:
+        "Switch a container on or off by name. Works for containers the runtime did not create: unlike signalling a process, `docker stop` is a graceful operation on a named, restartable object. Compose still owns what these services are — this owns whether they run. Container names come from get_project_runtime.",
+      inputSchema: {
+        name: z.string().describe("Container name, e.g. 'stockviewer-db'."),
+        action: z.enum(["start", "stop", "restart"]),
+      },
+    },
+    async ({ name, action }) =>
+      run("control_container", { name, action }, (body) =>
+        body.type === "container" ? formatContainer(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "get_container_logs",
+    {
+      title: "Get container logs",
+      description:
+        "Read a container's own output. The runtime never captured it — Docker did — so this asks Docker for it.",
+      inputSchema: {
+        name: z.string().describe("Container name."),
+        max_lines: z.number().int().min(1).max(MAX_LOG_LINES).optional(),
+      },
+    },
+    async ({ name, max_lines }) =>
+      run(
+        "get_container_logs",
+        { name, max_lines: Math.min(max_lines ?? DEFAULT_LOG_LINES, MAX_LOG_LINES) },
+        (body) =>
+          body.type === "logs"
+            ? body.items.map((line) => line.message).join("\n") || "(no output)"
+            : unexpected(body),
       ),
   );
 

@@ -90,10 +90,27 @@ is the directory the compose file lives in, which is a project root by the same
 definition applied to processes — so containers join both port attribution and
 discovery through the paths that already exist.
 
-This is read-only on purpose. Compose starts and stops these services well, and
-its file is a contract shared with CI and teammates; the value on offer is
-putting containers and native processes in one picture, not becoming a second
-orchestrator. `RuntimeProvider` remains the seam if lifecycle is added later.
+Containers can also be switched on and off, which does not contradict the rule
+that the runtime never terminates a process it did not start. That rule exists
+because signalling an arbitrary pid is dangerous and pids are recycled;
+`docker stop` is neither — it is a graceful operation on a named, restartable
+object, and exactly what the developer would otherwise type.
+
+What this deliberately does not do is replace compose. Building images,
+dependency ordering, networks and volumes stay where they are: compose owns
+*what* these services are, the runtime owns whether they run.
+
+Stopped containers are listed too — a switch that only turns things off is half
+a switch — but one directory can hold several stacks, and a dormant `-prod`
+stack's dead containers would bury the one in use. A stopped container is shown
+when its own compose project has something running, and when nothing at all is
+running they all appear, because otherwise there would be nothing to switch on.
+
+Reading Docker drains the command's output on a separate thread while waiting.
+Polling for exit without reading deadlocks once the output passes the 64KB pipe
+buffer, which `docker inspect` does at a handful of containers — and the symptom
+is not a hang but silence, because the command is killed at the deadline and
+every container quietly disappears.
 
 Containers started with plain `docker run` carry no labels, and are reported by
 name and image without a project. `loom-postgres` obviously belongs to Loom, and

@@ -91,9 +91,21 @@ export interface ExternalService {
   url?: string;
 }
 
+/** A container compose defines for a checkout, running or not. */
+export interface ContainerView {
+  name: string;
+  service?: string;
+  image: string;
+  status: string;
+  health?: string;
+  ports?: number[];
+  url?: string;
+}
+
 export interface WorkspaceView extends Workspace {
   services: ServiceView[];
   external?: ExternalService[];
+  containers?: ContainerView[];
 }
 
 export interface ProjectView extends Project {

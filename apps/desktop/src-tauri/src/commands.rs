@@ -5,6 +5,7 @@
 //! and MCP do not get.
 
 use runtime_core::discover::Discovery;
+use runtime_types::ContainerView;
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceView,
@@ -190,6 +191,23 @@ pub async fn get_health(
     };
     match call(&state, request).await? {
         ResponseBody::Health(report) => Ok(report),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Switch a container on or off.
+///
+/// Offered for containers the runtime did not create because `docker stop` is
+/// a graceful operation on a named, restartable object — unlike signalling a
+/// pid, which is why processes started elsewhere have no such button.
+#[tauri::command]
+pub async fn control_container(
+    state: State<'_, DaemonHandle>,
+    name: String,
+    action: String,
+) -> CmdResult<ContainerView> {
+    match call(&state, Request::ControlContainer { name, action }).await? {
+        ResponseBody::Container(view) => Ok(view),
         other => Err(unexpected(&other)),
     }
 }

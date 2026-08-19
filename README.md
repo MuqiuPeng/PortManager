@@ -147,6 +147,7 @@ runtime restart <service> [--wait]
 runtime logs <service> [-n N] [--follow]   captured output, kept across restarts
 runtime health <service> [--wait S]
 runtime port list|check|reserve|release
+runtime container start|stop|restart|logs
 runtime worktree list|add
 runtime daemon start|stop|status
 runtime doctor
@@ -208,7 +209,8 @@ now. `--path` adds a directory walk for projects that happen to be stopped.
 one Docker process, so a port table built on pids shows five services as five
 identical `com.docker.docker` rows. Compose labels resolve them to their project
 and service, and the compose file's directory makes them discoverable like any
-other project. Read-only: compose still owns starting and stopping them.
+other project. Compose still owns *what* they are; the runtime owns whether they run —
+`runtime container stop stockviewer-db`, or a button in the panel.
 
 **Running is running, whoever started it.** A service found already listening on
 its port is reported as running and marked unmanaged — claiming otherwise while

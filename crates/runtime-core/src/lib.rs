@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    DaemonInfo, ExternalService, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView,
+    ContainerView, DaemonInfo, ExternalService, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView,
     Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView,
     Workspace, WorkspaceId, WorkspaceView,
 };
@@ -638,12 +638,23 @@ impl Runtime {
                 services.push(view);
             }
 
-            let external = self.external_services(&workspace, &services, &owners);
+            let containers = self.containers_for(&workspace);
+            // Containers are listed as themselves; repeating them as
+            // unexplained ports would be the same thing said twice.
+            let container_ports: Vec<u16> =
+                containers.iter().flat_map(|c| c.ports.clone()).collect();
+            let external: Vec<ExternalService> = self
+                .external_services(&workspace, &services, &owners)
+                .into_iter()
+                .filter(|item| !container_ports.contains(&item.port))
+                .collect();
+
             external_total += external.len();
             workspaces.push(WorkspaceView {
                 workspace,
                 services,
                 external,
+                containers,
             });
         }
 
@@ -682,6 +693,87 @@ impl Runtime {
                 url: Some(format!("http://localhost:{}", owner.port)),
             })
             .collect()
+    }
+
+    /// Containers compose defines for a checkout.
+    ///
+    /// One directory can hold several stacks — a dev compose file and a `-prod`
+    /// one — and listing every dead container from every stack buries the one
+    /// being used. A stopped container is shown when its own stack has
+    /// something running, so "the stack you are using, including the parts that
+    /// are off" stays complete while dormant stacks stay out of the way. When
+    /// nothing at all is running, they all appear: otherwise there would be
+    /// nothing to switch on.
+    fn containers_for(&self, workspace: &Workspace) -> Vec<ContainerView> {
+        let all = self.docker.containers_in(&workspace.path);
+        let live_stacks: Vec<Option<String>> = all
+            .iter()
+            .filter(|container| container.is_running())
+            .map(|container| container.compose_project.clone())
+            .collect();
+
+        let mut containers: Vec<_> = all
+            .into_iter()
+            .filter(|container| {
+                container.is_running()
+                    || live_stacks.is_empty()
+                    || live_stacks.contains(&container.compose_project)
+            })
+            .map(|container| ContainerView {
+                url: container
+                    .published_ports
+                    .first()
+                    .map(|port| format!("http://localhost:{port}")),
+                name: container.name,
+                service: container.compose_service,
+                image: container.image,
+                status: container.status,
+                health: container.health,
+                ports: container.published_ports,
+            })
+            .collect();
+
+        // Running first: the view is read to see what is up.
+        containers.sort_by(|a, b| {
+            b.is_running()
+                .cmp(&a.is_running())
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        containers
+    }
+
+    // ---- containers ----------------------------------------------------
+
+    /// Switch a container on or off.
+    pub fn control_container(
+        &self,
+        name: &str,
+        action: docker::ContainerAction,
+    ) -> Result<ContainerView> {
+        self.docker.control(name, action)?;
+        // What is listening just changed.
+        self.invalidate_port_owners();
+
+        let container = self
+            .docker
+            .container(name)
+            .ok_or_else(|| RuntimeError::not_found("container", name))?;
+        Ok(ContainerView {
+            url: container
+                .published_ports
+                .first()
+                .map(|port| format!("http://localhost:{port}")),
+            name: container.name,
+            service: container.compose_service,
+            image: container.image,
+            status: container.status,
+            health: container.health,
+            ports: container.published_ports,
+        })
+    }
+
+    pub fn container_logs(&self, name: &str, max_lines: usize) -> Result<Vec<String>> {
+        self.docker.logs(name, max_lines.clamp(1, logs::MAX_READ_LINES))
     }
 
     /// A service with its current process state resolved against the OS.

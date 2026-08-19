@@ -5,6 +5,7 @@
 // Anything a caller might need to act on — ids, ports, pids — is still present.
 
 import type {
+  ContainerView,
   Discovery,
   HealthReport,
   LogLine,
@@ -72,6 +73,9 @@ export function formatProjectRuntime(project: ProjectView): string {
     for (const service of workspace.services) {
       lines.push(`  ${formatService(service)}`);
     }
+    for (const container of workspace.containers ?? []) {
+      lines.push(`  ${formatContainer(container)}`);
+    }
     // Named but not attributed: knowing something is on :3001 in this checkout
     // is useful; deciding which declared service it is would be a guess.
     for (const item of workspace.external ?? []) {
@@ -83,6 +87,13 @@ export function formatProjectRuntime(project: ProjectView): string {
 }
 
 const LIVE: ReadonlySet<string> = new Set(["starting", "healthy", "unhealthy", "stopping"]);
+
+export function formatContainer(container: ContainerView): string {
+  const ports = (container.ports ?? []).map((port) => `:${port}`).join(" ") || "no port";
+  const health = container.health ? ` (${container.health})` : "";
+  // The container name is what start/stop take, so it is always present.
+  return `${container.service ?? container.name} ${ports} ${container.status}${health} [container ${container.name}]`;
+}
 
 export function formatService(service: ServiceView): string {
   // `instance` is the *last* run, which may have ended. Reporting its pid and

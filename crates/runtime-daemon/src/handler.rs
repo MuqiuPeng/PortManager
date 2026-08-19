@@ -229,6 +229,43 @@ impl Dispatcher {
                 ))
             }
 
+            // ---- containers --------------------------------------------
+
+            Request::ControlContainer { name, action } => {
+                let action = match action.trim().to_ascii_lowercase().as_str() {
+                    "start" => runtime_core::docker::ContainerAction::Start,
+                    "stop" => runtime_core::docker::ContainerAction::Stop,
+                    "restart" => runtime_core::docker::ContainerAction::Restart,
+                    other => {
+                        return Err(RuntimeError::invalid(format!(
+                            "unknown container action '{other}'; expected start, stop or restart"
+                        )))
+                    }
+                };
+                Ok(ResponseBody::Container(
+                    runtime.control_container(&name, action)?,
+                ))
+            }
+
+            Request::GetContainerLogs { name, max_lines } => {
+                let lines = runtime.container_logs(&name, max_lines.unwrap_or(DEFAULT_LOG_LINES))?;
+                // Docker keeps its own timestamps and streams; passing the text
+                // through unchanged is more honest than inventing metadata.
+                Ok(ResponseBody::Logs {
+                    items: lines
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, message)| runtime_types::LogLine {
+                            seq: index as u64,
+                            service_id: runtime_types::ServiceId::from(name.as_str()),
+                            stream: runtime_types::LogStream::Stdout,
+                            timestamp: Utc::now(),
+                            message,
+                        })
+                        .collect(),
+                })
+            }
+
             // ---- health ------------------------------------------------
 
             Request::GetHealth { project, service } => {

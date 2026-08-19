@@ -76,6 +76,7 @@ pub fn run() {
             commands::restart_service,
             commands::get_logs,
             commands::get_health,
+            commands::control_container,
             commands::list_ports,
             commands::check_port,
             commands::daemon_info,

@@ -115,6 +115,12 @@ enum Command {
     #[command(subcommand)]
     Port(PortCommand),
 
+    /// Switch containers on and off.
+    ///
+    /// Compose still owns what these services are; this owns whether they run.
+    #[command(subcommand)]
+    Container(ContainerCommand),
+
     /// Write the project's services out as a committable .runtime.json.
     Export {
         selector: Option<String>,
@@ -219,6 +225,21 @@ enum PortCommand {
     },
     /// Drop a lease.
     Release { port: u16 },
+}
+
+#[derive(Debug, Subcommand)]
+enum ContainerCommand {
+    /// Start a stopped container.
+    Start { name: String },
+    /// Stop a running container.
+    Stop { name: String },
+    Restart { name: String },
+    /// Read a container's own output.
+    Logs {
+        name: String,
+        #[arg(long, short = 'n', default_value_t = 100)]
+        lines: usize,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -527,6 +548,31 @@ async fn run(cli: Cli) -> Result<String> {
             client.call(Request::ReleasePort { port }).await?
         }
 
+        Command::Container(command) => {
+            let (name, action) = match &command {
+                ContainerCommand::Start { name } => (name.clone(), "start"),
+                ContainerCommand::Stop { name } => (name.clone(), "stop"),
+                ContainerCommand::Restart { name } => (name.clone(), "restart"),
+                ContainerCommand::Logs { name, lines } => {
+                    return render_response(
+                        &client
+                            .call(Request::GetContainerLogs {
+                                name: name.clone(),
+                                max_lines: Some(*lines),
+                            })
+                            .await?,
+                        cli.json,
+                    );
+                }
+            };
+            client
+                .call(Request::ControlContainer {
+                    name,
+                    action: action.to_string(),
+                })
+                .await?
+        }
+
         Command::Worktree(WorktreeCommand::List { selector }) => {
             let selector = selector
                 .or(project)
@@ -617,6 +663,7 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         ResponseBody::Workspaces { items } => render::workspaces(items),
         ResponseBody::Workspace(item) => render::workspaces(std::slice::from_ref(item)),
         ResponseBody::Services { items } => render::services(items),
+        ResponseBody::Container(view) => render::container_line(view),
         ResponseBody::Config(config) => serde_json::to_string_pretty(config)
             .map_err(|err| RuntimeError::internal(format!("cannot encode the config: {err}")))?,
         ResponseBody::Service(view) => render::service_detail(view),

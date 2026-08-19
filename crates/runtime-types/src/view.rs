@@ -55,6 +55,35 @@ pub struct ExternalService {
     pub url: Option<String>,
 }
 
+/// A container belonging to a project, running or not.
+///
+/// Kept apart from `ServiceView` because the runtime did not create it and does
+/// not own its definition — compose does. What it can do is show it in the same
+/// picture and switch it on or off, which is a named, graceful operation on a
+/// restartable object rather than a signal aimed at a pid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainerView {
+    pub name: String,
+    /// Compose service name, absent for a container started with `docker run`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    pub image: String,
+    /// `running`, `exited`, `paused`, …
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl ContainerView {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceView {
     #[serde(flatten)]
@@ -63,6 +92,9 @@ pub struct WorkspaceView {
     /// Ports live in this checkout that no declared service explains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external: Vec<ExternalService>,
+    /// Containers compose defines for this checkout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub containers: Vec<ContainerView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

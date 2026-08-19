@@ -10,17 +10,23 @@
 //! is the directory the compose file lives in, which is the project root by the
 //! same definition used everywhere else here.
 //!
-//! This is deliberately read-only. Compose already starts and stops these
-//! services well, and its file is a contract shared with CI and teammates;
-//! the value on offer is putting containers and native processes in one
-//! picture, not becoming a second orchestrator.
+//! Containers can also be started and stopped here. That does not contradict
+//! the rule that the runtime never terminates a process it did not start: that
+//! rule exists because signalling an arbitrary pid is dangerous and pids are
+//! recycled. `docker stop` is neither — it is a graceful operation on a named,
+//! restartable object, and exactly what the developer would type themselves.
+//!
+//! What this deliberately does *not* do is replace compose. Building images,
+//! ordering dependencies, networks and volumes stay where they are; the value
+//! on offer is one picture and one switch, not a second orchestrator.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use runtime_types::{Result, RuntimeError};
 use serde::{Deserialize, Serialize};
 
 /// How long a container listing is reused.
@@ -38,6 +44,14 @@ const UNAVAILABLE_TTL: Duration = Duration::from_secs(60);
 /// Docker can be slow to answer while it is starting; do not block the daemon.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerAction {
+    Start,
+    Stop,
+    Restart,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerInfo {
     pub id: String,
@@ -51,12 +65,19 @@ pub struct ContainerInfo {
     /// Directory the compose file lives in — the project root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<PathBuf>,
+    /// `running`, `exited`, `paused`, …
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
     /// Host ports this container publishes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published_ports: Vec<u16>,
+}
+
+impl ContainerInfo {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
 }
 
 impl ContainerInfo {
@@ -99,7 +120,10 @@ impl Docker {
         }
     }
 
-    /// Running containers, refreshed at most once per [`CACHE_TTL`].
+    /// Every container, running or not, refreshed at most once per [`CACHE_TTL`].
+    ///
+    /// Stopped ones are included because a switch that can only turn things off
+    /// is half a switch.
     pub fn containers(&self) -> Vec<ContainerInfo> {
         let Ok(mut cache) = self.cache.lock() else {
             return Vec::new();
@@ -132,7 +156,67 @@ impl Docker {
     pub fn container_for_port(&self, port: u16) -> Option<ContainerInfo> {
         self.containers()
             .into_iter()
-            .find(|container| container.published_ports.contains(&port))
+            .find(|container| container.is_running() && container.published_ports.contains(&port))
+    }
+
+    pub fn container(&self, name: &str) -> Option<ContainerInfo> {
+        self.containers()
+            .into_iter()
+            .find(|container| container.name == name || container.id.starts_with(name))
+    }
+
+    /// Containers belonging to a compose project rooted at `directory`.
+    pub fn containers_in(&self, directory: &Path) -> Vec<ContainerInfo> {
+        self.containers()
+            .into_iter()
+            .filter(|container| container.working_dir.as_deref() == Some(directory))
+            .collect()
+    }
+
+    /// Start, stop or restart a container by name.
+    ///
+    /// Named rather than by pid: a container id is stable and unambiguous,
+    /// which is why these are safe to offer for containers the runtime did not
+    /// create.
+    pub fn control(&self, name: &str, action: ContainerAction) -> Result<()> {
+        let container = self
+            .container(name)
+            .ok_or_else(|| RuntimeError::not_found("container", name))?;
+
+        let docker = docker_binary()
+            .ok_or_else(|| RuntimeError::unsupported("docker is not installed"))?;
+        let verb = match action {
+            ContainerAction::Start => "start",
+            ContainerAction::Stop => "stop",
+            ContainerAction::Restart => "restart",
+        };
+        run(&docker, &[verb, &container.id]).ok_or_else(|| {
+            RuntimeError::io(format!("`docker {verb} {}` failed", container.name))
+        })?;
+
+        // The cached view is now wrong, and the caller is about to read it.
+        self.invalidate();
+        Ok(())
+    }
+
+    /// A container's own output, which the runtime never captured itself.
+    pub fn logs(&self, name: &str, max_lines: usize) -> Result<Vec<String>> {
+        let container = self
+            .container(name)
+            .ok_or_else(|| RuntimeError::not_found("container", name))?;
+        let docker = docker_binary()
+            .ok_or_else(|| RuntimeError::unsupported("docker is not installed"))?;
+
+        let tail = max_lines.to_string();
+        let raw = run(&docker, &["logs", "--tail", &tail, &container.id])
+            .ok_or_else(|| RuntimeError::io(format!("`docker logs {}` failed", container.name)))?;
+        Ok(raw.lines().map(str::to_string).collect())
+    }
+
+    pub fn invalidate(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.fetched_at = None;
+        }
     }
 
     /// Compose project roots, for discovery.
@@ -168,7 +252,9 @@ impl Docker {
 fn inspect_running() -> Option<Vec<ContainerInfo>> {
     let docker = docker_binary()?;
 
-    let ids = run(&docker, &["ps", "--quiet", "--no-trunc"])?;
+    // `--all`: a stopped container is still something the user may want to
+    // switch back on, and it still says which project it belongs to.
+    let ids = run(&docker, &["ps", "--all", "--quiet", "--no-trunc"])?;
     let ids: Vec<&str> = ids.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     if ids.is_empty() {
         return Some(Vec::new());
@@ -258,9 +344,14 @@ fn published_ports(value: &serde_json::Value) -> Vec<u16> {
     out
 }
 
+/// Run a docker command with a deadline.
+///
+/// The output is drained on a separate thread while the parent waits. Polling
+/// for exit without reading first deadlocks the moment the output exceeds the
+/// pipe buffer — 64KB, which `docker inspect` passes at a handful of
+/// containers — and the symptom is not a hang but silence: the command is
+/// killed at the deadline and every container quietly disappears.
 fn run(docker: &PathBuf, args: &[&str]) -> Option<String> {
-    // `Command` has no timeout, so a hung Docker would hang the daemon. Docker
-    // Desktop starting up is exactly when that happens.
     let mut child = Command::new(docker)
         .args(args)
         .stdin(Stdio::null())
@@ -269,30 +360,39 @@ fn run(docker: &PathBuf, args: &[&str]) -> Option<String> {
         .spawn()
         .ok()?;
 
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buffer);
+        buffer
+    });
+
     let deadline = Instant::now() + COMMAND_TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) => return None,
+            Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
+                // Docker Desktop starting up is when this actually happens.
                 let _ = child.kill();
                 tracing::debug!(?args, "docker command timed out");
+                let _ = reader.join();
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(_) => return None,
+            Err(_) => {
+                let _ = reader.join();
+                return None;
+            }
         }
-    }
+    };
 
-    let output = child.wait_with_output().ok()?;
-    String::from_utf8(output.stdout).ok()
+    let output = reader.join().ok()?;
+    if !status.success() {
+        return None;
+    }
+    String::from_utf8(output).ok()
 }
 
-/// Find the `docker` CLI.
-///
-/// PATH alone is not enough: the daemon is often started by the desktop app,
-/// which inherits the minimal PATH macOS gives a bundled application — the
-/// same trap that made the daemon itself unfindable.
 fn docker_binary() -> Option<PathBuf> {
     let name = if cfg!(windows) { "docker.exe" } else { "docker" };
 
@@ -374,6 +474,18 @@ mod tests {
         assert_eq!(container.compose_project, None);
         assert_eq!(container.working_dir, None);
         assert_eq!(container.display_service(), "loom-postgres");
+    }
+
+    #[test]
+    fn a_stopped_container_is_still_reported() {
+        let mut value = inspect_fixture();
+        value["State"] = serde_json::json!({ "Status": "exited" });
+
+        let container = parse_container(&value).unwrap();
+        assert!(!container.is_running());
+        // A switch that can only turn things off is half a switch, so stopped
+        // containers have to be visible to be startable.
+        assert_eq!(container.compose_service.as_deref(), Some("db"));
     }
 
     #[test]

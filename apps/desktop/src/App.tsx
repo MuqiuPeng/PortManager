@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
 import { DiscoveryPanel } from "./components/DiscoveryPanel";
+import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
@@ -278,7 +279,8 @@ export default function App() {
                       </header>
 
                       {workspace.services.length === 0 &&
-                      (workspace.external ?? []).length === 0 ? (
+                      (workspace.external ?? []).length === 0 &&
+                      (workspace.containers ?? []).length === 0 ? (
                         <p className="empty">No services detected.</p>
                       ) : (
                         workspace.services.map((service: ServiceView) => (
@@ -297,6 +299,17 @@ export default function App() {
                           />
                         ))
                       )}
+
+                      {(workspace.containers ?? []).map((container) => (
+                        <ContainerRow
+                          container={container}
+                          busy={busy}
+                          key={container.name}
+                          onControl={(action) =>
+                            act(() => api.controlContainer(container.name, action))
+                          }
+                        />
+                      ))}
 
                       {(workspace.external ?? []).map((item) => (
                         <ExternalRow external={item} key={`${item.port}-${item.pid}`} />
