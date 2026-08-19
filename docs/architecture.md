@@ -105,6 +105,26 @@ minute rather than paid for on each lookup. The CLI is located the same way the
 daemon is — a daemon started by the bundled app inherits a minimal PATH that
 contains no `docker`.
 
+## Logs
+
+A bounded ring buffer per service answers reads; a file beside it is what makes
+the answer survive a daemon restart. That matters because "why did it die?" is
+asked *after* the thing died — often after the daemon was restarted too, which
+is precisely when memory-only logs are gone.
+
+Lines are JSON, one per line, under `<data dir>/logs/<service id>.log`. JSON
+because the stream and the sequence number have to survive; one line each
+because a torn write during a crash then costs one line rather than the file.
+On restore the sequence continues where it left off, so a cursor held across a
+restart returns what is new rather than replaying what the caller already has.
+
+Files rotate at 4 MB keeping one generation, and files for deleted services are
+pruned when the daemon starts.
+
+A service the runtime did not start has no captured output at all. Asking for
+its logs says so, rather than returning nothing — "(no output)" reads as "it
+printed nothing", which is a different and misleading claim.
+
 ## Discovery
 
 The same chain that answers "who owns :3000" answers "what projects are on this

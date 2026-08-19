@@ -68,10 +68,14 @@ impl Runtime {
     }
 
     pub fn open(database_path: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self::with_parts(
-            platform::current(),
-            Arc::new(Store::open(database_path)?),
-        ))
+        let mut runtime = Self::with_parts(platform::current(), Arc::new(Store::open(database_path)?));
+        // Logs on disk are the whole point of persisting them: "why did it die"
+        // is asked after the fact, often after the daemon restarted too.
+        match LogStore::persistent(logs::DEFAULT_CAPACITY, paths::log_dir()?) {
+            Ok(store) => runtime.logs = Arc::new(store),
+            Err(err) => tracing::warn!(%err, "keeping logs in memory only"),
+        }
+        Ok(runtime)
     }
 
     /// An ephemeral runtime, used by tests.
@@ -764,7 +768,38 @@ impl Runtime {
         max_lines: usize,
         since_seq: Option<u64>,
     ) -> Result<Vec<LogLine>> {
-        self.logs.read(service_id, max_lines, since_seq)
+        let lines = self.logs.read(service_id, max_lines, since_seq)?;
+        if !lines.is_empty() {
+            return Ok(lines);
+        }
+
+        // A service running but not started here has no captured output, and
+        // "(no output)" reads as "it printed nothing" — which is a different
+        // and misleading claim.
+        let service = self.require_service(service_id)?;
+        let view = self.service_view(&service)?;
+        if view.status.is_live() && !view.managed {
+            return Ok(vec![LogLine {
+                seq: 0,
+                service_id: service_id.clone(),
+                stream: runtime_types::LogStream::System,
+                timestamp: Utc::now(),
+                message: "output is not captured: this service was not started by the runtime"
+                    .to_string(),
+            }]);
+        }
+        Ok(lines)
+    }
+
+    /// Drop log files for services that no longer exist.
+    pub fn prune_logs(&self) -> Result<usize> {
+        let ids: Vec<ServiceId> = self
+            .store
+            .all_services()?
+            .into_iter()
+            .map(|service| service.id)
+            .collect();
+        self.logs.prune(&ids)
     }
 
     pub fn log_cursor(&self, service_id: &ServiceId) -> Result<Option<u64>> {

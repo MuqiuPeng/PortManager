@@ -143,7 +143,7 @@ runtime service list|show
 runtime start <service> [--port N] [--on-conflict P] [--wait]
 runtime stop <service> [--timeout S]
 runtime restart <service> [--wait]
-runtime logs <service> [-n N] [--follow]
+runtime logs <service> [-n N] [--follow]   captured output, kept across restarts
 runtime health <service> [--wait S]
 runtime port list|check|reserve|release
 runtime worktree list|add

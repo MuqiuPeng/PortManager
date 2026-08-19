@@ -68,6 +68,11 @@ async fn run(args: Args) -> Result<()> {
     }
 
     let runtime = Arc::new(Runtime::open_default()?);
+    match runtime.prune_logs() {
+        Ok(removed) if removed > 0 => tracing::info!(removed, "removed logs for deleted services"),
+        Err(err) => tracing::warn!(%err, "could not prune old logs"),
+        _ => {}
+    }
     let corrected = runtime.reconcile()?;
     if corrected > 0 {
         tracing::info!(corrected, "closed out instances that died while the daemon was down");
