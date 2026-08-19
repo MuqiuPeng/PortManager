@@ -64,12 +64,18 @@ impl Runtime {
                 return Ok(StartOutcome {
                     service: self.service_view(&service)?,
                     reused: true,
-                    reservation: instance.port.map(|port| PortReservation {
-                        port,
-                        preferred_port: service.preferred_port,
-                        reallocated: Some(port) != service.preferred_port,
-                        policy: ConflictPolicy::Reuse,
-                        conflict: None,
+                    reservation: instance.port.map(|port| {
+                        // The preferred port includes the workspace offset, so
+                        // a worktree reusing 3001 is not reported as having
+                        // wanted 3000.
+                        let preferred = crate::ports::PortResolver::preferred_port(&service, &workspace);
+                        PortReservation {
+                            port,
+                            preferred_port: preferred,
+                            reallocated: Some(port) != preferred,
+                            policy: ConflictPolicy::Reuse,
+                            conflict: None,
+                        }
                     }),
                 });
             }

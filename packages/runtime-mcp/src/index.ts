@@ -1,0 +1,449 @@
+#!/usr/bin/env node
+/**
+ * MCP server for the local development runtime manager.
+ *
+ * Every tool is a semantic operation — `restart_service("api")`, not
+ * `exec("kill -9 8291")`. There is deliberately no shell, no arbitrary
+ * command execution and no kill-by-pid: the daemon's protocol does not offer
+ * them, so this server cannot expose them even by accident. That boundary is
+ * what makes it safe to hand to an agent.
+ *
+ * The server holds no runtime state. It is a client of the daemon, exactly like
+ * the CLI and the desktop app, so a service an agent starts here is visible in
+ * the GUI immediately and survives this process exiting.
+ */
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+import { DaemonClient, resolveEndpoint } from "./client.js";
+import {
+  formatHealth,
+  formatLogs,
+  formatPortStatus,
+  formatPorts,
+  formatProjectRuntime,
+  formatProjects,
+  formatReservation,
+  formatServiceDetail,
+  formatServices,
+  formatStart,
+  formatWorktrees,
+} from "./format.js";
+import type { ResponseBody } from "./protocol.js";
+import { detectAgent, registerSession, type AgentIdentity } from "./session.js";
+
+/** Log reads are capped so one call cannot flood an agent's context. */
+const MAX_LOG_LINES = 500;
+const DEFAULT_LOG_LINES = 100;
+
+const SERVICE_DESCRIPTION =
+  "Service name (e.g. 'web'), 'branch/name' for a git worktree (e.g. 'feature/refund/web'), or a service id.";
+const PROJECT_DESCRIPTION =
+  "Project id, name, or a path inside it. Optional when the service name is unambiguous.";
+
+async function main(): Promise<void> {
+  const identity = detectAgent(process.argv.slice(2));
+  const client = new DaemonClient(resolveEndpoint());
+  const session = await registerSession(client, identity);
+
+  const server = new McpServer({
+    name: "local-runtime",
+    version: "0.1.0",
+  });
+
+  registerTools(server, client, identity, session?.id);
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  const shutdown = () => {
+    client.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+function registerTools(
+  server: McpServer,
+  client: DaemonClient,
+  identity: AgentIdentity,
+  sessionId: string | undefined,
+): void {
+  /** Run a call and render it, turning daemon errors into tool errors. */
+  const run = async (
+    method: string,
+    params: Record<string, unknown> | undefined,
+    render: (body: ResponseBody) => string,
+  ) => {
+    try {
+      const body = await client.call(method, params);
+      return { content: [{ type: "text" as const, text: render(body) }] };
+    } catch (error) {
+      // Daemon errors are actionable ("port 3000 is in use by dossh/main/web"),
+      // so they reach the agent as text rather than a transport failure.
+      return {
+        content: [{ type: "text" as const, text: (error as Error).message }],
+        isError: true,
+      };
+    }
+  };
+
+  /** Attribution sent with every state-changing call. */
+  const attribution = {
+    started_by: identity.client,
+    session: sessionId ?? null,
+  };
+
+  // ---- runtime -------------------------------------------------------
+
+  server.registerTool(
+    "list_projects",
+    {
+      title: "List projects",
+      description:
+        "List every project the runtime knows about, with how many of its services are running.",
+      inputSchema: {},
+    },
+    async () =>
+      run("list_projects", undefined, (body) =>
+        body.type === "projects" ? formatProjects(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "get_project_runtime",
+    {
+      title: "Get project runtime",
+      description:
+        "Show one project's workspaces (including git worktrees) and the live status, port and owner of each service. Start here when asked what a project is running.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("get_project", { selector: project }, (body) =>
+        body.type === "project" ? formatProjectRuntime(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "list_services",
+    {
+      title: "List services",
+      description: "List services with their live status and port, optionally for one project.",
+      inputSchema: {
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("list_services", { project: project ?? null }, (body) =>
+        body.type === "services" ? formatServices(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "get_service",
+    {
+      title: "Get service",
+      description: "Show one service's command, working directory, status, port and URL.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ service, project }) =>
+      run("get_service", { service, project: project ?? null }, (body) =>
+        body.type === "service" ? formatServiceDetail(body) : unexpected(body),
+      ),
+  );
+
+  // ---- lifecycle -----------------------------------------------------
+
+  server.registerTool(
+    "start_service",
+    {
+      title: "Start service",
+      description:
+        "Start a service. Already-running services are returned as-is rather than started twice. If the preferred port is taken by another project, the runtime allocates the next free one and says so.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        port: z.number().int().min(1).max(65535).optional().describe("Override the service's configured port."),
+        on_conflict: z
+          .enum(["reuse", "allocate-next", "fail", "ask", "kill-existing"])
+          .optional()
+          .describe(
+            "What to do if the port is taken. Defaults to the service's own policy (usually allocate-next). 'kill-existing' only ever affects processes the runtime itself started.",
+          ),
+      },
+    },
+    async ({ service, project, port, on_conflict }) =>
+      run(
+        "start_service",
+        {
+          service,
+          project: project ?? null,
+          port: port ?? null,
+          on_conflict: on_conflict ?? null,
+          ...attribution,
+        },
+        (body) => (body.type === "started" ? formatStart(body) : unexpected(body)),
+      ),
+  );
+
+  server.registerTool(
+    "stop_service",
+    {
+      title: "Stop service",
+      description:
+        "Stop a service and every process it spawned. Terminates gracefully first, then forcefully if it does not exit in time.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(120)
+          .optional()
+          .describe("How long to wait before forcing termination. Defaults to 8."),
+      },
+    },
+    async ({ service, project, timeout_seconds }) =>
+      run(
+        "stop_service",
+        { service, project: project ?? null, timeout_seconds: timeout_seconds ?? null },
+        (body) =>
+          body.type === "service" ? `${body.name} stopped` : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "restart_service",
+    {
+      title: "Restart service",
+      description:
+        "Stop a service, wait for the whole process tree to exit, then start it again. Follow with wait_until_healthy to confirm it is serving.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ service, project }) =>
+      run(
+        "restart_service",
+        { service, project: project ?? null, ...attribution },
+        (body) => (body.type === "started" ? formatStart(body) : unexpected(body)),
+      ),
+  );
+
+  // ---- health --------------------------------------------------------
+
+  server.registerTool(
+    "get_health",
+    {
+      title: "Get service health",
+      description:
+        "Probe a service right now. Distinguishes 'the process exists' from 'the service answers'.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ service, project }) =>
+      run("get_health", { service, project: project ?? null }, (body) =>
+        body.type === "health" ? formatHealth(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "wait_until_healthy",
+    {
+      title: "Wait until healthy",
+      description:
+        "Block until a service reports healthy or the timeout expires. Use this after starting or restarting instead of polling get_health.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(300)
+          .optional()
+          .describe("Defaults to 60."),
+      },
+    },
+    async ({ service, project, timeout_seconds }) =>
+      run(
+        "wait_until_healthy",
+        { service, project: project ?? null, timeout_seconds: timeout_seconds ?? null },
+        (body) => (body.type === "health" ? formatHealth(body) : unexpected(body)),
+      ),
+  );
+
+  // ---- ports ---------------------------------------------------------
+
+  server.registerTool(
+    "check_port",
+    {
+      title: "Check a port",
+      description:
+        "Find out what is listening on a port, resolved to a project, branch and service where possible, and what port to use instead. Use this when a localhost URL is unexpectedly unavailable or already taken.",
+      inputSchema: {
+        port: z.number().int().min(1).max(65535),
+      },
+    },
+    async ({ port }) =>
+      run("check_port", { port }, (body) =>
+        body.type === "port" ? formatPortStatus(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "list_ports",
+    {
+      title: "List listening ports",
+      description:
+        "List everything listening on this machine, including processes the runtime did not start.",
+      inputSchema: {},
+    },
+    async () =>
+      run("list_ports", undefined, (body) =>
+        body.type === "ports" ? formatPorts(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "reserve_port",
+    {
+      title: "Reserve a port",
+      description:
+        "Claim a port for a service before starting it yourself. Returns the port to actually use, which may differ from the preferred one. Prefer start_service, which reserves automatically.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        port: z.number().int().min(1).max(65535).optional(),
+        on_conflict: z
+          .enum(["reuse", "allocate-next", "fail", "ask", "kill-existing"])
+          .optional(),
+      },
+    },
+    async ({ service, project, port, on_conflict }) =>
+      run(
+        "reserve_port",
+        {
+          service,
+          project: project ?? null,
+          port: port ?? null,
+          on_conflict: on_conflict ?? null,
+          started_by: identity.client,
+        },
+        (body) => (body.type === "reservation" ? formatReservation(body) : unexpected(body)),
+      ),
+  );
+
+  server.registerTool(
+    "release_port",
+    {
+      title: "Release a port lease",
+      description:
+        "Drop the runtime's lease on a port. This does not stop any process — use stop_service for that.",
+      inputSchema: {
+        port: z.number().int().min(1).max(65535),
+      },
+    },
+    async ({ port }) =>
+      run("release_port", { port }, (body) =>
+        body.type === "done" ? (body.ok ? "Lease released." : "No lease on that port.") : unexpected(body),
+      ),
+  );
+
+  // ---- logs ----------------------------------------------------------
+
+  server.registerTool(
+    "get_logs",
+    {
+      title: "Get service logs",
+      description:
+        "Read a service's captured stdout and stderr. Pass since_seq with the cursor from a previous call to fetch only new lines.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        max_lines: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_LOG_LINES)
+          .optional()
+          .describe(`Most recent lines to return. Defaults to ${DEFAULT_LOG_LINES}.`),
+        since_seq: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Return only lines newer than this cursor."),
+      },
+    },
+    async ({ service, project, max_lines, since_seq }) =>
+      run(
+        "get_logs",
+        {
+          service,
+          project: project ?? null,
+          max_lines: Math.min(max_lines ?? DEFAULT_LOG_LINES, MAX_LOG_LINES),
+          since_seq: since_seq ?? null,
+        },
+        (body) => (body.type === "logs" ? formatLogs(body.items) : unexpected(body)),
+      ),
+  );
+
+  // ---- git -----------------------------------------------------------
+
+  server.registerTool(
+    "list_worktrees",
+    {
+      title: "List worktrees",
+      description:
+        "List a project's checkouts and their port offsets. New git worktrees are discovered and registered by this call, which is what gives a branch its own stable ports.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("list_worktrees", { selector: project }, (body) =>
+        body.type === "workspaces" ? formatWorktrees(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "register_worktree",
+    {
+      title: "Register a worktree",
+      description:
+        "Register a checkout the runtime has not seen, assigning it a stable port offset. Use after creating a git worktree so its services do not collide with the main checkout.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        path: z.string().describe("Absolute path to the checkout."),
+      },
+    },
+    async ({ project, path }) =>
+      run("register_worktree", { selector: project, path }, (body) =>
+        body.type === "workspace"
+          ? formatWorktrees([body])
+          : unexpected(body),
+      ),
+  );
+}
+
+function unexpected(body: ResponseBody): string {
+  return `Unexpected response from the runtime daemon: ${body.type}`;
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(`local-runtime MCP server failed to start: ${String(error)}\n`);
+  process.exit(1);
+});

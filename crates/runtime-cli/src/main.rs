@@ -475,10 +475,10 @@ async fn connect() -> Result<Client> {
 
 async fn daemon_command(command: &DaemonCommand, json: bool) -> Result<String> {
     match command {
+        // Idempotent, and reports the daemon either way: other clients (the
+        // MCP server) use this as their bootstrap and need the endpoint back
+        // whether or not they were the ones to start it.
         DaemonCommand::Start => {
-            if runtime_ipc::client::is_running().await {
-                return Ok("daemon is already running".to_string());
-            }
             let mut client = runtime_ipc::client::connect_or_start().await?;
             let info = client.call(Request::DaemonInfo).await?;
             render_response(&info, json)
@@ -493,6 +493,9 @@ async fn daemon_command(command: &DaemonCommand, json: bool) -> Result<String> {
                 let info = client.call(Request::DaemonInfo).await?;
                 render_response(&info, json)
             }
+            // Still valid JSON when asked for JSON, so a script does not have
+            // to distinguish "down" by parse failure.
+            Err(_) if json => Ok("{\n  \"running\": false\n}".to_string()),
             Err(_) => Ok("not running".to_string()),
         },
     }

@@ -1,7 +1,7 @@
 # Architecture
 
 ```
-           Desktop              CLI              MCP (Phase 3)
+           Desktop              CLI                  MCP
                 │                 │                    │
                 └────────┬────────┴──────────┬─────────┘
                          │  newline-JSON over UDS / named pipe
@@ -106,7 +106,17 @@ Newline-delimited JSON over a Unix domain socket (macOS, Linux) or a named pipe
 nothing bound to a TCP port that another machine could reach.
 
 Unix socket paths are limited to ~104 bytes; when the data directory is deep the
-runtime falls back to a short hashed name under the system temp directory.
+runtime falls back to a short name under the system temp directory, hashed with
+FNV-1a. The algorithm is specified rather than convenient (`DefaultHasher`'s is
+unspecified and changes between Rust versions) so a non-Rust client can compute
+the same name; `crates/runtime-core/src/paths.rs` carries reference vectors.
+
+In practice clients do not need to: the MCP server asks `runtime daemon start
+--json` for the endpoint, which keeps one implementation of the path rules.
+
+Error frames carry both the structured error and its rendered message, so a
+client in another language does not have to reimplement the wording of every
+variant to show something usable.
 
 Frames are explicitly tagged (`kind`) rather than untagged — an ambiguous frame
 that silently deserialises as the wrong variant is far worse to debug than a

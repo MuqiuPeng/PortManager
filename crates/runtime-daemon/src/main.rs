@@ -164,7 +164,7 @@ async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Resul
 
         match dispatcher.dispatch(request).await {
             Ok(result) => connection.send(&Frame::Response { id, result }).await?,
-            Err(error) => connection.send(&Frame::Error { id, error }).await?,
+            Err(error) => connection.send(&Frame::error(id, error)).await?,
         }
     }
 }

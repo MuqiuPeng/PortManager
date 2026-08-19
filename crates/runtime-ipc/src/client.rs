@@ -56,7 +56,11 @@ impl Client {
                 Frame::Response { id: response_id, result } if response_id == id => {
                     return Ok(result)
                 }
-                Frame::Error { id: response_id, error } if response_id == id => return Err(error),
+                Frame::Error {
+                    id: response_id,
+                    error,
+                    ..
+                } if response_id == id => return Err(error),
                 Frame::Event { event } => self.pending_events.push_back(event),
                 // A frame for another id can only mean a protocol bug; say so
                 // rather than blocking forever waiting for the right one.

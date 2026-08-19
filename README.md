@@ -19,7 +19,7 @@ the full product plan.
 | 0 | Cross-platform process/port PoC | **done** |
 | 1 | Daemon, IPC, SQLite, registry, lifecycle, CLI | **done** |
 | 2 | Tauri desktop MVP | **done** |
-| 3 | MCP server | not started |
+| 3 | MCP server | **done** |
 | 4 | Native edge sidebar | not started |
 | 5 | Project intelligence | partly done (detection, worktrees, stable ports) |
 | 6 | Agent-aware runtime | partly done (`started_by`, sessions, kill safety) |
@@ -75,6 +75,23 @@ from the CLI or by an agent appears in the window immediately through the
 daemon's event stream.
 
 The edge-docked side panel is Phase 4 and is deliberately not built yet.
+
+## Coding agents
+
+```bash
+cd packages/runtime-mcp
+pnpm install && pnpm build
+claude mcp add local-runtime -- node "$PWD/dist/index.js" --client claude-code
+```
+
+An agent can then answer "start this project's frontend and API and wait until
+they are healthy" or "why is localhost:3000 unavailable?" without a shell — and
+the runtime records which agent started what, so the desktop app shows
+`● api :8000  feature/refund  started by claude-code`.
+
+There is no `execute_shell`, no `kill_pid` and no `run_command`: the daemon's
+protocol does not offer them, so the MCP server cannot expose them. See
+[docs/mcp.md](docs/mcp.md) for the tool list.
 
 ## Commands
 
@@ -157,7 +174,7 @@ crates/
   runtime-cli/       the `runtime` binary
 docs/
 apps/desktop/        Tauri 2 + React desktop app
-packages/            (Phase 3: MCP server)
+packages/runtime-mcp/  MCP server for coding agents
 ```
 
 ## Development
@@ -166,6 +183,7 @@ packages/            (Phase 3: MCP server)
 cargo test --workspace
 cargo clippy --workspace --all-targets
 pnpm --dir apps/desktop build          # type-check and bundle the frontend
+pnpm --dir packages/runtime-mcp test   # MCP server
 # type-check the Windows adapter without a Windows machine
 # (the whole workspace cannot cross-build: bundled SQLite needs a C toolchain)
 cargo check -p adapter-windows --target x86_64-pc-windows-msvc

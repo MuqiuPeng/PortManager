@@ -53,12 +53,23 @@ pub fn socket_path() -> Result<PathBuf> {
     Ok(std::env::temp_dir().join(format!("local-runtime-{}.sock", short_hash(&dir))))
 }
 
+/// FNV-1a over the path bytes.
+///
+/// Deliberately not `DefaultHasher`: its algorithm is unspecified and differs
+/// between Rust versions, so a non-Rust client — the MCP server, an IDE plugin —
+/// could not compute the same socket name. FNV-1a is ten lines in any language.
 fn short_hash(path: &Path) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = OFFSET_BASIS;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    format!("{hash:016x}")
 }
+
 
 /// Holds the daemon pid so a second daemon refuses to start.
 pub fn lock_path() -> Result<PathBuf> {
@@ -73,4 +84,18 @@ pub fn ensure_data_dir() -> Result<PathBuf> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_hash_matches_the_documented_fnv1a_values() {
+        // Reference vectors, so a port of this function can be checked against
+        // the same inputs without running the daemon.
+        assert_eq!(short_hash(Path::new("")), "cbf29ce484222325");
+        assert_eq!(short_hash(Path::new("a")), "af63dc4c8601ec8c");
+        assert_eq!(short_hash(Path::new("/tmp/runtime")), "0d2e09ab25316fd0");
+    }
 }

@@ -188,8 +188,35 @@ pub enum ResponseBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Frame {
-    Request { id: u64, request: Request },
-    Response { id: u64, result: ResponseBody },
-    Error { id: u64, error: RuntimeError },
-    Event { event: RuntimeEvent },
+    Request {
+        id: u64,
+        request: Request,
+    },
+    Response {
+        id: u64,
+        result: ResponseBody,
+    },
+    Error {
+        id: u64,
+        error: RuntimeError,
+        /// The error rendered through its `Display` impl.
+        ///
+        /// Carried alongside the structured form so a client in another
+        /// language does not have to reimplement the wording of every variant
+        /// to show a usable message.
+        message: String,
+    },
+    Event {
+        event: RuntimeEvent,
+    },
+}
+
+impl Frame {
+    pub fn error(id: u64, error: RuntimeError) -> Self {
+        Self::Error {
+            id,
+            message: error.to_string(),
+            error,
+        }
+    }
 }
