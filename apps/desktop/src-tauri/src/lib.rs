@@ -18,7 +18,7 @@ use daemon::DaemonHandle;
 use panel::PanelController;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 /// The channel the frontend listens on for daemon events.
 const EVENT_CHANNEL: &str = "runtime://event";
@@ -41,6 +41,7 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             build_tray(&handle)?;
+            keep_main_window_alive(&handle);
             forward_events(handle.clone());
 
             if let Err(err) = panel::adopt(&handle) {
@@ -157,14 +158,63 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Closing the main window hides it instead of destroying it.
+///
+/// Without this the window is gone for good after the first close: Tauri
+/// destroys it, `get_webview_window` returns `None`, and the tray's "Open main
+/// window" silently does nothing. Hiding is also what a menu-bar app should do
+/// — the app has not quit, it has gone back to resting.
+fn keep_main_window_alive(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
+            // Back to a menu-bar app: the Dock icon should not outlive the
+            // window that justified it.
+            #[cfg(target_os = "macos")]
+            let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
+    });
+}
+
 pub(crate) fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    // Policy first. An accessory app cannot come to the front, so focusing
+    // before switching leaves the window behind whatever the user was in — the
+    // reason opening from the tray felt different from launching the app.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    let window = match app.get_webview_window("main") {
+        Some(window) => Some(window),
+        // Defensive: if the window was destroyed anyway, rebuild it rather
+        // than leaving the menu item dead.
+        None => match WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .title("Local Runtime")
+            .inner_size(1120.0, 720.0)
+            .min_inner_size(760.0, 480.0)
+            .build()
+        {
+            Ok(window) => {
+                keep_main_window_alive(app);
+                Some(window)
+            }
+            Err(err) => {
+                tracing::error!(%err, "could not recreate the main window");
+                None
+            }
+        },
+    };
+
+    if let Some(window) = window {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        // An accessory app has to ask to come forward; without this the window
-        // appears behind whatever the user was in.
-        #[cfg(target_os = "macos")]
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     }
 }
 

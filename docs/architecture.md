@@ -163,6 +163,21 @@ Two things still poll, because the daemon has no event for them: the ports table
 (the socket table changes without the runtime's involvement) and log tailing,
 which uses the `since_seq` cursor so each tick transfers only new lines.
 
+## Windows and activation
+
+The app runs as a macOS accessory: no Dock icon, no place in ⌘-Tab. Two
+consequences are easy to get wrong.
+
+Closing the main window **hides** it rather than destroying it. Tauri's default
+is to destroy, after which `get_webview_window("main")` returns `None` and the
+tray's "Open main window" silently does nothing — the window is gone for the
+rest of the session.
+
+Reopening switches the activation policy to `Regular` **before** showing and
+focusing. An accessory application cannot bring a window to the front, so
+focusing first leaves it behind whatever the user was in. Hiding switches back,
+so the Dock icon does not outlive the window that justified it.
+
 ## The edge panel
 
 The panel's defining property is that clicking it does not take focus from the
