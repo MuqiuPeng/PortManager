@@ -113,7 +113,7 @@ hides it and drops the Dock icon; the panel and the tray stay.
 
 Clicking the panel must never steal focus, which on macOS means a real
 `NSPanel` rather than the `NSWindow` Tauri creates — see
-[docs/architecture.md](docs/architecture.md#the-edge-panel). Windows is not
+[docs/desktop.md](docs/desktop.md#the-edge-panel). Windows is not
 implemented yet; [docs/windows.md](docs/windows.md) has the plan.
 
 ## Coding agents
@@ -338,6 +338,17 @@ docs/
 apps/desktop/        Tauri 2 + React desktop app
 packages/runtime-mcp/  MCP server for coding agents
 ```
+
+## Documentation
+
+* [architecture.md](docs/architecture.md) — the daemon: crates, data model, the
+  properties everything else rests on, and how a request becomes a process.
+* [ownership.md](docs/ownership.md) — what is running and whose it is: declared,
+  adopted, supervised, containers and worktrees, and what the runtime is
+  willing to claim about each.
+* [desktop.md](docs/desktop.md) — the app, its dialogs, and the edge panel.
+* [mcp.md](docs/mcp.md) — the agent-facing surface.
+* [windows.md](docs/windows.md) — the port, and what is still missing there.
 
 ## Development
 
