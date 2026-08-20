@@ -15,7 +15,7 @@ use std::time::Duration;
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity, TerminationMode};
 use runtime_types::{
-    ConflictPolicy, HealthCheck, HealthReport, InstanceId, LogStream, PortReservation, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, SessionId, StartOutcome, StartedBy, WorkspaceId,
+    ConflictPolicy, HealthCheck, HealthReport, InstanceId, LogStream, PortReservation, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceType, ServiceView, SessionId, StartOutcome, StartedBy, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -736,7 +736,7 @@ impl Runtime {
         let check = service
             .health_check
             .clone()
-            .unwrap_or(default_health_check(instance.port));
+            .unwrap_or_else(|| default_health_check(&service, instance.port));
         let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
 
         tokio::spawn(async move {
@@ -878,6 +878,28 @@ impl Runtime {
         let (status, instance) = self.current_state(&service)?;
 
         let Some(instance) = instance.filter(|_| status.is_live()) else {
+            // Not ours does not mean not running. A service found already
+            // listening is reported as up everywhere else, and answering "not
+            // running" here contradicts the view the caller is looking at —
+            // while also skipping the check on most of a machine, since
+            // adopted is the common case rather than the exception.
+            let view = self.service_view(&service)?;
+            if let (true, Some(port)) = (view.status.is_live(), view.actual_port) {
+                let check = service
+                    .health_check
+                    .clone()
+                    .unwrap_or_else(|| default_health_check(&service, Some(port)));
+                // Something holds the port, so the process half of the question
+                // is already answered; what is left is whether it responds.
+                let probe = crate::health::probe(&check, Some(port), true).await;
+                return Ok(HealthReport {
+                    service_id: service.id,
+                    status: probe.status,
+                    detail: probe.detail,
+                    checked_port: probe.checked_port,
+                });
+            }
+
             return Ok(HealthReport {
                 service_id: service.id,
                 status: ServiceStatus::Stopped,
@@ -891,7 +913,7 @@ impl Runtime {
         let check = service
             .health_check
             .clone()
-            .unwrap_or(default_health_check(instance.port));
+            .unwrap_or_else(|| default_health_check(&service, instance.port));
 
         let mut probe = crate::health::probe(&check, instance.port, alive).await;
 
@@ -1019,10 +1041,28 @@ fn open_capture(path: &std::path::Path) -> Result<std::fs::File> {
 
 /// Without an explicit check, a service with a port is judged by whether that
 /// port accepts connections, and one without by whether the process is alive.
-fn default_health_check(port: Option<u16>) -> HealthCheck {
-    match port {
-        Some(_) => HealthCheck::Tcp { port: None },
-        None => HealthCheck::Process,
+/// What to check when a service does not say.
+///
+/// A TCP connect only proves something is holding the port, which is exactly
+/// what a wedged dev server does: this machine had one accepting connections
+/// and answering none of them, reported healthy, for an unknown length of
+/// time. So anything declared as serving HTTP is asked to answer, with any
+/// response counting — the question is whether it is alive, not whether it
+/// agrees with us about the path.
+///
+/// Only for the types that say they speak HTTP. A database or a worker that
+/// happens to hold a port would fail an HTTP check while being perfectly
+/// healthy, and a check that is wrong in that direction is worse than a weak
+/// one: it teaches the reader to ignore it.
+fn default_health_check(service: &Service, port: Option<u16>) -> HealthCheck {
+    match (port, service.service_type) {
+        (Some(_), ServiceType::Web | ServiceType::Api) => HealthCheck::Http {
+            path: "/".to_string(),
+            port: None,
+            expect_status: Vec::new(),
+        },
+        (Some(_), _) => HealthCheck::Tcp { port: None },
+        (None, _) => HealthCheck::Process,
     }
 }
 

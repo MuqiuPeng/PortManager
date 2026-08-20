@@ -74,6 +74,11 @@ pub async fn probe(check: &HealthCheck, port: Option<u16>, process_alive: bool) 
                 return Probe::unhealthy("http health check has no port", None);
             };
             match http_get(target, path).await {
+                // An empty list means any answer counts. Asked for explicitly
+                // by whoever wrote the check, so it cannot happen by accident.
+                Ok(status) if expect_status.is_empty() => {
+                    Probe::healthy(format!("GET {path} returned {status}"), Some(target))
+                }
                 Ok(status) if expect_status.contains(&status) => {
                     Probe::healthy(format!("GET {path} returned {status}"), Some(target))
                 }
@@ -176,5 +181,93 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         panic!("port {port} never stopped accepting connections");
+    }
+
+    #[tokio::test]
+    async fn any_response_counts_when_no_status_is_demanded() {
+        // The real services on a machine answer a bare GET with 302, 307 and
+        // 404 as often as with 200, and none of those mean anything is wrong.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut scratch = [0u8; 512];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut scratch).await;
+            let _ = tokio::io::AsyncWriteExt::write_all(
+                &mut stream,
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n",
+            )
+            .await;
+        });
+
+        let check = HealthCheck::Http {
+            path: "/".to_string(),
+            port: None,
+            expect_status: Vec::new(),
+        };
+        let result = probe(&check, Some(port), true).await;
+        assert_eq!(result.status, ServiceStatus::Healthy, "{:?}", result.detail);
+    }
+
+    #[tokio::test]
+    async fn a_port_held_but_never_answered_is_not_healthy() {
+        // The case a TCP check cannot see, and the reason this is the default
+        // for anything serving HTTP: a wedged dev server goes on accepting
+        // connections it will never reply to, and reports healthy forever.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // Accept and then say nothing at all.
+            let _keep = listener.accept().await;
+            std::future::pending::<()>().await;
+        });
+
+        let tcp = probe(&HealthCheck::Tcp { port: None }, Some(port), true).await;
+        assert_eq!(
+            tcp.status,
+            ServiceStatus::Healthy,
+            "a tcp check cannot tell the difference"
+        );
+
+        let http = probe(
+            &HealthCheck::Http {
+                path: "/".to_string(),
+                port: None,
+                expect_status: Vec::new(),
+            },
+            Some(port),
+            true,
+        )
+        .await;
+        assert_eq!(http.status, ServiceStatus::Unhealthy, "{:?}", http.detail);
+        assert!(
+            http.detail.as_deref().is_some_and(|detail| detail.contains("timed out")),
+            "{:?}",
+            http.detail
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_status_list_is_still_enforced() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut scratch = [0u8; 512];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut scratch).await;
+            let _ = tokio::io::AsyncWriteExt::write_all(
+                &mut stream,
+                b"HTTP/1.1 500 Server Error\r\nContent-Length: 0\r\n\r\n",
+            )
+            .await;
+        });
+
+        let check = HealthCheck::Http {
+            path: "/".to_string(),
+            port: None,
+            expect_status: vec![200],
+        };
+        let result = probe(&check, Some(port), true).await;
+        assert_eq!(result.status, ServiceStatus::Unhealthy, "{:?}", result.detail);
     }
 }

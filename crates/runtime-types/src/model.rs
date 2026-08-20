@@ -354,6 +354,13 @@ pub enum HealthCheck {
         port: Option<u16>,
     },
     /// An HTTP GET returns one of `expect_status`.
+    ///
+    /// An empty `expect_status` accepts any response at all. That is the
+    /// useful default for "is this serving": the real services on a machine
+    /// answer a bare `GET /` with 302, 307 and 404 as often as with 200, and
+    /// none of those mean anything is wrong. What it does catch is the case a
+    /// TCP check cannot — a process still holding the port and no longer
+    /// answering on it.
     Http {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
