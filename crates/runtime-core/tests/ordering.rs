@@ -30,7 +30,11 @@ fn stays_up() -> &'static str {
 /// platform's own idiom: `touch` does not exist on Windows and `type nul >`
 /// depends on which shell the runtime chose.
 fn creates(path: &Path) -> String {
-    format!("{} -c \"open(r'{}', 'w').close()\"", python(), path.display())
+    // No quotes of its own. The command goes through a shell — `sh -c` or
+    // `cmd /C` — and each keeps a different set, so the one that survives both
+    // is the one that needs none. `pathlib.Path(...).touch()` cannot be
+    // written without quoting the path, so the path arrives as an argument.
+    format!("{} -c \"import sys,pathlib;pathlib.Path(sys.argv[1]).touch()\" {}", python(), path.display())
 }
 
 /// `python3` on Unix, `python` on Windows, where the 3 is not part of the name.
