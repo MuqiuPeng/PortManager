@@ -544,7 +544,7 @@ fn workspace_members_become_services_rooted_in_their_own_package() {
         .unwrap();
     // Canonicalised, because macOS resolves /var to /private/var.
     assert_eq!(
-        payments.service.cwd,
+        payments.service.cwd.canonicalize().unwrap(),
         dir.path()
             .join("packages")
             .join("payments")
@@ -582,9 +582,13 @@ fn a_root_without_workspaces_is_unaffected() {
 
 #[tokio::test]
 async fn a_command_that_fails_immediately_is_reported_as_a_failure() {
+    // A failure both shells can produce: a script that exits non-zero, which
+    // neither `>&2` nor `;` survives on Windows.
     let config = r#"{ "name": "boom", "services": {
-        "web": { "command": "echo 'no such module' >&2; exit 1" } } }"#;
-    let dir = repo(&[(".runtime.json", config)]);
+        "web": { "command": "PY boom.py" } } }"#
+        .replace("PY", if cfg!(windows) { "python" } else { "python3" });
+    let script = "import sys\nprint('no such module', file=sys.stderr)\nsys.exit(1)\n";
+    let dir = repo(&[(".runtime.json", config.as_str()), ("boom.py", script)]);
 
     let runtime = Runtime::in_memory().unwrap();
     let view = runtime.add_project(dir.path(), None).unwrap();
@@ -759,8 +763,14 @@ async fn a_service_writing_output_does_not_depend_on_a_reader() {
     // watching for an immediate failure, so a short command would simply have
     // finished by the time this asserts anything.
     let config = r#"{ "name": "chatty", "services": {
-        "loop": { "command": "while true; do echo tick; sleep 0.2; done" } } }"#;
-    let dir = repo(&[(".runtime.json", config)]);
+        "loop": { "command": "PY -u loop.py" } } }"#
+        .replace("PY", if cfg!(windows) { "python" } else { "python3" });
+    // A file rather than a `-c` one-liner. The command has to survive a JSON
+    // string, a Rust literal and whichever shell the platform uses, and each
+    // of those has its own opinion about quotes and newlines — a script has
+    // none of that in its way.
+    let script = "import time\nwhile True:\n    print('tick', flush=True)\n    time.sleep(0.2)\n";
+    let dir = repo(&[(".runtime.json", config.as_str()), ("loop.py", script)]);
 
     let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
     let view = runtime.add_project(dir.path(), None).unwrap();
