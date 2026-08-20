@@ -11,6 +11,37 @@ use runtime_core::Runtime;
 use runtime_types::{Service, ServiceId, ServiceType};
 use tempfile::TempDir;
 
+/// A command that stays up until something stops it.
+///
+/// The sample commands are the only platform-specific thing in these tests, and
+/// gating the tests instead would give up exactly what the Windows run is for:
+/// the spawn path, which is where the platforms actually differ.
+fn stays_up() -> &'static str {
+    if cfg!(windows) {
+        "ping -n 60 127.0.0.1"
+    } else {
+        "sleep 30"
+    }
+}
+
+/// A command that creates a file and succeeds.
+fn creates(path: &Path) -> String {
+    if cfg!(windows) {
+        format!("type nul > \"{}\"", path.display())
+    } else {
+        format!("touch {}", path.display())
+    }
+}
+
+/// A command that says something on stderr and fails.
+fn fails_loudly() -> &'static str {
+    if cfg!(windows) {
+        "echo relation does not exist 1>&2 & exit 1"
+    } else {
+        "echo 'relation does not exist' >&2; exit 1"
+    }
+}
+
 fn repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("package.json"), "{}").unwrap();
@@ -75,7 +106,7 @@ async fn a_one_shot_step_runs_before_what_depends_on_it() {
         &workspace.id,
         dir.path(),
         "migrate",
-        &format!("touch {}", marker.display()),
+        &creates(&marker),
         &[],
         true,
     );
@@ -84,7 +115,7 @@ async fn a_one_shot_step_runs_before_what_depends_on_it() {
         &workspace.id,
         dir.path(),
         "api",
-        "sleep 30",
+        stays_up(),
         &["migrate"],
         false,
     );
@@ -116,7 +147,7 @@ async fn a_failing_one_shot_stops_what_would_have_followed() {
         &workspace.id,
         dir.path(),
         "migrate",
-        "echo 'relation does not exist' >&2; exit 1",
+        fails_loudly(),
         &[],
         true,
     );
@@ -125,7 +156,7 @@ async fn a_failing_one_shot_stops_what_would_have_followed() {
         &workspace.id,
         dir.path(),
         "api",
-        "sleep 30",
+        stays_up(),
         &["migrate"],
         false,
     );
@@ -154,13 +185,13 @@ async fn a_dependency_already_running_is_not_restarted() {
         .unwrap()
         .remove(0);
 
-    let db = declare(&runtime, &workspace.id, dir.path(), "db", "sleep 30", &[], false);
+    let db = declare(&runtime, &workspace.id, dir.path(), "db", stays_up(), &[], false);
     let api = declare(
         &runtime,
         &workspace.id,
         dir.path(),
         "api",
-        "sleep 30",
+        stays_up(),
         &["db"],
         false,
     );
@@ -208,7 +239,7 @@ async fn starting_a_one_shot_directly_runs_it_rather_than_supervising_it() {
         &workspace.id,
         dir.path(),
         "seed",
-        &format!("touch {}", marker.display()),
+        &creates(&marker),
         &[],
         true,
     );
@@ -246,13 +277,21 @@ async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, s
     // thing that can say why is the process itself, and throwing that away is
     // how "the listener never came up" became the whole of what was known.
     let log = dir.path().join("listener.log");
-    let mut child = Command::new("python3")
-        .args(["-m", "http.server", &port.to_string(), "--bind", "127.0.0.1"])
-        .current_dir(dir.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::fs::File::create(&log).unwrap())
-        .spawn()
-        .expect("python3 must be installed to run these tests");
+    // `python3` on Unix, `python` on Windows, where the 3 is not part of the
+    // name. Tried in turn rather than assumed, since the failure of the wrong
+    // guess is a test that says only "the listener never came up".
+    let mut child = ["python3", "python"]
+        .iter()
+        .find_map(|program| {
+            Command::new(program)
+                .args(["-m", "http.server", &port.to_string(), "--bind", "127.0.0.1"])
+                .current_dir(dir.path())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::fs::File::create(&log).unwrap())
+                .spawn()
+                .ok()
+        })
+        .expect("python must be installed to run these tests");
 
     // Waited for rather than slept through. A fixed pause is a guess about how
     // fast the machine is, and it was wrong the first time this ran anywhere
@@ -284,7 +323,7 @@ async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, s
     // something it can see, not how quickly it notices.
     tokio::time::sleep(std::time::Duration::from_millis(1_700)).await;
 
-    let mut service = declare(runtime, &workspace.id, dir.path(), "web", "sleep 30", &[], false);
+    let mut service = declare(runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
     service.preferred_port = Some(port);
     runtime.store().upsert_service(&service).unwrap();
     (service, child)
@@ -340,7 +379,7 @@ async fn a_dependency_naming_nothing_is_found_before_it_is_needed() {
         .unwrap()
         .remove(0);
 
-    declare(&runtime, &workspace.id, dir.path(), "api", "sleep 30", &["db"], false);
+    declare(&runtime, &workspace.id, dir.path(), "api", stays_up(), &["db"], false);
 
     let findings = runtime.diagnose().unwrap();
     let found = findings
@@ -362,8 +401,8 @@ async fn services_that_depend_on_each_other_are_found() {
         .unwrap()
         .remove(0);
 
-    declare(&runtime, &workspace.id, dir.path(), "a", "sleep 30", &["b"], false);
-    declare(&runtime, &workspace.id, dir.path(), "b", "sleep 30", &["a"], false);
+    declare(&runtime, &workspace.id, dir.path(), "a", stays_up(), &["b"], false);
+    declare(&runtime, &workspace.id, dir.path(), "b", stays_up(), &["a"], false);
 
     let findings = runtime.diagnose().unwrap();
     assert!(
@@ -383,7 +422,7 @@ async fn a_task_step_that_was_removed_is_found() {
         .unwrap()
         .remove(0);
 
-    let web = declare(&runtime, &workspace.id, dir.path(), "web", "sleep 30", &[], false);
+    let web = declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
     runtime
         .set_task(&workspace.id, "dev", vec!["web".to_string()])
         .unwrap();
@@ -408,8 +447,8 @@ async fn a_healthy_checkout_reports_nothing() {
         .unwrap()
         .remove(0);
 
-    let db = declare(&runtime, &workspace.id, dir.path(), "db", "sleep 30", &[], false);
-    declare(&runtime, &workspace.id, dir.path(), "api", "sleep 30", &["db"], false);
+    let db = declare(&runtime, &workspace.id, dir.path(), "db", stays_up(), &[], false);
+    declare(&runtime, &workspace.id, dir.path(), "api", stays_up(), &["db"], false);
     let _ = db;
 
     assert!(runtime.diagnose().unwrap().is_empty(), "quiet is the point");
