@@ -792,14 +792,26 @@ async fn a_service_writing_output_does_not_depend_on_a_reader() {
     drop(runtime);
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-    let alive = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string()])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false);
+    // Asked of the adapter rather than of `ps`, which does not exist on every
+    // platform — and `.unwrap_or(false)` on a missing command reports the
+    // process as dead, which is this test's failure condition. It would have
+    // passed for the wrong reason just as easily as it failed for one.
+    let adapter = runtime_core::platform::current();
+    let alive = adapter
+        .process()
+        .process_info(pid)
+        .ok()
+        .flatten()
+        .is_some();
     assert!(alive, "the service died when nothing was reading its output");
 
-    let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+    if let Some(info) = adapter.process().process_info(pid).ok().flatten() {
+        let identity = runtime_adapter::ProcessIdentity::new(info.pid, info.start_time_ms);
+        let _ = adapter.process().terminate_tree(
+            &identity,
+            runtime_adapter::TerminationMode::Forceful,
+        );
+    }
 }
 
 
