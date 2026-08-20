@@ -218,6 +218,14 @@ pub struct StartOutcome {
     pub reused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<PortReservation>,
+    /// Something about this start the caller would have wanted to know first.
+    ///
+    /// Not an error and not a refusal: running a development server is a normal
+    /// thing to want. But when it rewrites a build another service is serving
+    /// from, nothing fails at the time — the failure arrives at that service's
+    /// next restart, hours later, pointing at the wrong thing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

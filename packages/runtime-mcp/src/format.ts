@@ -153,6 +153,9 @@ export function formatStart(outcome: StartOutcome): string {
   }
   if (outcome.service.url) lines.push(`  ${outcome.service.url}`);
   lines.push(`  status ${outcome.service.status}`);
+  // Last, so it is the thing left in view: the start succeeded either way, and
+  // what it may have broken will not announce itself.
+  if (outcome.warning) lines.push(`  ! ${outcome.warning}`);
   return lines.join("\n");
 }
 

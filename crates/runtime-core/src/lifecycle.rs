@@ -78,6 +78,21 @@ impl Runtime {
     ) -> Result<StartOutcome> {
         let service = self.require_service(service_id)?;
 
+        // Worked out before anything happens, and reported by every path out of
+        // here. The damage is done by the start itself; afterwards the only
+        // evidence is a build directory that looks fine until something else
+        // restarts and cannot find what it needs.
+        let warning = self.build_hazard(&service).map(|hazard| {
+            let text = hazard.describe();
+            let _ = self.logs_arc().append(
+                &service.id,
+                LogStream::System,
+                format!("warning: {text}"),
+            );
+            tracing::warn!(service = %service.name, "{text}");
+            text
+        });
+
         // Asking to "start" a step that runs to completion means running it.
         // Falling through to the ordinary path would spawn it, watch it exit
         // the moment it succeeded, and record that as a failure.
@@ -104,6 +119,7 @@ impl Runtime {
                 service: self.service_view(&service)?,
                 reused: false,
                 reservation: None,
+                warning,
             });
         }
 
@@ -165,9 +181,13 @@ impl Runtime {
                 service: view,
                 reused: true,
                 reservation,
+                warning,
             });
         }
 
+        // Said before the spawn, not after: the damage is done by the start
+        // itself, and afterwards the only evidence is a build directory that
+        // looks fine until something else restarts.
         let (status, instance) = self.current_state(&service)?;
         if status.is_live() {
             if let Some(instance) = instance {
@@ -187,6 +207,7 @@ impl Runtime {
                             conflict: None,
                         }
                     }),
+                    warning,
                 });
             }
         }
@@ -255,6 +276,7 @@ impl Runtime {
             service: self.service_view(&service)?,
             reused: false,
             reservation,
+            warning,
         })
     }
 

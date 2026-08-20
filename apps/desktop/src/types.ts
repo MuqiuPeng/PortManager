@@ -229,6 +229,8 @@ export interface StartOutcome {
     reallocated: boolean;
     policy: string;
   };
+  /** Something about this start worth knowing first. */
+  warning?: string;
 }
 
 export interface DaemonInfo {

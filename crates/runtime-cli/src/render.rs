@@ -257,6 +257,12 @@ pub fn start_outcome(outcome: &StartOutcome) -> String {
             }
         }
     }
+    // Before the status, because it is the part that will not announce itself:
+    // the start succeeds either way, and what it broke shows up hours later on
+    // somebody else's restart.
+    if let Some(warning) = &outcome.warning {
+        out.push_str(&format!("\n  ! {warning}"));
+    }
     // The status, not just a URL: a service can be spawned and reserved a port
     // and still not be serving on it.
     out.push_str(&format!("\n  status {}", status_label(outcome.service.status)));

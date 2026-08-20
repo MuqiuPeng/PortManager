@@ -207,6 +207,8 @@ export interface StartOutcome {
   service: ServiceView;
   reused: boolean;
   reservation?: PortReservation;
+  /** Something about this start worth knowing first. */
+  warning?: string;
 }
 
 export interface AgentSession {

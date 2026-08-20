@@ -175,6 +175,7 @@ fn responses() -> Vec<ResponseBody> {
             url: None,
         }),
         ResponseBody::Started(StartOutcome {
+            warning: Some("rewrites a build 'flip7' serves from".to_string()),
             service: service_view(),
             reused: false,
             reservation: Some(PortReservation {

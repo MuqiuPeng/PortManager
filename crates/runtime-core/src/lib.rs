@@ -5,6 +5,7 @@
 //! The desktop app, the CLI and the MCP server are all thin callers of this
 //! type — which is what keeps the three from drifting into three behaviours.
 
+pub mod builds;
 pub mod detect;
 pub mod discover;
 pub mod docker;
@@ -1157,6 +1158,54 @@ impl Runtime {
             return Ok(false);
         };
         self.store.remove_task(&task.id)
+    }
+
+    // ---- build hazards ---------------------------------------------------
+
+    /// What starting this service would do to a build directory in use.
+    ///
+    /// Everything that could be serving from the same directory counts as a
+    /// neighbour, whoever started it — the damage does not care which of them
+    /// the runtime owns.
+    pub fn build_hazard(&self, service: &Service) -> Option<crate::builds::BuildHazard> {
+        let Ok(workspace) = self.require_workspace(&service.workspace_id) else {
+            return None;
+        };
+        let owners = self.port_owners().unwrap_or_default();
+
+        let mut neighbours: Vec<crate::builds::Neighbour> = Vec::new();
+
+        for other in self.store.list_services(&workspace.id).unwrap_or_default() {
+            if other.id == service.id {
+                continue;
+            }
+            let running = self
+                .service_view_with(&other, &owners)
+                .map(|view| view.status.is_live())
+                .unwrap_or(false);
+            neighbours.push(crate::builds::Neighbour {
+                production: crate::builds::runs_in_production(&other.command, &other.env),
+                directory: other.cwd.clone(),
+                name: other.name,
+                running,
+            });
+        }
+
+        // A supervisor's entries are neighbours too, and on this machine they
+        // are the ones most likely to be the production half of the pair.
+        for entry in self.pm2.processes_in(&workspace.path) {
+            let env: std::collections::BTreeMap<String, String> =
+                entry.mode_environment.iter().cloned().collect();
+            neighbours.push(crate::builds::Neighbour {
+                production: entry.production
+                    || crate::builds::runs_in_production(&entry.command, &env),
+                directory: entry.cwd.unwrap_or_else(|| workspace.path.clone()),
+                running: entry.status == "online",
+                name: entry.name,
+            });
+        }
+
+        crate::builds::hazard(&service.command, &service.env, &service.cwd, &neighbours)
     }
 
     // ---- taking things over ---------------------------------------------
