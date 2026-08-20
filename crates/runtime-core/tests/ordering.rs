@@ -228,3 +228,68 @@ async fn starting_a_one_shot_directly_runs_it_rather_than_supervising_it() {
         "a step that finished is not a failure"
     );
 }
+
+/// A service the runtime did not start, holding the port it declares.
+async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, std::process::Child) {
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    // A real listener, started outside the runtime, in the checkout.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let child = Command::new("python3")
+        .args(["-m", "http.server", &port.to_string()])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("python3 must be installed");
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    let mut service = declare(runtime, &workspace.id, dir.path(), "web", "sleep 30", &[], false);
+    service.preferred_port = Some(port);
+    runtime.store().upsert_service(&service).unwrap();
+    (service, child)
+}
+
+#[tokio::test]
+async fn starting_something_already_serving_returns_it_rather_than_a_second_copy() {
+    // This is the shape of real damage: the duplicate arrives with different
+    // arguments than the process already serving, and for a Next project that
+    // means a development build written over the production one.
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let (service, mut child) = adopted(&dir, &runtime).await;
+
+    let outcome = runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .expect("starting something already up is not an error");
+
+    assert!(outcome.reused, "a second copy was started");
+    assert!(
+        runtime.store().latest_instance(&service.id).unwrap().is_none(),
+        "the runtime recorded an instance it did not start"
+    );
+    let _ = child.kill();
+}
+
+#[tokio::test]
+async fn restarting_something_the_runtime_did_not_start_is_refused() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let (service, mut child) = adopted(&dir, &runtime).await;
+
+    let error = runtime
+        .restart_service(&service.id, Default::default())
+        .await
+        .expect_err("restart means stop, and this is not the runtime's to stop");
+    let text = error.to_string();
+    assert!(text.contains("not started by the runtime"), "{text}");
+    let _ = child.kill();
+}

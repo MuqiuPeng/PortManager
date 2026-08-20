@@ -17,6 +17,8 @@ import type {
   ProjectView,
   ServiceView,
   StartOutcome,
+  SupervisedView,
+  Task,
   Workspace,
 } from "./protocol.js";
 
@@ -289,5 +291,22 @@ export function formatLaunches(items: LaunchObservation[]): string {
       const command = truncate(item.command.split(/\s+/).join(" "), 160);
       return `${item.state === "bound" ? "*" : "-"} ${command}\n    ${item.cwd}\n    ${where}, from ${item.source}`;
     })
+    .join("\n");
+}
+
+export function formatSupervised(view: SupervisedView): string {
+  const lines = [`${view.name} — ${view.status} [${view.supervisor}]`];
+  if (view.pid) lines.push(`  pid ${view.pid}`);
+  const ports = view.ports ?? [];
+  if (ports.length > 0) lines.push(`  ${ports.map((p) => `:${p}`).join(" ")}`);
+  lines.push(`  ${truncate(view.command, 160)}`);
+  if (view.restart_warning) lines.push(`  ! ${view.restart_warning}`);
+  return lines.join("\n");
+}
+
+export function formatTasks(tasks: Task[]): string {
+  if (tasks.length === 0) return "No tasks declared.";
+  return tasks
+    .map((task) => `${task.name}\n    ${task.steps.join(" -> ")}`)
     .join("\n");
 }

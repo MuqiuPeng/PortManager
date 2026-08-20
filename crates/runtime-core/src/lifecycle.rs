@@ -147,7 +147,27 @@ impl Runtime {
         let project = self.require_project(&workspace.project_id)?;
 
         // Already running is not an error: an agent asking twice should get the
-        // running service back, not a second copy of it.
+        // running service back, not a second copy of it. That has to include a
+        // service found already listening — otherwise the one case where a
+        // second copy does real damage is the one case not covered, since the
+        // duplicate arrives with different arguments than the process that is
+        // already serving.
+        let view = self.service_view(&service)?;
+        if view.status.is_live() && !view.managed {
+            let reservation = view.actual_port.map(|port| PortReservation {
+                port,
+                preferred_port: crate::ports::PortResolver::preferred_port(&service, &workspace),
+                reallocated: false,
+                policy: ConflictPolicy::Reuse,
+                conflict: None,
+            });
+            return Ok(StartOutcome {
+                service: view,
+                reused: true,
+                reservation,
+            });
+        }
+
         let (status, instance) = self.current_state(&service)?;
         if status.is_live() {
             if let Some(instance) = instance {
@@ -866,6 +886,37 @@ impl Runtime {
         options: StartOptions,
     ) -> Result<StartOutcome> {
         let service = self.require_service(service_id)?;
+
+        // Restarting means stopping, and the runtime does not stop what it did
+        // not start. Falling through would skip the stop and start a second
+        // copy beside the one already serving.
+        let view = self.service_view(&service)?;
+        if view.status.is_live() && !view.managed {
+            let via = view
+                .supervisor_entry
+                .as_deref()
+                .zip(view.supervisor.as_deref())
+                .map(|(entry, supervisor)| {
+                    format!("; ask {supervisor} to restart '{entry}' instead")
+                })
+                .unwrap_or_default();
+            let pid = view
+                .actual_port
+                .and_then(|port| {
+                    let owners = self.port_owners().ok()?;
+                    owners.into_iter().find(|owner| owner.port == port)
+                })
+                .map(|owner| owner.pid)
+                .unwrap_or(0);
+            return Err(RuntimeError::NotPermitted {
+                pid,
+                reason: format!(
+                    "'{}' is running but was not started by the runtime{via}",
+                    service.name
+                ),
+            });
+        }
+
         let (status, _) = self.current_state(&service)?;
         if status.is_live() {
             self.stop_service(service_id, GRACEFUL_TIMEOUT).await?;

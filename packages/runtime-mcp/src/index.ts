@@ -32,6 +32,8 @@ import {
   formatReservation,
   formatServiceDetail,
   formatServices,
+  formatSupervised,
+  formatTasks,
   formatStart,
   formatWorktrees,
 } from "./format.js";
@@ -548,6 +550,80 @@ function registerTools(
     async () =>
       run("list_ports", undefined, (body) =>
         body.type === "ports" ? formatPorts(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "control_supervised",
+    {
+      title: "Switch a supervised service",
+      description:
+        "Start, stop or restart a service that another supervisor (PM2, systemd) keeps. Use this rather than start_service or stop_service when a service reports a supervisor: the runtime did not start it, and a stop issued any other way is undone the moment that supervisor notices. The supervisor's own registry is untouched, so what starts at boot does not change. Deleting an entry is deliberately not offered.",
+      inputSchema: {
+        name: z
+          .string()
+          .describe("The supervisor's own name for it, as reported on the service."),
+        action: z.enum(["start", "stop", "restart"]),
+      },
+    },
+    async ({ name, action }) =>
+      run("control_supervised", { name, action }, (body) =>
+        body.type === "supervised" ? formatSupervised(body) : unexpected(body),
+      ),
+  );
+
+  // ---- tasks ---------------------------------------------------------
+
+  server.registerTool(
+    "list_tasks",
+    {
+      title: "List tasks",
+      description:
+        "List the named step sequences declared in a project. A task brings up several services in order — a migration, then an API, then a front end.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("list_tasks", { selector: project }, (body) =>
+        body.type === "tasks" ? formatTasks(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "set_task",
+    {
+      title: "Declare a task",
+      description:
+        "Declare or replace a named sequence of steps. Steps are service names, run in the order given; each brings up its own dependencies first, so a step already covered by an earlier one does nothing. Every step is checked now rather than when it runs.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        name: z.string(),
+        steps: z.array(z.string()).describe("Service names, in order."),
+      },
+    },
+    async ({ project, name, steps }) =>
+      run("set_task", { selector: project, name, steps }, (body) =>
+        body.type === "tasks" ? formatTasks(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "run_task",
+    {
+      title: "Run a task",
+      description:
+        "Bring up every step of a task in order, waiting for each to report healthy before the next. A step that runs to completion must succeed or the task stops there — starting an API against a database whose migration failed is worse than not starting it. A service already running is left alone rather than restarted.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        name: z.string(),
+      },
+    },
+    async ({ project, name }) =>
+      run("run_task", { selector: project, name }, (body) =>
+        body.type === "task_run"
+          ? body.steps.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+          : unexpected(body),
       ),
   );
 

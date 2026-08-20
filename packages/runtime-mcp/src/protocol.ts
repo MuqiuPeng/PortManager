@@ -139,6 +139,29 @@ export interface LaunchObservation {
   service_id?: string;
 }
 
+/** A service another supervisor keeps, that the runtime can switch. */
+export interface SupervisedView {
+  name: string;
+  supervisor: string;
+  status: string;
+  pid?: number;
+  command: string;
+  restarts: number;
+  /** Absent, not empty, when it holds none. */
+  ports?: number[];
+  url?: string;
+  /** Set when restarting this would fail, with the reason. */
+  restart_warning?: string;
+}
+
+/** A named sequence of steps in a checkout. */
+export interface Task {
+  id: string;
+  workspace_id: string;
+  name: string;
+  steps: string[];
+}
+
 export interface AdoptOutcome {
   service: ServiceView;
   /** Where the command came from. Never the project's scripts. */
@@ -226,6 +249,9 @@ export type ResponseBody =
   | ({ type: "reservation" } & PortReservation)
   | { type: "logs"; items: LogLine[] }
   | { type: "launches"; items: LaunchObservation[] }
+  | ({ type: "supervised" } & SupervisedView)
+  | { type: "tasks"; items: Task[] }
+  | { type: "task_run"; steps: string[] }
   | ({ type: "adopted" } & AdoptOutcome)
   | { type: "sessions"; items: AgentSession[] }
   | ({ type: "session" } & AgentSession)
