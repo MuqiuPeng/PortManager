@@ -245,8 +245,11 @@ impl Runtime {
                 health_check: None,
                 auto_start: false,
                 conflict_policy: Default::default(),
-                depends_on: Vec::new(),
-                one_shot: false,
+                // Empty unless a config file said otherwise: inference has no
+                // way to know what depends on what, and a committed
+                // `.runtime.json` is the only thing that does.
+                depends_on: detected.depends_on.clone(),
+                one_shot: detected.one_shot,
             };
             self.store.upsert_service(&service)?;
         }
@@ -305,21 +308,58 @@ impl Runtime {
         Ok(stored)
     }
 
+    /// Register one worktree, with the primary checkout's services in it.
+    ///
+    /// A checkout with no services is a checkout nothing can be started in, and
+    /// registering one by hand used to produce exactly that — `sync_worktrees`
+    /// copied them and this did not, so the same act had two outcomes
+    /// depending on which way it was asked for.
+    pub fn register_worktree(&self, project_id: &ProjectId, path: &Path) -> Result<Workspace> {
+        let known = self.store.find_workspace_by_path(path)?.is_some();
+        let workspace = self.register_workspace(project_id, path)?;
+        if !known && workspace.worktree {
+            self.copy_services_from_primary(project_id, &workspace)?;
+        }
+        Ok(workspace)
+    }
+
+    /// Give a new checkout the same services as the one it was branched from.
+    ///
+    /// Ported wholesale, dependencies and all: they are names within a
+    /// workspace, so a copy resolves against its own siblings rather than
+    /// reaching back into the checkout it came from.
+    fn copy_services_from_primary(
+        &self,
+        project_id: &ProjectId,
+        workspace: &Workspace,
+    ) -> Result<()> {
+        let primary = self
+            .store
+            .list_workspaces(project_id)?
+            .into_iter()
+            .find(|candidate| !candidate.worktree);
+        let Some(primary) = primary else {
+            return Ok(());
+        };
+
+        for template in self.store.list_services(&primary.id)? {
+            let service = Service {
+                id: ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                cwd: workspace.path.clone(),
+                ..template
+            };
+            self.store.upsert_service(&service)?;
+        }
+        Ok(())
+    }
+
     /// Discover git worktrees of a project and register any that are new,
     /// copying the primary checkout's services into each.
     pub fn sync_worktrees(&self, project_id: &ProjectId) -> Result<Vec<Workspace>> {
         let project = self.require_project(project_id)?;
         let entries = git::worktrees(&project.root_path)?;
         let mut result = Vec::new();
-
-        let main_services = self
-            .store
-            .list_workspaces(project_id)?
-            .into_iter()
-            .find(|w| !w.worktree)
-            .map(|w| self.store.list_services(&w.id))
-            .transpose()?
-            .unwrap_or_default();
 
         for entry in entries {
             if entry.is_main || !entry.path.exists() {
@@ -334,20 +374,7 @@ impl Runtime {
                 tracing::debug!(path = %entry.path.display(), "skipping a tool-managed worktree");
                 continue;
             }
-            let known = self.store.find_workspace_by_path(&entry.path)?.is_some();
-            let workspace = self.register_workspace(project_id, &entry.path)?;
-            if !known {
-                for template in &main_services {
-                    let service = Service {
-                        id: ServiceId::new(),
-                        workspace_id: workspace.id.clone(),
-                        cwd: workspace.path.clone(),
-                        ..template.clone()
-                    };
-                    self.store.upsert_service(&service)?;
-                }
-            }
-            result.push(workspace);
+            result.push(self.register_worktree(project_id, &entry.path)?);
         }
         Ok(result)
     }
@@ -438,6 +465,19 @@ impl Runtime {
                 .max_by_key(|p| p.root_path.components().count())
             {
                 return Ok(found.clone());
+            }
+
+            // A git worktree lives outside the checkout it was branched from,
+            // so a path inside one matches no project root — and the checkout
+            // the caller is standing in is exactly the one they meant.
+            if let Some(workspace) = self
+                .store
+                .list_workspaces_all()?
+                .into_iter()
+                .filter(|workspace| path.starts_with(&workspace.path))
+                .max_by_key(|workspace| workspace.path.components().count())
+            {
+                return self.require_project(&workspace.project_id);
             }
         }
         Err(RuntimeError::not_found("project", selector))

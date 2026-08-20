@@ -297,6 +297,27 @@ impl Store {
         })
     }
 
+    /// Every checkout the runtime knows, across all projects.
+    ///
+    /// For resolving a path to whatever owns it: a git worktree lives outside
+    /// the repository it was branched from, so the only way to match one is to
+    /// look at checkouts rather than project roots.
+    pub fn list_workspaces_all(&self) -> Result<Vec<Workspace>> {
+        self.with_conn(|conn| {
+            let mut statement = conn
+                .prepare("SELECT * FROM workspaces")
+                .map_err(sqlite_err)?;
+            let rows = statement
+                .query_map([], |row| Ok(row_workspace(row)))
+                .map_err(sqlite_err)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(sqlite_err)??);
+            }
+            Ok(out)
+        })
+    }
+
     pub fn list_workspaces(&self, project_id: &ProjectId) -> Result<Vec<Workspace>> {
         self.with_conn(|conn| {
             let mut stmt = conn

@@ -93,7 +93,7 @@ impl Dispatcher {
             Request::RegisterWorktree { selector, path } => {
                 let project = runtime.resolve_project(&selector)?;
                 Ok(ResponseBody::Workspace(
-                    runtime.register_workspace(&project.id, path)?,
+                    runtime.register_worktree(&project.id, &path)?,
                 ))
             }
 
@@ -223,7 +223,8 @@ impl Dispatcher {
                 Ok(ResponseBody::Done { ok: runtime.remove_task(&workspace.id, &name)? })
             }
             Request::RunTask { selector, name } => {
-                let workspace = self.primary_workspace(&selector)?;
+                // Where it runs, not where it is declared.
+                let workspace = self.workspace_to_run_in(&selector)?;
                 Ok(ResponseBody::TaskRun { steps: runtime.run_task(&workspace.id, &name).await? })
             }
 
@@ -438,7 +439,7 @@ impl Dispatcher {
         }
     }
 
-    /// The checkout a task belongs to.
+    /// The checkout a task is *declared* in.
     ///
     /// The main one, not a worktree: a task names services by the names they
     /// have in the project, and every worktree has the same set under different
@@ -449,6 +450,34 @@ impl Dispatcher {
         self.runtime
             .store()
             .list_workspaces(&project.id)?
+            .into_iter()
+            .find(|workspace| !workspace.worktree)
+            .ok_or_else(|| {
+                RuntimeError::invalid(format!("'{}' has no main checkout", project.name))
+            })
+    }
+
+    /// The checkout a task should *run* in.
+    ///
+    /// Declared once for the project, run wherever the caller is standing —
+    /// which for a worktree is the whole point: two branches served at once,
+    /// each on its own ports, from one definition. A selector that names no
+    /// particular checkout gets the main one.
+    fn workspace_to_run_in(&self, selector: &str) -> Result<runtime_types::Workspace> {
+        let project = self.runtime.resolve_project(selector)?;
+        let workspaces = self.runtime.store().list_workspaces(&project.id)?;
+
+        if let Ok(path) = std::fs::canonicalize(std::path::Path::new(selector)) {
+            if let Some(found) = workspaces
+                .iter()
+                .filter(|workspace| path.starts_with(&workspace.path))
+                .max_by_key(|workspace| workspace.path.components().count())
+            {
+                return Ok(found.clone());
+            }
+        }
+
+        workspaces
             .into_iter()
             .find(|workspace| !workspace.worktree)
             .ok_or_else(|| {

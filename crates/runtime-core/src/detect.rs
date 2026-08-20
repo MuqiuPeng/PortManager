@@ -29,6 +29,13 @@ pub struct DetectedService {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// Services that must be up first. Only ever set from a config file:
+    /// inference has no way to know what depends on what.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    /// Runs to completion rather than staying up.
+    #[serde(default)]
+    pub one_shot: bool,
     /// Why this was suggested, shown in the CLI and the add-project dialog.
     pub reason: String,
 }
@@ -103,6 +110,8 @@ fn from_config(fallback_name: &str, root: &Path, config: ProjectConfig) -> Detec
                     root.join(cwd)
                 }
             }),
+            depends_on: service.depends_on,
+            one_shot: service.one_shot,
             reason: CONFIG_FILE_NAME.to_string(),
         })
         .collect();
@@ -186,6 +195,8 @@ fn detect_node(
             name: service_name,
             command,
             cwd: None,
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: format!("package.json scripts.{script}"),
         });
     }
@@ -334,6 +345,8 @@ fn detect_workspace_members(
             // The member's own directory, which is where its process runs — the
             // difference between recognising it later and not.
             cwd: Some(directory),
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: "workspace member".to_string(),
         });
     }
@@ -506,6 +519,8 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             command: "python manage.py runserver".to_string(),
             port: Some(8000),
             cwd: None,
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: "manage.py".to_string(),
         });
         return;
@@ -519,6 +534,8 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             command: "uvicorn app.main:app --reload".to_string(),
             port: Some(8000),
             cwd: None,
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: "fastapi/uvicorn dependency".to_string(),
         });
     } else if text.contains("flask") {
@@ -529,6 +546,8 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             command: "flask run".to_string(),
             port: Some(5000),
             cwd: None,
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: "flask dependency".to_string(),
         });
     }
@@ -550,6 +569,8 @@ fn detect_rust(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<Det
             command: "cargo run".to_string(),
             port: None,
             cwd: None,
+            depends_on: Vec::new(),
+            one_shot: false,
             reason: "Cargo.toml".to_string(),
         });
     }
@@ -570,6 +591,8 @@ fn detect_compose(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<
         command: "docker compose up".to_string(),
         port: None,
         cwd: None,
+        depends_on: Vec::new(),
+        one_shot: false,
         reason: "docker compose file".to_string(),
     });
 }

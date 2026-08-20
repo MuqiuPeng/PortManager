@@ -302,9 +302,20 @@ impl Runtime {
     /// than carrying on: the later steps are there because the earlier ones
     /// were supposed to have worked.
     pub async fn run_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+        // The definition lives on the project's main checkout; the services it
+        // names are resolved in whichever checkout this is being run in.
+        let workspace = self.require_workspace(workspace_id)?;
+        let declared_in = self
+            .store()
+            .list_workspaces(&workspace.project_id)?
+            .into_iter()
+            .find(|candidate| !candidate.worktree)
+            .map(|candidate| candidate.id)
+            .unwrap_or_else(|| workspace_id.clone());
+
         let task = self
             .store()
-            .list_tasks(workspace_id)?
+            .list_tasks(&declared_in)?
             .into_iter()
             .find(|task| task.name == name)
             .ok_or_else(|| RuntimeError::invalid(format!("no task called '{name}' here")))?;

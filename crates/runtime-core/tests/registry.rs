@@ -791,3 +791,67 @@ async fn a_service_writing_output_does_not_depend_on_a_reader() {
 
     let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
 }
+
+
+/// A `.runtime.json` has to survive being written and read back.
+///
+/// Every field that only exists on one side of that trip is a field the
+/// documentation promises and the tool silently drops — which is worse than
+/// not supporting it, because the file looks like it worked.
+#[tokio::test]
+async fn exported_config_carries_ordering_back() {
+    let dir = repo(&[("package.json", "{}")]);
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    for (name, depends_on, one_shot) in [
+        ("migrate", vec![], true),
+        ("api", vec!["migrate".to_string()], false),
+    ] {
+        let service = runtime_types::Service {
+            id: runtime_types::ServiceId::new(),
+            workspace_id: workspace.id.clone(),
+            name: name.to_string(),
+            service_type: ServiceType::Custom,
+            command: "sleep 1".to_string(),
+            cwd: dir.path().to_path_buf(),
+            env: Default::default(),
+            preferred_port: None,
+            health_check: None,
+            auto_start: false,
+            conflict_policy: ConflictPolicy::Fail,
+            depends_on,
+            one_shot,
+        };
+        runtime.add_service(&workspace.id, service).unwrap();
+    }
+
+    let config = runtime.export_config(&project.project.id).unwrap();
+    let raw = serde_json::to_string_pretty(&config).unwrap();
+    std::fs::write(dir.path().join(".runtime.json"), raw).unwrap();
+
+    // Forget everything and read the checkout again.
+    runtime.remove_project(&project.project.id).unwrap();
+    let reread = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&reread.project.id)
+        .unwrap()
+        .remove(0);
+    let services = runtime.store().list_services(&workspace.id).unwrap();
+
+    let migrate = services.iter().find(|s| s.name == "migrate").expect("migrate");
+    assert!(migrate.one_shot, "one_shot did not survive the round trip");
+
+    let api = services.iter().find(|s| s.name == "api").expect("api");
+    assert_eq!(
+        api.depends_on,
+        vec!["migrate".to_string()],
+        "depends_on did not survive the round trip"
+    );
+}
