@@ -855,3 +855,75 @@ async fn exported_config_carries_ordering_back() {
         "depends_on did not survive the round trip"
     );
 }
+
+
+/// Registering a worktree is how a checkout gets what it needs to run.
+///
+/// It has to work when the worktree already exists — which is the ordinary
+/// case, since adding a project registers every worktree it finds, at a moment
+/// when the project may have no services at all.
+#[tokio::test]
+async fn registering_a_worktree_tops_up_its_services() {
+    let dir = repo(&[("package.json", "{}")]);
+    let worktree = tempfile::tempdir().unwrap();
+    let path = worktree.path().join("feature");
+    git(dir.path(), &["worktree", "add", "-q", "-b", "feature", path.to_str().unwrap()]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    // Adding the project registers the worktree, before any service exists.
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let primary = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .into_iter()
+        .find(|w| !w.worktree)
+        .unwrap();
+
+    let service = runtime_types::Service {
+        id: runtime_types::ServiceId::new(),
+        workspace_id: primary.id.clone(),
+        name: "web".to_string(),
+        service_type: ServiceType::Web,
+        command: "sleep 1".to_string(),
+        cwd: dir.path().to_path_buf(),
+        env: Default::default(),
+        preferred_port: Some(4100),
+        health_check: None,
+        auto_start: false,
+        conflict_policy: ConflictPolicy::Fail,
+        depends_on: Vec::new(),
+        one_shot: false,
+    };
+    runtime.add_service(&primary.id, service).unwrap();
+
+    runtime.register_worktree(&project.project.id, &path).unwrap();
+
+    let branch = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .into_iter()
+        .find(|w| w.worktree)
+        .expect("the worktree should be registered");
+    let copied = runtime.store().list_services(&branch.id).unwrap();
+    assert_eq!(copied.len(), 1, "the worktree got no services");
+    // Compared canonically: the runtime stores the resolved path, and on macOS
+    // a temp directory is `/var/...` on the way in and `/private/var/...` on
+    // the way out.
+    assert_eq!(
+        std::fs::canonicalize(&copied[0].cwd).unwrap(),
+        std::fs::canonicalize(&path).unwrap(),
+        "the copy still points at the primary checkout"
+    );
+
+    // Again, with the copy edited: topping up must not undo that.
+    let mut edited = copied.into_iter().next().unwrap();
+    edited.command = "sleep 2".to_string();
+    runtime.store().upsert_service(&edited).unwrap();
+    runtime.register_worktree(&project.project.id, &path).unwrap();
+
+    let after = runtime.store().list_services(&branch.id).unwrap();
+    assert_eq!(after.len(), 1, "registering again duplicated a service");
+    assert_eq!(after[0].command, "sleep 2", "an edited copy was overwritten");
+}

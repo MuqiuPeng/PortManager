@@ -8,6 +8,7 @@ import type {
   AdoptOutcome,
   ContainerView,
   Discovery,
+  Finding,
   HealthReport,
   LaunchObservation,
   LogLine,
@@ -313,5 +314,14 @@ export function formatTasks(tasks: Task[]): string {
   if (tasks.length === 0) return "No tasks declared.";
   return tasks
     .map((task) => `${task.name}\n    ${task.steps.join(" -> ")}`)
+    .join("\n");
+}
+
+export function formatFindings(findings: Finding[]): string {
+  if (findings.length === 0) return "Nothing to report.";
+  // Certain first: those will fail, where the rest only might.
+  return [...findings]
+    .sort((a, b) => Number(b.certain) - Number(a.certain))
+    .map((finding) => `${finding.certain ? "!" : "?"} ${finding.subject}: ${finding.message}`)
     .join("\n");
 }

@@ -22,6 +22,7 @@ import {
   formatAdopted,
   formatContainer,
   formatDiscoveries,
+  formatFindings,
   formatHealth,
   formatLaunches,
   formatLogs,
@@ -550,6 +551,20 @@ function registerTools(
     async () =>
       run("list_ports", undefined, (body) =>
         body.type === "ports" ? formatPorts(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "diagnose",
+    {
+      title: "Check what is declared",
+      description:
+        "List everything wrong with the declared services that has not caused a failure yet: a dependency naming a service that does not exist, services depending on each other, a task step that was removed, a command that will not resolve from the daemon, and a build directory two services would overwrite for each other. Worth calling before starting things in an unfamiliar project — each of these is quiet until the moment it is expensive, and several of them fail somewhere other than where the cause is.",
+      inputSchema: {},
+    },
+    async () =>
+      run("diagnose", undefined, (body) =>
+        body.type === "findings" ? formatFindings(body.items) : unexpected(body),
       ),
   );
 

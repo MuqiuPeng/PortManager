@@ -92,6 +92,26 @@ pub async fn list_worktrees(
     }
 }
 
+/// Register a git worktree as another checkout of a project.
+///
+/// It arrives with the primary checkout's services, on its own port offset, so
+/// two branches can be served at once without either one being re-declared.
+#[tauri::command]
+pub async fn register_worktree(
+    state: State<'_, DaemonHandle>,
+    selector: String,
+    path: String,
+) -> CmdResult<Workspace> {
+    let request = Request::RegisterWorktree {
+        selector,
+        path: path.into(),
+    };
+    match call(&state, request).await? {
+        ResponseBody::Workspace(workspace) => Ok(workspace),
+        other => Err(unexpected(&other)),
+    }
+}
+
 #[tauri::command]
 pub async fn get_service(
     state: State<'_, DaemonHandle>,

@@ -37,6 +37,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Show every project, workspace and service.
+    ///
+    /// Narrowed by `--project` to one of them.
     List,
 
     /// Find projects on this machine automatically.
@@ -407,7 +409,13 @@ async fn run(cli: Cli) -> Result<String> {
     let project = cli.project.clone();
 
     let response = match cli.command {
-        Command::List => client.call(Request::ListProjects).await?,
+        // `--project` narrows this like it narrows everything else. Accepting
+        // the flag and ignoring it is worse than rejecting it: the output looks
+        // like an answer to the question that was asked.
+        Command::List => match project.clone() {
+            Some(selector) => client.call(Request::GetProject { selector }).await?,
+            None => client.call(Request::ListProjects).await?,
+        },
 
         Command::Task(command) => {
             let selector = project.clone().unwrap_or_else(|| ".".to_string());

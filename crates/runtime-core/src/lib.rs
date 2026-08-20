@@ -315,17 +315,21 @@ impl Runtime {
     /// copied them and this did not, so the same act had two outcomes
     /// depending on which way it was asked for.
     pub fn register_worktree(&self, project_id: &ProjectId, path: &Path) -> Result<Workspace> {
-        let known = self.store.find_workspace_by_path(path)?.is_some();
         let workspace = self.register_workspace(project_id, path)?;
-        if !known && workspace.worktree {
+        if workspace.worktree {
             self.copy_services_from_primary(project_id, &workspace)?;
         }
         Ok(workspace)
     }
 
-    /// Give a new checkout the same services as the one it was branched from.
+    /// Give a checkout the services of the one it was branched from.
     ///
-    /// Ported wholesale, dependencies and all: they are names within a
+    /// Tops up rather than replaces, so registering a worktree again is how a
+    /// service declared after the branch was made reaches it. Anything already
+    /// there is left alone: a worktree's copy is edited on its own terms, and
+    /// overwriting it would undo that quietly.
+    ///
+    /// Dependencies come across as they are — they are names within a
     /// workspace, so a copy resolves against its own siblings rather than
     /// reaching back into the checkout it came from.
     fn copy_services_from_primary(
@@ -341,8 +345,21 @@ impl Runtime {
         let Some(primary) = primary else {
             return Ok(());
         };
+        if primary.id == workspace.id {
+            return Ok(());
+        }
+
+        let existing: Vec<String> = self
+            .store
+            .list_services(&workspace.id)?
+            .into_iter()
+            .map(|service| service.name)
+            .collect();
 
         for template in self.store.list_services(&primary.id)? {
+            if existing.contains(&template.name) {
+                continue;
+            }
             let service = Service {
                 id: ServiceId::new(),
                 workspace_id: workspace.id.clone(),

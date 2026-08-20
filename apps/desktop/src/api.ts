@@ -18,6 +18,7 @@ import type {
   ServicePatch,
   ServiceView,
   StartOutcome,
+  Workspace,
   SupervisedView,
   Task,
 } from "./types";
@@ -49,6 +50,9 @@ export const api = {
     invoke<SupervisedView>("control_supervised", { name, action }),
 
   diagnose: () => invoke<Finding[]>("diagnose"),
+
+  registerWorktree: (selector: string, path: string) =>
+    invoke<Workspace>("register_worktree", { selector, path }),
 
   listTasks: (project: string) => invoke<Task[]>("list_tasks", { project }),
 

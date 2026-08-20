@@ -154,6 +154,15 @@ export interface SupervisedView {
   restart_warning?: string;
 }
 
+/** Something wrong with what is declared, found without being asked. */
+export interface Finding {
+  /** Where it is, as a person would say it: `Loom/api`. */
+  subject: string;
+  message: string;
+  /** True when it will fail rather than merely might. */
+  certain: boolean;
+}
+
 /** A named sequence of steps in a checkout. */
 export interface Task {
   id: string;
@@ -252,6 +261,7 @@ export type ResponseBody =
   | { type: "logs"; items: LogLine[] }
   | { type: "launches"; items: LaunchObservation[] }
   | ({ type: "supervised" } & SupervisedView)
+  | { type: "findings"; items: Finding[] }
   | { type: "tasks"; items: Task[] }
   | { type: "task_run"; steps: string[] }
   | ({ type: "adopted" } & AdoptOutcome)

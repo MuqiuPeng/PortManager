@@ -44,7 +44,9 @@ export default function App() {
   const [editing, setEditing] = useState<ServiceView | null>(null);
   const [loaded, setLoaded] = useState(false);
   /** Which in-app prompt is open, if any. */
-  const [prompt, setPrompt] = useState<"add-service" | "scan-folder" | "add-task" | null>(null);
+  const [prompt, setPrompt] = useState<
+    "add-service" | "scan-folder" | "add-task" | "add-worktree" | null
+  >(null);
   const [promptProject, setPromptProject] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -283,6 +285,20 @@ export default function App() {
         />
       )}
 
+      {prompt === "add-worktree" && project && (
+        <PromptSheet
+          title={`Add a worktree of ${project.name}`}
+          confirmLabel="Add"
+          fields={[{ label: "Folder", placeholder: "/Users/you/code/app-feature", mono: true }]}
+          hint="A git worktree of this repository. It arrives with this project's services on its own port range, so a second branch can be served without redeclaring anything."
+          onCancel={() => setPrompt(null)}
+          onConfirm={([path]) => {
+            setPrompt(null);
+            void act(() => api.registerWorktree(project.id, path));
+          }}
+        />
+      )}
+
       {prompt === "add-task" && project && (
         <PromptSheet
           title={`New task in ${project.name}`}
@@ -437,6 +453,18 @@ export default function App() {
                           <span className="badge">worktree +{workspace.port_offset}</span>
                         )}
                         <span className="spacer" />
+                        {!workspace.worktree && (
+                          /* On the primary checkout only: a worktree is added
+                             to the repository, not to a branch of it. */
+                          <button
+                            className="ghost"
+                            disabled={busy}
+                            onClick={() => setPrompt("add-worktree")}
+                            title="Serve another branch of this repository at the same time"
+                          >
+                            + Worktree
+                          </button>
+                        )}
                         <button
                           className="ghost"
                           disabled={busy}
