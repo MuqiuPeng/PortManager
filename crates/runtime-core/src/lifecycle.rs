@@ -524,13 +524,30 @@ impl Runtime {
         let service = self.require_service(service_id)?;
         let (status, instance) = self.current_state(&service)?;
 
+        // A finished instance is no more stoppable than no instance at all, and
+        // both must reach the same check below: a service the runtime ran once
+        // and stopped leaves a record behind, and treating that record as the
+        // whole answer reports "not running" for something the port table — and
+        // the view the caller is looking at — shows up and serving.
+        let instance = instance.filter(|_| status.is_live());
+
         let Some(mut instance) = instance else {
             // It may well be running — just not by us. Saying "not running"
             // would contradict the view the caller is looking at.
             let view = self.service_view(&service)?;
             if view.status.is_live() && !view.managed {
+                // "stop it where it was started" is only actionable if the
+                // caller can find the process, so name it.
+                let pid = view
+                    .actual_port
+                    .and_then(|port| {
+                        let owners = self.port_owners().ok()?;
+                        owners.into_iter().find(|owner| owner.port == port)
+                    })
+                    .map(|owner| owner.pid)
+                    .unwrap_or(0);
                 return Err(RuntimeError::NotPermitted {
-                    pid: 0,
+                    pid,
                     reason: format!(
                         "'{}' is running but was not started by the runtime; stop it where it was started",
                         service.name
@@ -541,11 +558,6 @@ impl Runtime {
                 service: service.name.clone(),
             });
         };
-        if !status.is_live() {
-            return Err(RuntimeError::NotRunning {
-                service: service.name.clone(),
-            });
-        }
 
         instance.status = ServiceStatus::Stopping;
         self.store().update_instance(&instance)?;
