@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::id::{ProjectId, ServiceId, WorkspaceId};
@@ -199,4 +200,41 @@ pub struct DaemonInfo {
     pub database_path: PathBuf,
     pub platform: String,
     pub uptime_seconds: u64,
+}
+
+/// A service launch the runtime was told about before it happened.
+///
+/// The runtime records these rather than intercepting them: the command runs
+/// exactly as it was typed, and this is only the note that it was going to.
+/// What makes the note worth keeping is that it holds the one thing a running
+/// process cannot be asked for — the command line that would start it again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchObservation {
+    pub id: String,
+    /// Exactly as given. Never a script name inferred from it: a project whose
+    /// `dev` and `start` write to the same build directory is broken by
+    /// restarting it under the wrong one.
+    pub command: String,
+    pub cwd: PathBuf,
+    pub source: StartedBy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    pub observed_at: DateTime<Utc>,
+    pub state: LaunchState,
+    /// Set once a port turned up that this launch explains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<ServiceId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchState {
+    /// Recorded; nothing has been seen to listen yet.
+    Pending,
+    /// A port appeared that this launch explains.
+    Bound,
 }

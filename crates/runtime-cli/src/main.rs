@@ -3,6 +3,7 @@
 //! A thin client over the daemon. It starts the daemon on demand, so the first
 //! command a user runs works without a separate install step.
 
+mod hook;
 mod render;
 
 use std::path::PathBuf;
@@ -137,8 +138,31 @@ enum Command {
     #[command(subcommand)]
     Daemon(DaemonCommand),
 
+    /// Record what agents and shells start, without getting in their way.
+    #[command(subcommand)]
+    Hook(HookCommand),
+
     /// Check that the runtime can see processes and ports on this machine.
     Doctor,
+}
+
+#[derive(Debug, Subcommand)]
+enum HookCommand {
+    /// Add the Claude Code hook for the current user.
+    ///
+    /// Applies to every project. The command Claude runs is not changed: the
+    /// hook only tells the runtime what is about to run, so a service started
+    /// outside it can still be restarted from the command that actually ran.
+    Install,
+    /// Take the hook back out.
+    Uninstall,
+    /// Report whether the hook is installed.
+    Status,
+    /// Read one hook payload on stdin. Called by Claude Code, not by hand.
+    #[command(hide = true)]
+    PreToolUse,
+    /// Show what has been recorded recently.
+    Log,
 }
 
 #[derive(Debug, Subcommand)]
@@ -287,6 +311,28 @@ async fn run(cli: Cli) -> Result<String> {
     }
     if let Command::Doctor = &cli.command {
         return doctor().await;
+    }
+    if let Command::Hook(command) = &cli.command {
+        match command {
+            // Never fails, never prints: Claude Code reads silence as
+            // "run the command unchanged", which is the only safe outcome.
+            HookCommand::PreToolUse => {
+                hook::pre_tool_use().await;
+                return Ok(String::new());
+            }
+            HookCommand::Install => {
+                return hook::install().map_err(RuntimeError::invalid);
+            }
+            HookCommand::Uninstall => {
+                return hook::uninstall().map_err(RuntimeError::invalid);
+            }
+            HookCommand::Status => return Ok(hook::status()),
+            HookCommand::Log => {
+                let mut client = connect().await?;
+                let response = client.call(Request::ListLaunches).await?;
+                return render_response(&response, cli.json);
+            }
+        }
     }
 
     let mut client = connect().await?;
@@ -593,7 +639,9 @@ async fn run(cli: Cli) -> Result<String> {
                 .await?
         }
 
-        Command::Daemon(_) | Command::Doctor => unreachable!("handled above"),
+        Command::Daemon(_) | Command::Doctor | Command::Hook(_) => {
+            unreachable!("handled above")
+        }
     };
 
     render_response(&response, cli.json)
@@ -687,6 +735,31 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         }
         ResponseBody::Logs { items } => render::logs(items),
         ResponseBody::Setting { value } => value.clone().unwrap_or_else(|| "(unset)".to_string()),
+        ResponseBody::Launches { items } => {
+            if items.is_empty() {
+                "nothing recorded".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|entry| {
+                        let mark = match entry.state {
+                            runtime_types::LaunchState::Bound => "\u{25cf}",
+                            runtime_types::LaunchState::Pending => "\u{25cb}",
+                        };
+                        let where_it_went = match (entry.port, entry.pid) {
+                            (Some(port), Some(pid)) => format!(":{port} pid {pid}"),
+                            _ => "waiting for a port".to_string(),
+                        };
+                        format!(
+                            "{mark} {}\n    {}\n    {where_it_went}",
+                            one_line(&entry.command),
+                            entry.cwd.display()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
         ResponseBody::Sessions { items } => items
             .iter()
             .map(|session| format!("{} {} ({})", session.id, session.client, session.provider))
@@ -834,4 +907,43 @@ async fn doctor() -> Result<String> {
         out.push_str("\nProcess discovery is not working on this platform.\n");
     }
     Ok(out.trim_end().to_string())
+}
+
+/// A command as a single readable line.
+///
+/// Recorded commands are whatever was typed, and an agent's shell call is
+/// routinely a whole script. Printing it verbatim breaks a list into
+/// unattributable fragments, so the log shows the shape of the command and the
+/// full text stays in `--json`.
+fn one_line(command: &str) -> String {
+    const WIDTH: usize = 96;
+    let collapsed = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= WIDTH {
+        return collapsed;
+    }
+    let kept: String = collapsed.chars().take(WIDTH - 1).collect();
+    format!("{kept}\u{2026}")
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::one_line;
+
+    #[test]
+    fn a_script_becomes_one_line() {
+        assert_eq!(one_line("cd web\nexport A=1\npnpm dev"), "cd web export A=1 pnpm dev");
+    }
+
+    #[test]
+    fn a_long_command_is_cut_rather_than_wrapped() {
+        let long = "pnpm dev ".repeat(40);
+        let rendered = one_line(&long);
+        assert_eq!(rendered.chars().count(), 96);
+        assert!(rendered.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn a_short_command_is_untouched() {
+        assert_eq!(one_line("pnpm dev"), "pnpm dev");
+    }
 }

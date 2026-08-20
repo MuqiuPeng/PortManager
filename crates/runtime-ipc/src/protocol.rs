@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
-    AgentSession, DaemonInfo, HealthReport, LogLine, PortOwner, PortReservation, PortStatus,
+    AgentSession, DaemonInfo, HealthReport, LaunchObservation, LogLine, PortOwner,
+    PortReservation, PortStatus,
     ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
     ServiceView, StartOutcome, Workspace,
 };
@@ -97,6 +98,22 @@ pub enum Request {
     ExportConfig {
         selector: String,
     },
+
+    /// Note a launch that is about to happen somewhere else.
+    ///
+    /// The command is not touched: this says what is about to run, so the
+    /// runtime can recognise it when a port appears and, later, start it again
+    /// from the command that actually ran rather than one inferred from it.
+    RecordLaunch {
+        command: String,
+        cwd: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
+    },
+    /// Launches recorded recently, newest first.
+    ListLaunches,
 
     StartService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,6 +254,7 @@ pub enum ResponseBody {
     Reservation(PortReservation),
     Logs { items: Vec<LogLine> },
     Setting { value: Option<String> },
+    Launches { items: Vec<LaunchObservation> },
     Sessions { items: Vec<AgentSession> },
     Session(AgentSession),
     Done { ok: bool },

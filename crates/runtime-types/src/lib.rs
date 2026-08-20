@@ -18,6 +18,5 @@ pub use model::{
     Workspace,
 };
 pub use view::{
-    ContainerView, DaemonInfo, ExternalService, HealthReport, PortOwner, PortReservation, PortStatus, ProjectView,
-    ServiceView, StartOutcome, WorkspaceView,
+    ContainerView, DaemonInfo, ExternalService, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, WorkspaceView,
 };

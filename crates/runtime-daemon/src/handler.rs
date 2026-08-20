@@ -177,6 +177,18 @@ impl Dispatcher {
                 Ok(ResponseBody::Config(runtime.export_config(&project.id)?))
             }
 
+            Request::RecordLaunch { command, cwd, source, session } => {
+                // Never an error the caller has to handle: this runs on the hot
+                // path of somebody else's shell command, and a runtime that
+                // cannot take a note must not be able to stop a developer from
+                // working.
+                let source = source.as_deref().map(StartedBy::parse).unwrap_or_default();
+                runtime.record_launch(command, cwd, source, session);
+                Ok(ResponseBody::Done { ok: true })
+            }
+
+            Request::ListLaunches => Ok(ResponseBody::Launches { items: runtime.launches() }),
+
             Request::StartService {
                 project,
                 service,

@@ -207,6 +207,20 @@ fn responses() -> Vec<ResponseBody> {
             }],
         },
         ResponseBody::Setting { value: Some("{}".to_string()) },
+        ResponseBody::Launches {
+            items: vec![LaunchObservation {
+                id: "1-abc".to_string(),
+                command: "cd frontend && PORT=4000 pnpm dev".to_string(),
+                cwd: "/repo".into(),
+                source: StartedBy::ClaudeCode,
+                session: Some("s1".to_string()),
+                observed_at: Utc::now(),
+                state: LaunchState::Bound,
+                port: Some(4000),
+                pid: Some(42),
+                service_id: Some(ServiceId::from("svc")),
+            }],
+        },
         ResponseBody::Sessions {
             items: vec![AgentSession {
                 id: SessionId::from("sess"),
@@ -286,6 +300,13 @@ fn every_request_survives_a_round_trip() {
         },
         Request::RemoveService { project: None, service: "web".to_string() },
         Request::ExportConfig { selector: "shop".to_string() },
+        Request::RecordLaunch {
+            command: "cd frontend && PORT=4000 pnpm dev".to_string(),
+            cwd: "/repo".into(),
+            source: Some("claude-code".to_string()),
+            session: Some("s1".to_string()),
+        },
+        Request::ListLaunches,
         Request::StartService {
             project: None,
             service: "web".to_string(),

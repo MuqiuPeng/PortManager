@@ -13,6 +13,7 @@ pub mod events;
 pub mod git;
 pub mod health;
 pub mod lifecycle;
+pub mod launch;
 pub mod logs;
 pub mod paths;
 pub mod platform;
@@ -20,6 +21,7 @@ pub mod ports;
 pub mod store;
 pub mod supervisor;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -27,9 +29,10 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    ContainerView, DaemonInfo, ExternalService, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView,
-    Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView,
-    Workspace, WorkspaceId, WorkspaceView,
+    ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
+    PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance,
+    Service, ServiceId, ServiceStatus, ServiceView, StartedBy, Workspace, WorkspaceId,
+    WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -48,6 +51,8 @@ pub struct Runtime {
     /// Resolving one port walks the process table, so answering "what is
     /// listening" for a whole machine would do it dozens of times over.
     port_owners: Mutex<Option<(Instant, Vec<PortOwner>)>>,
+    /// Launches the runtime was told about but did not perform.
+    launches: crate::launch::LaunchLog,
     events: EventBus,
     started_at: Instant,
 }
@@ -105,6 +110,7 @@ impl Runtime {
             supervisor: Arc::new(Supervisor::new()),
             docker: Arc::new(Docker::new()),
             port_owners: Mutex::new(None),
+            launches: crate::launch::LaunchLog::new(),
             events: EventBus::new(),
             started_at: Instant::now(),
         }
@@ -718,6 +724,52 @@ impl Runtime {
         })
     }
 
+    /// Pids in the process trees of services the runtime started.
+    ///
+    /// One service can put several ports on the machine: a dev entrypoint that
+    /// boots a throwaway Postgres and a schema browser alongside its API holds
+    /// three, and all three die with it. Listing the two it spawned as
+    /// unexplained would invite stopping them one by one, when `stop` already
+    /// reaches them through the process group — and would report a project as
+    /// having strangers in it when it does not.
+    ///
+    /// Only services this runtime started count as roots. A service found
+    /// already listening is not ours to speak for, and claiming its children
+    /// would be the same guess this module exists to avoid.
+    fn managed_process_trees(&self, services: &[ServiceView]) -> HashSet<u32> {
+        let mut roots: Vec<u32> = services
+            .iter()
+            .filter(|view| view.managed)
+            .filter_map(|view| view.instance.as_ref())
+            .map(|instance| instance.pid)
+            .collect();
+        // A recorded launch that turned into a listener is direct evidence, not
+        // an inference: something asked for this command here, and this pid
+        // answered moments later. Its children are its own.
+        roots.extend(self.launches.bound_pids());
+        if roots.is_empty() {
+            // Nothing to attribute, so nothing worth a process scan.
+            return HashSet::new();
+        }
+
+        let Ok(all) = self.adapter.process().list_processes() else {
+            // Without a process table every port stays unexplained, which is
+            // the honest answer rather than a wrong attribution.
+            return HashSet::new();
+        };
+
+        let mut tree: HashSet<u32> = roots.iter().copied().collect();
+        let mut frontier = roots;
+        while let Some(current) = frontier.pop() {
+            for proc in &all {
+                if proc.parent_pid == Some(current) && tree.insert(proc.pid) {
+                    frontier.push(proc.pid);
+                }
+            }
+        }
+        tree
+    }
+
     /// Live ports in a checkout that none of its declared services explain.
     ///
     /// The alternative — pinning each observation to whichever declared service
@@ -730,11 +782,13 @@ impl Runtime {
         owners: &[PortOwner],
     ) -> Vec<ExternalService> {
         let claimed: Vec<u16> = services.iter().filter_map(|view| view.actual_port).collect();
+        let spawned = self.managed_process_trees(services);
 
         owners
             .iter()
             .filter(|owner| owner.workspace_id.as_ref() == Some(&workspace.id))
             .filter(|owner| !claimed.contains(&owner.port))
+            .filter(|owner| !spawned.contains(&owner.pid))
             .map(|owner| ExternalService {
                 port: owner.port,
                 pid: owner.pid,
@@ -940,6 +994,189 @@ impl Runtime {
         Ok((ServiceStatus::Stopped, Some(instance)))
     }
 
+    // ---- observed launches ---------------------------------------------
+
+    /// Note a launch that is about to happen elsewhere.
+    ///
+    /// Called before the command runs, and deliberately does nothing to it. The
+    /// runtime's answer to "a server was started without me" is not to take the
+    /// launch away from whoever asked for it, but to be in a position to
+    /// restart it later from the command that actually ran — which is the one
+    /// thing that cannot be recovered from the process afterwards.
+    pub fn record_launch(
+        &self,
+        command: String,
+        cwd: PathBuf,
+        source: StartedBy,
+        session: Option<String>,
+    ) -> Option<LaunchObservation> {
+        if crate::launch::is_instantaneous(&command) {
+            return None;
+        }
+        Some(self.launches.record(command, cwd, source, session))
+    }
+
+    /// Recorded launches, newest first.
+    pub fn launches(&self) -> Vec<LaunchObservation> {
+        self.launches.all()
+    }
+
+    /// Match recordings against what turned up listening.
+    ///
+    /// Runs off the back of a port scan the caller already paid for. A
+    /// recording is only ever matched to a port that appeared after it, from a
+    /// directory beneath the one it was announced in — everything else expires
+    /// unclaimed, which is the correct outcome for the `git status` calls that
+    /// make up most of what gets recorded.
+    fn bind_launches(&self, owners: &[PortOwner]) {
+        let pending = self.launches.pending();
+        if pending.is_empty() {
+            self.launches.sweep();
+            return;
+        }
+
+        let already_bound: Vec<u32> = self.launches.bound_pids();
+
+        for owner in owners {
+            if already_bound.contains(&owner.pid) {
+                continue;
+            }
+            // A port a declared service already accounts for needs no
+            // explaining, and re-declaring it would duplicate the service.
+            if self.port_is_declared(owner) {
+                continue;
+            }
+
+            let Ok(Some(process)) = self.adapter.process().process_info(owner.pid) else {
+                continue;
+            };
+            let started = chrono::DateTime::from_timestamp_millis(process.start_time_ms)
+                .unwrap_or_else(Utc::now);
+
+            let Some(entry) = pending
+                .iter()
+                .find(|entry| crate::launch::explains(entry, process.cwd.as_deref(), started))
+            else {
+                continue;
+            };
+
+            let service_id = self
+                .declare_observed_service(entry, owner)
+                .inspect_err(|error| {
+                    tracing::debug!(%error, command = %entry.command, "could not declare an observed launch");
+                })
+                .ok()
+                .flatten();
+
+            self.launches
+                .bind(&entry.id, owner.port, owner.pid, service_id);
+        }
+
+        self.launches.sweep();
+    }
+
+    /// Whether a declared service already explains this port.
+    fn port_is_declared(&self, owner: &PortOwner) -> bool {
+        let Some(workspace_id) = owner.workspace_id.as_ref() else {
+            return false;
+        };
+        let Ok(services) = self.store.list_services(workspace_id) else {
+            return false;
+        };
+        services.iter().any(|service| {
+            let Ok(Some(workspace)) = self.store.get_workspace(&service.workspace_id) else {
+                return false;
+            };
+            ports::PortResolver::preferred_port(service, &workspace) == Some(owner.port)
+        })
+    }
+
+    /// Write down what a recorded launch turned out to be.
+    ///
+    /// Only inside a project the runtime already knows about. Registering a
+    /// project because something served a port from it would turn every
+    /// throwaway directory an agent runs a server in into a permanent entry.
+    fn declare_observed_service(
+        &self,
+        entry: &LaunchObservation,
+        owner: &PortOwner,
+    ) -> Result<Option<ServiceId>> {
+        let Some(workspace_id) = owner.workspace_id.clone() else {
+            return Ok(None);
+        };
+        let workspace = self.require_workspace(&workspace_id)?;
+
+        let cwd = owner
+            .cwd
+            .clone()
+            .unwrap_or_else(|| entry.cwd.clone());
+
+        // The same command from the same directory is the same service, however
+        // many times it is launched.
+        if let Some(existing) = self
+            .store
+            .list_services(&workspace_id)?
+            .into_iter()
+            .find(|service| service.command == entry.command && service.cwd == cwd)
+        {
+            return Ok(Some(existing.id));
+        }
+
+        let name = self.unused_service_name(&workspace_id, &cwd, &workspace.path)?;
+        let service = Service {
+            id: ServiceId::new(),
+            workspace_id,
+            name,
+            service_type: runtime_types::ServiceType::Web,
+            command: entry.command.clone(),
+            cwd,
+            env: Default::default(),
+            preferred_port: Some(owner.port),
+            health_check: None,
+            auto_start: false,
+            // Something is already on this port. Reusing it is the only policy
+            // that does not fight the process that is serving.
+            conflict_policy: ConflictPolicy::Reuse,
+        };
+        self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
+        Ok(Some(service.id))
+    }
+
+    /// A name that reads like the directory and is not taken.
+    fn unused_service_name(
+        &self,
+        workspace_id: &WorkspaceId,
+        cwd: &Path,
+        workspace_root: &Path,
+    ) -> Result<String> {
+        let base = cwd
+            .strip_prefix(workspace_root)
+            .ok()
+            .and_then(|relative| relative.file_name())
+            .or_else(|| cwd.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "service".to_string());
+
+        let taken: Vec<String> = self
+            .store
+            .list_services(workspace_id)?
+            .into_iter()
+            .map(|service| service.name)
+            .collect();
+
+        if !taken.contains(&base) {
+            return Ok(base);
+        }
+        for suffix in 2..100 {
+            let candidate = format!("{base}-{suffix}");
+            if !taken.contains(&candidate) {
+                return Ok(candidate);
+            }
+        }
+        Ok(format!("{base}-{}", ServiceId::new()))
+    }
+
     // ---- ports ---------------------------------------------------------
 
     pub fn check_port(&self, port: u16) -> Result<PortStatus> {
@@ -965,6 +1202,7 @@ impl Runtime {
         }
 
         let owners = self.scan_ports()?;
+        self.bind_launches(&owners);
         if let Ok(mut cache) = self.port_owners.lock() {
             *cache = Some((Instant::now(), owners.clone()));
         }
