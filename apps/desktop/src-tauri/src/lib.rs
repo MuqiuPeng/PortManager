@@ -77,6 +77,7 @@ pub fn run() {
             commands::start_service,
             commands::adopt_port,
             commands::control_supervised,
+            commands::diagnose,
             commands::list_tasks,
             commands::set_task,
             commands::remove_task,

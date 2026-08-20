@@ -1085,3 +1085,58 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Not behind a tab: a warning nobody goes looking for does not exist. */
+.findings {
+  border: 1px solid var(--warning, #d08b3c);
+  border-radius: 8px;
+  margin: 0 0 12px;
+  overflow: hidden;
+}
+
+.findings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--warning, #d08b3c) 12%, transparent);
+}
+
+.findings-count {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.findings-list {
+  margin: 0;
+  padding: 6px 12px 10px;
+  list-style: none;
+}
+
+.findings-list li {
+  display: grid;
+  grid-template-columns: 14px auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.finding-mark {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.finding-mark.certain {
+  color: var(--warning, #d08b3c);
+}
+
+.finding-subject {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.finding-message {
+  color: var(--muted);
+}

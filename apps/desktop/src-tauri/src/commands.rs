@@ -8,7 +8,7 @@ use runtime_core::discover::Discovery;
 use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
-    AdoptOutcome, DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
+    AdoptOutcome, DaemonInfo, Finding, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
     ServiceView, StartOutcome, SupervisedView, Task, Workspace,
 };
 use tauri::State;
@@ -223,6 +223,15 @@ pub async fn control_supervised(
 ) -> CmdResult<SupervisedView> {
     match call(&state, Request::ControlSupervised { name, action }).await? {
         ResponseBody::Supervised(view) => Ok(view),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Everything wrong with what is declared, looked for rather than waited on.
+#[tauri::command]
+pub async fn diagnose(state: State<'_, DaemonHandle>) -> CmdResult<Vec<Finding>> {
+    match call(&state, Request::Diagnose).await? {
+        ResponseBody::Findings { items } => Ok(items),
         other => Err(unexpected(&other)),
     }
 }

@@ -7,6 +7,7 @@ import type {
   ContainerView,
   DaemonInfo,
   Discovery,
+  Finding,
   LogLine,
   PanelSettings,
   PanelState,
@@ -46,6 +47,8 @@ export const api = {
 
   controlSupervised: (name: string, action: "start" | "stop" | "restart") =>
     invoke<SupervisedView>("control_supervised", { name, action }),
+
+  diagnose: () => invoke<Finding[]>("diagnose"),
 
   listTasks: (project: string) => invoke<Task[]>("list_tasks", { project }),
 

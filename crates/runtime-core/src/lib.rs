@@ -1208,6 +1208,22 @@ impl Runtime {
                         }
                     }
 
+                    if !command_is_findable(&service.command) {
+                        let program = service
+                            .command
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or(&service.command);
+                        findings.push(Finding {
+                            subject: subject.clone(),
+                            message: format!(
+                                "starts with '{program}', which is not on this daemon's PATH; \
+                                 it will not start from here even though it works in a shell"
+                            ),
+                            certain: true,
+                        });
+                    }
+
                     if let Some(hazard) = self.build_hazard(service) {
                         findings.push(Finding {
                             subject: subject.clone(),
@@ -1947,6 +1963,57 @@ fn restart_warning(process: &crate::pm2::Pm2Process) -> Option<String> {
     ))
 }
 
+/// Whether a declared command could be found at all, started from here.
+///
+/// A command is written in the shell that had it working, and run by a daemon
+/// whose `PATH` is whatever launched the app. `python -m uvicorn ...` came off a
+/// machine where `python` meant Anaconda's; started from here it means whatever
+/// `PATH` says, which on a current macOS is nothing at all. The service is
+/// declared, looks right, and fails the first time anybody presses Start.
+///
+/// Deliberately silent when it cannot tell. Anything with shell syntax in it is
+/// run through `sh -c` and may resolve in ways this cannot follow, and a
+/// warning that fires on working services is worse than no warning.
+fn command_is_findable(command: &str) -> bool {
+    /// Not on `PATH`, and perfectly runnable.
+    const BUILTINS: &[&str] = &[
+        "cd", "echo", "export", "exec", "set", "unset", "source", ".", "test", "[", "true",
+        "false", "eval", "read", "printf", "wait", "trap", "shift", "return",
+    ];
+
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    // A pipeline, a chain, a substitution, a redirect: `sh -c` territory.
+    if trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains('|')
+        || trimmed.contains(';')
+        || trimmed.contains('`')
+        || trimmed.contains("$(")
+        || trimmed.contains('>')
+        || trimmed.contains('<')
+    {
+        return true;
+    }
+
+    let Some(first) = trimmed.split_whitespace().next() else {
+        return true;
+    };
+    // `FOO=bar cmd` — the first word is an assignment, not the program.
+    if first.contains('=') {
+        return true;
+    }
+    if BUILTINS.contains(&first) {
+        return true;
+    }
+    if first.contains('/') {
+        return std::path::Path::new(first).is_file();
+    }
+    looks_runnable(trimmed)
+}
+
 /// Whether a reported command line could actually start anything.
 ///
 /// A process may rename itself, and the good ones do: `next-server (v14.2.35)`
@@ -1996,6 +2063,33 @@ mod tests {
         assert!(!looks_runnable("next-server (v14.2.35)"));
         assert!(!looks_runnable("PM2 v6.0.14: God Daemon (/Users/x/.pm2)"));
         assert!(!looks_runnable(""));
+    }
+
+    #[test]
+    fn a_command_that_will_not_resolve_from_here_is_reported() {
+        // Written in a shell where `python` meant Anaconda's, run by a daemon
+        // where it means nothing.
+        assert!(!command_is_findable("definitely-not-a-real-program --serve"));
+    }
+
+    #[test]
+    fn shell_syntax_is_left_alone() {
+        // `sh -c` territory: this cannot follow it, and a warning that fires on
+        // working services is worse than no warning.
+        for command in [
+            "cd frontend && pnpm dev",
+            "NODE_ENV=production node server.mjs",
+            "pnpm dev > log.txt",
+            "sh -c 'exec thing'",
+        ] {
+            assert!(command_is_findable(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn an_absolute_path_is_checked_as_a_file() {
+        assert!(command_is_findable("/bin/sh -c true"));
+        assert!(!command_is_findable("/nowhere/at/all/serve --port 3000"));
     }
 
     #[test]

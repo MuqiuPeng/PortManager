@@ -4,6 +4,7 @@ import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
 import { DiscoveryPanel } from "./components/DiscoveryPanel";
 import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
+import { FindingsBanner } from "./components/FindingsBanner";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
@@ -16,6 +17,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
+  Finding,
   LogLine,
   PortOwner,
   ProjectView,
@@ -172,6 +174,27 @@ export default function App() {
 
   /** Tasks for the selected project, reloaded whenever it changes. */
   const [tasks, setTasks] = useState<Task[]>([]);
+
+  /** Problems with what is declared, across every project. */
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [findingsHidden, setFindingsHidden] = useState(false);
+
+  // Re-run after anything that changes the registry, since that is when a
+  // problem is introduced — and when the person is looking.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const found = await api.diagnose();
+        if (!cancelled) setFindings(found);
+      } catch {
+        if (!cancelled) setFindings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [busy, projects.length]);
 
   /** The port a Take control click is asking about, with its supervisor. */
   const [takingOver, setTakingOver] = useState<{
@@ -354,6 +377,10 @@ export default function App() {
             Dismiss
           </button>
         </div>
+      )}
+
+      {!findingsHidden && tab !== "settings" && (
+        <FindingsBanner findings={findings} onDismiss={() => setFindingsHidden(true)} />
       )}
 
       {tab === "settings" ? (

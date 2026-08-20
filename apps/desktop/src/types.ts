@@ -301,3 +301,12 @@ export interface Task {
   /** Service names, in order. Each brings up its own dependencies first. */
   steps: string[];
 }
+
+/** Something wrong with what is declared, found without being asked. */
+export interface Finding {
+  /** Where it is, as a person would say it: `Loom/api`. */
+  subject: string;
+  message: string;
+  /** True when it will fail rather than merely might. */
+  certain: boolean;
+}
