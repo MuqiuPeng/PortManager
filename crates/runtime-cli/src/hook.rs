@@ -236,62 +236,6 @@ fn write_settings(
     std::fs::write(path, format!("{body}\n")).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_entry_is_recognised_by_its_subcommand_not_its_path() {
-        let ours = serde_json::json!({
-            "matcher": "Bash",
-            "hooks": [{"type": "command", "command": "/anywhere/at/all/runtime hook pre-tool-use"}]
-        });
-        assert!(is_ours(&ours));
-
-        let theirs = serde_json::json!({
-            "matcher": "Bash",
-            "hooks": [{"type": "command", "command": "./scripts/audit.sh"}]
-        });
-        assert!(!is_ours(&theirs));
-    }
-
-    #[test]
-    fn a_payload_for_another_tool_carries_no_command() {
-        let input: HookInput = serde_json::from_str(
-            r#"{"session_id":"s","cwd":"/repo","tool_name":"Read","tool_input":{"file_path":"/x"}}"#,
-        )
-        .unwrap();
-        assert_eq!(input.tool_name.as_deref(), Some("Read"));
-        assert!(input.tool_input.unwrap().command.is_none());
-    }
-
-    #[test]
-    fn a_bash_payload_is_read_whole() {
-        let input: HookInput = serde_json::from_str(
-            r#"{"session_id":"s1","cwd":"/repo","hook_event_name":"PreToolUse",
-                "tool_name":"Bash","tool_input":{"command":"cd web && pnpm dev","description":"x"}}"#,
-        )
-        .unwrap();
-        assert_eq!(input.session_id.as_deref(), Some("s1"));
-        assert_eq!(input.cwd, Some(PathBuf::from("/repo")));
-        assert_eq!(
-            input.tool_input.unwrap().command.as_deref(),
-            Some("cd web && pnpm dev")
-        );
-    }
-
-    #[test]
-    fn unknown_fields_do_not_break_the_payload() {
-        // Claude Code adds fields; a hook that fails to parse is a hook that
-        // silently stops recording.
-        let input: HookInput = serde_json::from_str(
-            r#"{"tool_name":"Bash","tool_input":{"command":"pnpm dev"},"something_new":{"a":1}}"#,
-        )
-        .unwrap();
-        assert_eq!(input.tool_name.as_deref(), Some("Bash"));
-    }
-}
-
 // ---- the MCP server ----------------------------------------------------
 
 /// Register the MCP server for every project this user works on.
@@ -352,5 +296,61 @@ pub fn mcp_status() -> String {
     {
         Some(true) => "registered".to_string(),
         _ => "not registered (`runtime hook mcp`)".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_is_recognised_by_its_subcommand_not_its_path() {
+        let ours = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "/anywhere/at/all/runtime hook pre-tool-use"}]
+        });
+        assert!(is_ours(&ours));
+
+        let theirs = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "./scripts/audit.sh"}]
+        });
+        assert!(!is_ours(&theirs));
+    }
+
+    #[test]
+    fn a_payload_for_another_tool_carries_no_command() {
+        let input: HookInput = serde_json::from_str(
+            r#"{"session_id":"s","cwd":"/repo","tool_name":"Read","tool_input":{"file_path":"/x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(input.tool_name.as_deref(), Some("Read"));
+        assert!(input.tool_input.unwrap().command.is_none());
+    }
+
+    #[test]
+    fn a_bash_payload_is_read_whole() {
+        let input: HookInput = serde_json::from_str(
+            r#"{"session_id":"s1","cwd":"/repo","hook_event_name":"PreToolUse",
+                "tool_name":"Bash","tool_input":{"command":"cd web && pnpm dev","description":"x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(input.session_id.as_deref(), Some("s1"));
+        assert_eq!(input.cwd, Some(PathBuf::from("/repo")));
+        assert_eq!(
+            input.tool_input.unwrap().command.as_deref(),
+            Some("cd web && pnpm dev")
+        );
+    }
+
+    #[test]
+    fn unknown_fields_do_not_break_the_payload() {
+        // Claude Code adds fields; a hook that fails to parse is a hook that
+        // silently stops recording.
+        let input: HookInput = serde_json::from_str(
+            r#"{"tool_name":"Bash","tool_input":{"command":"pnpm dev"},"something_new":{"a":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(input.tool_name.as_deref(), Some("Bash"));
     }
 }

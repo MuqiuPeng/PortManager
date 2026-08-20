@@ -1125,7 +1125,7 @@ async fn doctor() -> Result<String> {
     if runtime_ipc::client::is_running().await {
         let mut client = Client::connect_default().await?;
         if let ResponseBody::Findings { items } = client.call(Request::Diagnose).await? {
-            out.push_str(&format!("\ndeclared services\n"));
+            out.push_str("\ndeclared services\n");
             if items.is_empty() {
                 out.push_str("  nothing to report\n");
             }

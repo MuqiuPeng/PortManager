@@ -123,6 +123,42 @@ resolves the `.cmd` shims npm and pnpm install. Users living in PowerShell
 profiles will want their own environment; make it configurable rather than
 switching the default.
 
+## What was added recently, and what it assumes
+
+These arrived after this guide was written and are the parts most likely to be
+wrong on Windows, since none of it has been run there.
+
+**Other supervisors** (`crates/runtime-core/src/pm2.rs`). PM2 is found by
+searching `PATH` and the node version manager's prefix, trying `pm2.cmd`,
+`pm2.exe`, `pm2` in that order, and a `.cmd` shim is run through `cmd /C`
+because it is a batch script rather than an image. Worth checking against a real
+global npm install — the shim's exact name and location is the guess most likely
+to be wrong.
+
+`supervisors.rs` identifies PM2 by its process title, which it rewrites to
+`PM2 v6.0.14: God Daemon`. Whether a Windows PM2 does the same, and whether the
+process table reports it, is unverified. systemd detection is Linux-only by
+nature; a Windows equivalent would be the Service Control Manager, which nothing
+here talks to yet.
+
+**Is this a command or a description** (`looks_runnable` in `lib.rs`). A bare
+word is looked up in `PATH` by comparing directory entries by name, with a
+Windows-only allowance for the extension a command is stored with and written
+without — `node` on the command line is `node.exe` on disk. Without that
+allowance every working command reads as missing, which is the worst kind of
+warning: one that fires on healthy services teaches the reader to skip it.
+
+**Process environments** (`ProcessProvider::environment`). Implemented on macOS
+through `KERN_PROCARGS2` and defaulted to `None` elsewhere, which callers must
+read as "cannot tell" rather than "empty". Adopting a service falls back to the
+supervisor and then to argv when it is absent, so an unimplemented Windows
+version degrades rather than lies — but a service whose mode lives in
+`NODE_ENV` will be adopted without it.
+
+**Build hazards** (`builds.rs`) and **ordering** (`graph.rs`) are pure path and
+graph logic with no platform calls. They should need nothing, which is exactly
+why they are worth a look.
+
 ## Rules the adapter must not break
 
 These are enforced by the core and asserted by tests — they are the reason the
@@ -145,21 +181,26 @@ tool is safe to hand to an agent.
 ## Testing your changes
 
 ```powershell
-cargo test --workspace
-cargo clippy --workspace --all-targets
+./scripts/check.sh
 ```
 
-From macOS or Linux the adapter can be type-checked without a Windows machine:
+From macOS or Linux the whole stack minus the GUI can be type-checked for
+Windows, tests included:
 
 ```bash
 rustup target add x86_64-pc-windows-msvc
-cargo check -p adapter-windows --target x86_64-pc-windows-msvc
+cargo check --workspace --exclude runtime-desktop --all-targets \
+  --no-default-features --target x86_64-pc-windows-msvc
 ```
 
-Only the adapter crate: the full workspace cannot be cross-built from macOS
-because `rusqlite`'s bundled SQLite needs a C toolchain for the target. That is
-enough to keep the Windows crate from being left in a non-compiling state on the
-shared branch.
+`--no-default-features` drops `bundled-sqlite`, whose C build needs a toolchain
+for the target; nothing here is linked, so the rest still checks. `--all-targets`
+matters more than it looks: the first four Windows problems on this branch were
+in code the earlier adapter-only check never saw, and one of them — a test using
+`std::os::unix::fs::symlink` — was in a test.
+
+It catches what will not compile, not what will not work. The rest of this
+document is the second kind.
 
 ## End-to-end acceptance
 

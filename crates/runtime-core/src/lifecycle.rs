@@ -136,7 +136,7 @@ impl Runtime {
                 .map(|candidate| candidate.id.clone())
                 .collect();
 
-            let plan = crate::graph::plan(&[service.clone()], &declared, |candidate| {
+            let plan = crate::graph::plan(std::slice::from_ref(&service), &declared, |candidate| {
                 live.contains(&candidate.id)
             })?;
 

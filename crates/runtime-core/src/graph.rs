@@ -210,7 +210,8 @@ mod tests {
     #[test]
     fn a_service_with_no_dependencies_is_one_step() {
         let web = service("web", &[]);
-        let steps = plan(&[web.clone()], &[web], |_| false).unwrap();
+        let all = std::slice::from_ref(&web);
+        let steps = plan(all, all, |_| false).unwrap();
         assert_eq!(names(&steps), ["web"]);
     }
 }

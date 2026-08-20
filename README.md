@@ -342,8 +342,10 @@ packages/runtime-mcp/  MCP server for coding agents
 ## Development
 
 ```bash
+./scripts/check.sh                     # everything below, in one go
+
 cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 pnpm --dir apps/desktop build          # type-check, test and bundle the frontend
 pnpm --dir packages/runtime-mcp test   # MCP server
 # type-check the whole stack for Windows, from anywhere
