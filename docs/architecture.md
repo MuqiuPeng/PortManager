@@ -335,6 +335,28 @@ table as `/private/tmp/x`, and comparing them as text quietly matches nothing.
 What survives that test is evidence rather than a guess, so its children are
 attributed to it too.
 
+### Where the command comes from
+
+Three sources, in decreasing order of how much they know:
+
+1. **The supervisor**, when one holds it. PM2 stores what it will run *next
+   time*, which is the actual question, and it answers for an entry that is
+   currently stopped.
+2. **A recorded launch**, which is what somebody asked for before the shell and
+   the package manager got to it.
+3. **The process itself**, as a last resort.
+
+The last one has a failure mode worth naming: a process may rename itself, and
+the good ones do. Next reports its argv as `next-server (v14.2.35)` and PM2 as
+`PM2 v6.0.14: God Daemon` — far more useful in a process listing than the paths
+they replaced, and not commands. Writing one into a definition produces a
+service that looks correctly declared and cannot start, so an argv that names
+nothing runnable is refused instead.
+
+Testing whether a bare word is runnable means looking at `PATH`, and on a
+case-insensitive filesystem `dir.join("PM2").is_file()` answers yes because of
+an unrelated `pm2`. Directory entries are compared by name.
+
 ### The environment is part of how a service runs
 
 Reading the command off the process is necessary and was not sufficient. `node
@@ -374,6 +396,26 @@ needs; a task says what *you* want up, which is often not one service's chain.
 Each step brings up its own dependencies, so a step already covered by an
 earlier one does nothing.
 
+## Checking what is declared
+
+Every problem `diagnose` looks for is already knowable and stays quiet until the
+moment it is expensive:
+
+| Found | Why it waits |
+| --- | --- |
+| A dependency naming nothing | Fails halfway through a start, with everything before it already up |
+| Services depending on each other | Hangs |
+| A task step that was removed | Same, one layer out |
+| A command that will not resolve here | A command is written in the shell that had it working and run by a daemon whose `PATH` is whatever launched the app |
+| A build directory two services share | Breaks whichever of them is not looking, on its next restart, hours after the cause |
+
+It is silent when it cannot tell. A command with shell syntax in it goes through
+`sh -c` and may resolve in ways this cannot follow; a warning that fires on
+working services teaches the reader to skip it, and then it is worse than none.
+
+The same list appears in the app above the projects — not behind a tab, because
+a warning nobody goes looking for is a warning that does not exist.
+
 ## Health
 
 The default depends on what the service says it is:
@@ -397,6 +439,27 @@ is whether it is alive, not whether it agrees about the path. An empty
 Only for the types that claim HTTP. A database holding a port would fail an HTTP
 check while being perfectly well, and a check wrong in that direction is worse
 than a weak one: it teaches the reader to skip it.
+
+## Worktrees
+
+Each checkout is a workspace with its own port offset, carrying the project's
+services so a second branch can be served without redeclaring anything.
+
+Registering one **tops up** rather than replaces. Adding a project registers
+every worktree it finds, usually at a moment when the project has no services
+at all, so registering again later is how a service declared after the branch
+was made reaches it — and a copy that has been edited on its own terms is left
+alone rather than quietly overwritten.
+
+Dependencies are names within a workspace, so a copy resolves against its own
+siblings rather than reaching back into the checkout it came from. A **task** is
+the other way round: declared once for the project, since every checkout has the
+same service names, and run in whichever checkout the caller names. Two branches
+served at once, on different ports, from one definition.
+
+Resolving a path has to look at checkouts and not just project roots. A git
+worktree lives outside the repository it was branched from, so the directory
+somebody is standing in matches no project root at all.
 
 ## Port -> project resolution
 

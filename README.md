@@ -170,19 +170,35 @@ runtime daemon start|stop|status
 runtime doctor
 ```
 
-`adopt` writes down what is running so the runtime can start it again, taking
-the command from the process rather than from `package.json`. It refuses when
-another supervisor is keeping the service alive, since taking it over for real
-means removing it from there — and that usually changes what starts at boot.
+`adopt` writes down what is running so the runtime can start it again, never
+guessing the command from `package.json`. It asks the supervisor first, then a
+recorded launch, and only then the process itself — and declines when the
+process reports something it cannot execute, which is what a self-renaming one
+does: Next calls itself `next-server (v14.2.35)`, an accurate description and
+not a command. It also captures the handful of variables that select a *mode*,
+since `node server.mjs` and `NODE_ENV=production node server.mjs` are the same
+process listing and not the same server.
 
-`supervised` is the other answer to that: PM2 still owns what the service is,
-this owns whether it is running now. There is no `delete`.
+`supervised` is the other half: PM2 still owns what the service is and whether
+it starts at boot; this owns whether it is running now. There is no `delete`.
+
+`doctor` reports what is wrong with the registry before it costs anything — a
+dependency naming a service that does not exist, services that depend on each
+other, a command that will not resolve from the daemon, a build directory two
+services would overwrite for each other. The same list is in the app, above the
+projects, and available to an agent as `diagnose`.
 
 A service is named `web`, or `<branch>/<name>` to reach a git worktree:
 
 ```bash
 runtime start feature/refund/web
 ```
+
+Worktrees carry the project's services on their own port range, so two branches
+can be served at once. `worktree add` also tops up a checkout that was
+registered before a service existed, and leaves any copy you have edited alone.
+A task is declared once for the project and runs in whichever checkout you name
+— which is the point: one definition, two branches, different ports.
 
 Every command takes `--json` for scripting.
 

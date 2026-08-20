@@ -115,11 +115,21 @@ if the attribution matters to you.
   reports a supervisor: the runtime did not start it, and a stop issued any
   other way is undone the moment that supervisor notices. There is no delete.
 
+### Checking
+
+* `diagnose` — everything wrong with the declared services that has not caused
+  a failure yet. Worth calling before starting things in an unfamiliar project:
+  each of these is quiet until the moment it is expensive, and several of them
+  fail somewhere other than where the cause is.
+
 ### Taking things over
 
 * `adopt_port` — declare whatever is already listening, so it can be started
-  again later. The command is read off the running process, never guessed from
-  `package.json`. Refuses when a supervisor holds it, unless forced.
+  again later. Never guessed from `package.json`: the supervisor is asked first,
+  then a recorded launch, then the process — and a process that reports a name
+  rather than a command is declined rather than written down. Mode-selecting
+  variables come with it, since `NODE_ENV` is the whole difference between a
+  project's two servers. Refuses when a supervisor holds it, unless forced.
 * `list_launches` — what an agent or a terminal started, with the command
   exactly as given, and the port and pid it turned into.
 
