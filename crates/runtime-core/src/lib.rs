@@ -2160,7 +2160,10 @@ mod tests {
 
     #[test]
     fn an_absolute_path_is_checked_as_a_file() {
-        assert!(command_is_findable("/bin/sh -c true"));
+        // Whatever this test is running as: the point is that a path is
+        // checked as a path, and `/bin/sh` is only that on one platform.
+        let me = std::env::current_exe().unwrap();
+        assert!(command_is_findable(&format!("{} --help", me.display())));
         assert!(!command_is_findable("/nowhere/at/all/serve --port 3000"));
     }
 

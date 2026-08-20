@@ -346,14 +346,28 @@ mod tests {
 
     #[test]
     fn system_paths_are_never_projects() {
-        assert!(is_system_path(Path::new("/")));
-        assert!(is_system_path(Path::new("/usr/local/bin")));
-        // The case that motivated the filter: a sandboxed app's container has
-        // a working directory and listens on a port, but is not a project.
+        // The prefixes differ by platform, so the examples have to as well —
+        // `/usr/local/bin` is not a system path on Windows and asserting that
+        // it is only proves the test was written somewhere else.
+        #[cfg(not(windows))]
+        {
+            assert!(is_system_path(Path::new("/")));
+            assert!(is_system_path(Path::new("/usr/local/bin")));
+            assert!(!is_system_path(Path::new("/Users/dev/projects/loom")));
+        }
+        #[cfg(windows)]
+        {
+            assert!(is_system_path(Path::new("C:\\Windows\\System32")));
+            assert!(is_system_path(Path::new("C:\\Program Files\\nodejs")));
+            assert!(!is_system_path(Path::new("C:\\Users\\dev\\projects\\loom")));
+        }
+
+        // The case that motivated the filter, and the one that is the same
+        // everywhere: a sandboxed app's container has a working directory and
+        // listens on a port, and is not a project.
         assert!(is_system_path(Path::new(
             "/Users/dev/Library/Containers/com.tencent.qq/Data"
         )));
-        assert!(!is_system_path(Path::new("/Users/dev/projects/loom")));
     }
 
     #[test]
