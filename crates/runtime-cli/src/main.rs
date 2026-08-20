@@ -266,6 +266,16 @@ enum ServiceCommand {
         /// Variable to drop, repeatable.
         #[arg(long = "unset-env")]
         unset_env: Vec<String>,
+        /// Services here that must be up first. Repeat to list several;
+        /// pass --no-depends-on to clear them.
+        #[arg(long = "depends-on")]
+        depends_on: Vec<String>,
+        /// Drop every dependency.
+        #[arg(long, conflicts_with = "depends_on")]
+        no_depends_on: bool,
+        /// Runs to completion instead of staying up.
+        #[arg(long = "one-shot")]
+        one_shot: Option<bool>,
     },
 
     /// Declare a service detection did not find.
@@ -469,6 +479,9 @@ async fn run(cli: Cli) -> Result<String> {
             on_conflict,
             env,
             unset_env,
+            depends_on,
+            no_depends_on,
+            one_shot,
         }) => {
             let patch = runtime_types::ServicePatch {
                 name: rename,
@@ -478,6 +491,17 @@ async fn run(cli: Cli) -> Result<String> {
                     .as_deref()
                     .map(parse_service_type)
                     .transpose()?,
+                // An empty list from the flag means "not mentioned"; clearing
+                // is asked for explicitly, so a set of dependencies cannot be
+                // lost by editing something else.
+                depends_on: if no_depends_on {
+                    Some(Vec::new())
+                } else if depends_on.is_empty() {
+                    None
+                } else {
+                    Some(depends_on)
+                },
+                one_shot,
                 // `Some(None)` clears it; `None` leaves it alone.
                 preferred_port: if no_port {
                     Some(None)

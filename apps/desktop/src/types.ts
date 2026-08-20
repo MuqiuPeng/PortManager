@@ -74,6 +74,10 @@ export interface ServiceView {
   preferred_port?: number;
   env?: Record<string, string>;
   auto_start: boolean;
+  /** Services here that must be up first. Absent when there are none. */
+  depends_on?: string[];
+  /** Runs to completion instead of staying up: a migration, a seed. */
+  one_shot?: boolean;
   status: ServiceStatus;
   instance?: RuntimeInstance;
   actual_port?: number;
@@ -115,6 +119,9 @@ export interface ServicePatch {
   env?: Record<string, string>;
   /** Variables to drop, since `env` merges. */
   remove_env?: string[];
+  /** Replaced whole, not merged. An empty list clears them. */
+  depends_on?: string[];
+  one_shot?: boolean;
 }
 
 /** A container compose defines for a checkout, running or not. */
@@ -282,4 +289,13 @@ export interface SupervisedView {
   url?: string;
   /** Set when restarting this would fail, with the reason. */
   restart_warning?: string;
+}
+
+/** A named sequence of steps in a checkout. */
+export interface Task {
+  id: string;
+  workspace_id: string;
+  name: string;
+  /** Service names, in order. Each brings up its own dependencies first. */
+  steps: string[];
 }

@@ -18,6 +18,7 @@ import type {
   ServiceView,
   StartOutcome,
   SupervisedView,
+  Task,
 } from "./types";
 
 /** The channel `lib.rs` re-emits daemon events on. */
@@ -45,6 +46,17 @@ export const api = {
 
   controlSupervised: (name: string, action: "start" | "stop" | "restart") =>
     invoke<SupervisedView>("control_supervised", { name, action }),
+
+  listTasks: (project: string) => invoke<Task[]>("list_tasks", { project }),
+
+  setTask: (project: string, name: string, steps: string[]) =>
+    invoke<Task[]>("set_task", { project, name, steps }),
+
+  removeTask: (project: string, name: string) =>
+    invoke<boolean>("remove_task", { project, name }),
+
+  runTask: (project: string, name: string) =>
+    invoke<string[]>("run_task", { project, name }),
 
   updateService: (service: string, patch: ServicePatch) =>
     invoke<ServiceView>("update_service", { service, patch }),

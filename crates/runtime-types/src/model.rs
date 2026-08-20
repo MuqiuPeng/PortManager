@@ -268,6 +268,13 @@ pub struct ServicePatch {
     pub auto_start: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict_policy: Option<ConflictPolicy>,
+    /// Replaced whole, not merged: a dependency list is an ordering, and
+    /// merging two orderings produces one nobody asked for. An empty list
+    /// clears them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub one_shot: Option<bool>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     /// Variables to drop.
@@ -318,6 +325,12 @@ impl ServicePatch {
         }
         if let Some(policy) = self.conflict_policy {
             service.conflict_policy = policy;
+        }
+        if let Some(depends_on) = self.depends_on {
+            service.depends_on = depends_on;
+        }
+        if let Some(one_shot) = self.one_shot {
+            service.one_shot = one_shot;
         }
         // Merged rather than replaced: setting one variable should not drop
         // the others.

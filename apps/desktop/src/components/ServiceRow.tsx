@@ -45,6 +45,10 @@ export function ServiceRow({
   // that owns this is a stop that sticks, where one issued here would be undone
   // the moment that supervisor noticed.
   const viaSupervisor = external ? service.supervisor_entry : undefined;
+  const dependencies = service.depends_on ?? [];
+  // A step that runs to completion is not a service that is down when it is
+  // not running, so it does not get a status dot arguing that it is.
+  const oneShot = service.one_shot === true;
 
   return (
     <div
@@ -56,12 +60,23 @@ export function ServiceRow({
         if (event.key === "Enter" || event.key === " ") onSelect();
       }}
     >
-      <span className={`dot status-${service.status}`} aria-hidden />
+      <span
+        className={oneShot ? "dot one-shot" : `dot status-${service.status}`}
+        aria-hidden
+      />
 
       <span className="service-body">
         <span className="service-name">{service.name}</span>
         <span className="service-meta">
-          {service.status}
+          {oneShot
+            ? // "Did it work?" is the only question a step like this raises,
+              // so the row answers that rather than reporting it as stopped.
+              service.instance === undefined
+                ? "runs to completion · not run yet"
+                : service.instance.exit_code === 0
+                  ? "ran successfully"
+                  : `last run failed (exit ${service.instance.exit_code ?? "?"})`
+            : service.status}
           {/* Who started it is the answer to "why is this running?", so it sits
               next to the status rather than hidden in a detail pane. */}
           {external
@@ -76,6 +91,11 @@ export function ServiceRow({
               ? ` · started by ${OWNER_LABELS[owner]}`
               : ""}
         </span>
+        {dependencies.length > 0 && (
+          /* What it waits for, where somebody looking at a slow start will
+             look first. */
+          <span className="service-deps">after {dependencies.join(", ")}</span>
+        )}
       </span>
 
       <span className="service-port">
@@ -92,7 +112,18 @@ export function ServiceRow({
             Open
           </button>
         )}
-        {viaSupervisor ? (
+        {oneShot ? (
+          /* No Stop: there is nothing to stop, and a migration that finished
+             is not a service that is down. */
+          <button
+            className="ghost primary"
+            onClick={onStart}
+            disabled={busy}
+            title="Run it once, now"
+          >
+            Run
+          </button>
+        ) : viaSupervisor ? (
           /* Not the runtime's process, but the supervisor holding it takes
              orders — so these do what the buttons say. */
           <>

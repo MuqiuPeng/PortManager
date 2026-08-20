@@ -41,6 +41,8 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
   const [port, setPort] = useState(service.preferred_port?.toString() ?? "");
   const [type, setType] = useState<ServiceType>(service.service_type);
   const [policy, setPolicy] = useState("allocate-next");
+  const [dependsOn, setDependsOn] = useState((service.depends_on ?? []).join(" "));
+  const [oneShot, setOneShot] = useState(service.one_shot === true);
   const [env, setEnv] = useState<EnvRow[]>(() =>
     Object.entries(service.env ?? {}).map(([key, value]) => ({ key, value })),
   );
@@ -68,6 +70,10 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
         remove_env: originalKeys.filter(
           (key) => !kept.some((row) => row.key.trim() === key),
         ),
+        // Replaced whole rather than merged: a dependency list is an ordering,
+        // and an empty field means "none", not "leave them".
+        depends_on: dependsOn.split(/\s+/).filter(Boolean),
+        one_shot: oneShot,
       };
       if (name !== service.name) patch.name = name;
 
@@ -162,6 +168,32 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="field wide">
+            <span>Starts after</span>
+            <input
+              type="text"
+              value={dependsOn}
+              onChange={(event) => setDependsOn(event.target.value)}
+              placeholder="db migrate"
+              spellCheck={false}
+            />
+          </label>
+          <p className="hint">
+            Service names in this checkout, separated by spaces. Each is brought
+            up and given time to report healthy first. One already running is
+            left alone rather than restarted.
+          </p>
+
+          <label className="field wide">
+            <span>Runs to completion</span>
+            <input
+              type="checkbox"
+              checked={oneShot}
+              onChange={(event) => setOneShot(event.target.checked)}
+            />
+            <span className="unit">a migration or a seed, not a server</span>
           </label>
 
           <div className="field wide env-field">

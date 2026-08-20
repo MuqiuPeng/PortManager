@@ -12,8 +12,16 @@ import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
+import { TaskPanel } from "./components/TaskPanel";
 import { TakeControlSheet } from "./components/TakeControlSheet";
-import type { Discovery, LogLine, PortOwner, ProjectView, ServiceView } from "./types";
+import type {
+  Discovery,
+  LogLine,
+  PortOwner,
+  ProjectView,
+  ServiceView,
+  Task,
+} from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -34,7 +42,7 @@ export default function App() {
   const [editing, setEditing] = useState<ServiceView | null>(null);
   const [loaded, setLoaded] = useState(false);
   /** Which in-app prompt is open, if any. */
-  const [prompt, setPrompt] = useState<"add-service" | "scan-folder" | null>(null);
+  const [prompt, setPrompt] = useState<"add-service" | "scan-folder" | "add-task" | null>(null);
   const [promptProject, setPromptProject] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,11 +170,43 @@ export default function App() {
     return null;
   }, [project, selectedService]);
 
+  /** Tasks for the selected project, reloaded whenever it changes. */
+  const [tasks, setTasks] = useState<Task[]>([]);
+
   /** The port a Take control click is asking about, with its supervisor. */
   const [takingOver, setTakingOver] = useState<{
     port: number;
     supervisor?: string;
   } | null>(null);
+
+  // Tasks belong to a project, so they are fetched with one rather than kept
+  // in the project view: a list of names is cheap, and refetching it on every
+  // status poll would not be.
+  useEffect(() => {
+    if (!project) {
+      setTasks([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const found = await api.listTasks(project.id);
+        if (!cancelled) setTasks(found);
+      } catch {
+        // A project whose daemon cannot answer still renders; the services
+        // above will be showing the same failure.
+        if (!cancelled) setTasks([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, busy]);
+
+  async function reloadTasks() {
+    if (!project) return;
+    setTasks(await api.listTasks(project.id));
+  }
 
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
@@ -216,6 +256,25 @@ export default function App() {
           onConfirm={([name, command]) => {
             setPrompt(null);
             void handleAddService(promptProject, name, command);
+          }}
+        />
+      )}
+
+      {prompt === "add-task" && project && (
+        <PromptSheet
+          title={`New task in ${project.name}`}
+          fields={[
+            { label: "Name", placeholder: "dev" },
+            { label: "Steps", placeholder: "migrate api web", mono: true },
+          ]}
+          hint="Service names, in the order they should run. Each brings up its own dependencies first, so a step already covered by an earlier one does nothing."
+          onCancel={() => setPrompt(null)}
+          onConfirm={([name, steps]) => {
+            setPrompt(null);
+            void act(async () => {
+              await api.setTask(project.id, name, steps.split(/\s+/).filter(Boolean));
+              await reloadTasks();
+            });
           }}
         />
       )}
@@ -441,6 +500,22 @@ export default function App() {
                     </section>
                   ))}
                 </div>
+
+                <TaskPanel
+                  tasks={tasks}
+                  busy={busy}
+                  onAdd={() => setPrompt("add-task")}
+                  onRun={(name) =>
+                    project && act(() => api.runTask(project.id, name))
+                  }
+                  onRemove={(name) =>
+                    project &&
+                    act(async () => {
+                      await api.removeTask(project.id, name);
+                      await reloadTasks();
+                    })
+                  }
+                />
 
                 <LogPanel
                   serviceName={selectedServiceView?.name ?? null}

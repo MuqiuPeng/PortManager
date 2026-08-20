@@ -9,7 +9,7 @@ use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     AdoptOutcome, DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
-    ServiceView, StartOutcome, SupervisedView, Workspace,
+    ServiceView, StartOutcome, SupervisedView, Task, Workspace,
 };
 use tauri::State;
 
@@ -223,6 +223,56 @@ pub async fn control_supervised(
 ) -> CmdResult<SupervisedView> {
     match call(&state, Request::ControlSupervised { name, action }).await? {
         ResponseBody::Supervised(view) => Ok(view),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+pub async fn list_tasks(
+    state: State<'_, DaemonHandle>,
+    project: String,
+) -> CmdResult<Vec<Task>> {
+    match call(&state, Request::ListTasks { selector: project }).await? {
+        ResponseBody::Tasks { items } => Ok(items),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+pub async fn set_task(
+    state: State<'_, DaemonHandle>,
+    project: String,
+    name: String,
+    steps: Vec<String>,
+) -> CmdResult<Vec<Task>> {
+    let request = Request::SetTask { selector: project, name, steps };
+    match call(&state, request).await? {
+        ResponseBody::Tasks { items } => Ok(items),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+pub async fn remove_task(
+    state: State<'_, DaemonHandle>,
+    project: String,
+    name: String,
+) -> CmdResult<bool> {
+    match call(&state, Request::RemoveTask { selector: project, name }).await? {
+        ResponseBody::Done { ok } => Ok(ok),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Bring up every step of a task in order.
+#[tauri::command]
+pub async fn run_task(
+    state: State<'_, DaemonHandle>,
+    project: String,
+    name: String,
+) -> CmdResult<Vec<String>> {
+    match call(&state, Request::RunTask { selector: project, name }).await? {
+        ResponseBody::TaskRun { steps } => Ok(steps),
         other => Err(unexpected(&other)),
     }
 }

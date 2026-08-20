@@ -1028,3 +1028,60 @@ button {
   line-height: 1.35;
   color: var(--warning, #d08b3c);
 }
+
+/* What a service waits for, under its status. */
+.service-deps {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* A step that runs to completion has no steady state to show, so its marker
+   is a shape rather than a colour arguing it is up or down. */
+.dot.one-shot {
+  background: transparent;
+  border: 1px solid var(--muted);
+  border-radius: 2px;
+}
+
+.tasks {
+  border-top: 1px solid var(--border);
+  padding: 10px 0 4px;
+}
+
+.tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 6px;
+}
+
+.tasks-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+}
+
+.task-name {
+  font-weight: 500;
+}
+
+.task-steps {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

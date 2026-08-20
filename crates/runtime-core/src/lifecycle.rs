@@ -78,6 +78,35 @@ impl Runtime {
     ) -> Result<StartOutcome> {
         let service = self.require_service(service_id)?;
 
+        // Asking to "start" a step that runs to completion means running it.
+        // Falling through to the ordinary path would spawn it, watch it exit
+        // the moment it succeeded, and record that as a failure.
+        if service.one_shot {
+            for name in &service.depends_on {
+                let declared = self.store().list_services(&service.workspace_id)?;
+                let dependency = declared
+                    .iter()
+                    .find(|candidate| &candidate.name == name)
+                    .ok_or_else(|| {
+                        RuntimeError::invalid(format!(
+                            "'{}' depends on '{name}', which this checkout does not declare",
+                            service.name
+                        ))
+                    })?;
+                if !self.service_view(dependency)?.status.is_live() {
+                    Box::pin(self.start_service(&dependency.id, StartOptions::default())).await?;
+                    self.wait_until_healthy(&dependency.id, DEPENDENCY_TIMEOUT).await?;
+                }
+            }
+
+            self.run_to_completion(&service.id).await?;
+            return Ok(StartOutcome {
+                service: self.service_view(&service)?,
+                reused: false,
+                reservation: None,
+            });
+        }
+
         if !service.depends_on.is_empty() {
             let declared = self.store().list_services(&service.workspace_id)?;
             let owners = self.port_owners()?;
@@ -258,8 +287,11 @@ impl Runtime {
     /// between the two would make one of them permanently wrong, which is why
     /// `one_shot` exists rather than a shorter health check.
     ///
-    /// Nothing is recorded as an instance. There is no process to stop
-    /// afterwards, and a migration that finished is not a service that is down.
+    /// The run is recorded, though there is nothing left to stop afterwards.
+    /// "Did the migration work?" is the question a step like this exists to
+    /// answer, and without a record the answer is whatever the last attempt
+    /// left behind — which is how a run that succeeded goes on reporting the
+    /// failure before it.
     pub async fn run_to_completion(&self, service_id: &ServiceId) -> Result<()> {
         let service = self.require_service(service_id)?;
         let workspace = self.require_workspace(&service.workspace_id)?;
@@ -298,9 +330,17 @@ impl Runtime {
             }
         };
 
+        let started_at = Utc::now();
         if output.status.success() {
+            self.record_run(&service, started_at, Some(0), ServiceStatus::Stopped)?;
             return Ok(());
         }
+        self.record_run(
+            &service,
+            started_at,
+            output.status.code(),
+            ServiceStatus::Failed,
+        )?;
 
         // The last thing it printed is normally the reason, and a step that
         // failed silently in the middle of a start sequence is the worst case
@@ -324,6 +364,38 @@ impl Runtime {
             exit_code: output.status.code(),
             detail,
         })
+    }
+
+    /// Note that a one-shot ran, and how it went.
+    fn record_run(
+        &self,
+        service: &Service,
+        started_at: chrono::DateTime<Utc>,
+        exit_code: Option<i32>,
+        status: ServiceStatus,
+    ) -> Result<()> {
+        let instance = RuntimeInstance {
+            id: InstanceId::new(),
+            service_id: service.id.clone(),
+            // No live process to identify: it has already exited, and a pid
+            // that has been reused would make this look alive.
+            pid: 0,
+            process_start_time: 0,
+            status,
+            port: None,
+            started_at,
+            stopped_at: Some(Utc::now()),
+            exit_code,
+            started_by: StartedBy::Unknown,
+            owner_session: None,
+        };
+        self.store().insert_instance(&instance)?;
+        self.events().publish(RuntimeEvent::ServiceStatusChanged {
+            service_id: service.id.clone(),
+            status,
+            port: None,
+        });
+        Ok(())
     }
 
     async fn spawn_service(

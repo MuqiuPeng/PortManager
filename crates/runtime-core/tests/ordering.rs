@@ -187,3 +187,44 @@ async fn a_dependency_already_running_is_not_restarted() {
     let _ = runtime.stop_service(&api.id, std::time::Duration::from_secs(5)).await;
     let _ = runtime.stop_service(&db.id, std::time::Duration::from_secs(5)).await;
 }
+
+#[tokio::test]
+async fn starting_a_one_shot_directly_runs_it_rather_than_supervising_it() {
+    // The Run button on a migration goes through the same call as Start on a
+    // server. Without this, the ordinary path spawns it, watches it exit the
+    // moment it succeeded, and records that success as a failure.
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let marker = dir.path().join("seeded");
+    let seed = declare(
+        &runtime,
+        &workspace.id,
+        dir.path(),
+        "seed",
+        &format!("touch {}", marker.display()),
+        &[],
+        true,
+    );
+
+    runtime
+        .start_service(&seed.id, Default::default())
+        .await
+        .expect("a one-shot that succeeds must not be reported as failed");
+
+    assert!(marker.exists());
+    let view = runtime
+        .service_view(&runtime.require_service(&seed.id).unwrap())
+        .unwrap();
+    assert_ne!(
+        view.status,
+        runtime_types::ServiceStatus::Failed,
+        "a step that finished is not a failure"
+    );
+}
