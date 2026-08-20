@@ -242,13 +242,17 @@ async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, s
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let child = Command::new("python3")
-        .args(["-m", "http.server", &port.to_string()])
+    // Kept, rather than sent to /dev/null: when this does not come up the only
+    // thing that can say why is the process itself, and throwing that away is
+    // how "the listener never came up" became the whole of what was known.
+    let log = dir.path().join("listener.log");
+    let mut child = Command::new("python3")
+        .args(["-m", "http.server", &port.to_string(), "--bind", "127.0.0.1"])
         .current_dir(dir.path())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&log).unwrap())
         .spawn()
-        .expect("python3 must be installed");
+        .expect("python3 must be installed to run these tests");
 
     // Waited for rather than slept through. A fixed pause is a guess about how
     // fast the machine is, and it was wrong the first time this ran anywhere
@@ -259,9 +263,16 @@ async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, s
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
             break;
         }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!(
+                "the listener exited with {status} before binding {port}: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
         assert!(
             std::time::Instant::now() < deadline,
-            "the listener never came up on {port}"
+            "the listener never bound {port} in time: {}",
+            std::fs::read_to_string(&log).unwrap_or_default()
         );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
