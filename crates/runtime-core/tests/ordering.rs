@@ -249,7 +249,29 @@ async fn adopted(dir: &TempDir, runtime: &Runtime) -> (runtime_types::Service, s
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("python3 must be installed");
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    // Waited for rather than slept through. A fixed pause is a guess about how
+    // fast the machine is, and it was wrong the first time this ran anywhere
+    // but the laptop it was written on: the listener was not up, so nothing
+    // was adopted, so the test saw exactly the behaviour it exists to forbid.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the listener never came up on {port}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // And then past the port table's cache, which is what the fixed pause this
+    // replaced was accidentally covering: the runtime reuses one scan for a
+    // moment, so a port that appears inside that window is not visible yet.
+    // Deliberate here — what these tests ask is what the runtime does about
+    // something it can see, not how quickly it notices.
+    tokio::time::sleep(std::time::Duration::from_millis(1_700)).await;
 
     let mut service = declare(runtime, &workspace.id, dir.path(), "web", "sleep 30", &[], false);
     service.preferred_port = Some(port);
