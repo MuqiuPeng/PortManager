@@ -26,8 +26,31 @@ pub trait SpawnProvider: Send + Sync {
         let (program, prefix) = self.shell();
         let mut command = Command::new(program);
         command.args(prefix);
-        command.arg(command_line);
+        append_command_line(&mut command, command_line);
         self.prepare(&mut command)?;
         Ok(command)
     }
+}
+
+/// Hand a whole command line to the shell without re-quoting it.
+///
+/// On Windows the two halves disagree about quoting. `Command::arg` escapes by
+/// the rules the C runtime uses to split a command line, and `cmd.exe` does not
+/// use those rules — so a command containing quotes arrives with them doubled or
+/// stripped, and the shell runs something that is not what was written.
+/// `python -c "import x"` reaches Python as a string literal rather than a
+/// statement, which fails in a way that points at the command rather than at
+/// the quoting.
+///
+/// `raw_arg` passes the text through untouched, which is what a shell that does
+/// its own parsing needs.
+#[cfg(windows)]
+fn append_command_line(command: &mut Command, command_line: &str) {
+    use std::os::windows::process::CommandExt;
+    command.raw_arg(command_line);
+}
+
+#[cfg(not(windows))]
+fn append_command_line(command: &mut Command, command_line: &str) {
+    command.arg(command_line);
 }
