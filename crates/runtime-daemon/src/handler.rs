@@ -148,11 +148,18 @@ impl Dispatcher {
                     Some(cwd) => workspace.path.join(cwd),
                     None => workspace.path.clone(),
                 };
+                let service_type = config.service_type.unwrap_or_else(|| {
+                    // Inferred rather than defaulted: `Custom` is the right
+                    // answer for something unrecognised, not for something
+                    // nobody was asked about — and the type now decides how
+                    // the service is checked.
+                    runtime_core::detect::guess_type(&name, &config.command)
+                });
                 let service = Service {
                     id: runtime_types::ServiceId::new(),
                     workspace_id: workspace.id.clone(),
                     name,
-                    service_type: config.service_type.unwrap_or_default(),
+                    service_type,
                     command: config.command,
                     cwd,
                     env: config.env,

@@ -1334,11 +1334,16 @@ impl Runtime {
         }
 
         let name = self.unused_service_name(&workspace_id, &cwd, &workspace.path)?;
+        let service_type = crate::detect::guess_type(&name, &command);
         let service = Service {
             id: ServiceId::new(),
             workspace_id,
             name,
-            service_type: runtime_types::ServiceType::Web,
+            // Everything here is on a port, but not everything on a port
+            // speaks HTTP, and the type decides how it gets checked. A
+            // Postgres adopted as `Web` would be asked for a web page and
+            // reported broken for declining.
+            service_type,
             command,
             cwd,
             env,
@@ -1490,11 +1495,12 @@ impl Runtime {
         }
 
         let name = self.unused_service_name(&workspace_id, &cwd, &workspace.path)?;
+        let service_type = crate::detect::guess_type(&name, &entry.command);
         let service = Service {
             id: ServiceId::new(),
             workspace_id,
             name,
-            service_type: runtime_types::ServiceType::Web,
+            service_type,
             command: entry.command.clone(),
             cwd,
             // A recorded launch carries the command but not the environment the

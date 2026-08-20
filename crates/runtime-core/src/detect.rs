@@ -574,7 +574,15 @@ fn detect_compose(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<
     });
 }
 
-fn guess_type(name: &str, command: &str) -> ServiceType {
+/// What kind of thing a service is, from its name and command.
+///
+/// A guess, and a correctable one — but no longer only cosmetic. The type
+/// decides how the service is checked when it does not say: anything claiming
+/// to serve HTTP is asked to answer, and everything else is only asked to hold
+/// its port. So a service declared by hand without a type used to fall to
+/// `Custom` and quietly get the weaker check, which is the opposite of what
+/// somebody typing `--command "npm run dev"` means.
+pub fn guess_type(name: &str, command: &str) -> ServiceType {
     let haystack = format!("{name} {command}").to_ascii_lowercase();
     if haystack.contains("worker") || haystack.contains("queue") {
         ServiceType::Worker
@@ -595,6 +603,40 @@ fn guess_type(name: &str, command: &str) -> ServiceType {
 
 #[cfg(test)]
 mod tests {
+    /// The type is no longer only cosmetic: it decides whether a service is
+    /// asked to answer or only to hold its port. These are the shapes that
+    /// reach `guess_type` from the paths that used to hardcode or default it.
+    #[test]
+    fn a_dev_server_is_recognised_as_serving_http() {
+        for (name, command) in [
+            ("dashboard", "npm run dev"),
+            ("web", "pnpm dev"),
+            ("frontend", "next dev --port 3001"),
+        ] {
+            assert!(
+                matches!(guess_type(name, command), ServiceType::Web | ServiceType::Api),
+                "{name}: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_database_is_not_asked_for_a_web_page() {
+        // Adopting one as Web would report it broken for declining to serve
+        // HTTP, and a check wrong in that direction teaches the reader to
+        // skip it.
+        for (name, command) in [
+            ("db", "postgres -D /var/lib/postgresql"),
+            ("cache", "redis-server"),
+            ("worker", "pnpm run queue:worker"),
+        ] {
+            assert!(
+                !matches!(guess_type(name, command), ServiceType::Web | ServiceType::Api),
+                "{name}: {command}"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
