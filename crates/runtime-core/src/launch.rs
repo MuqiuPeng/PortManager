@@ -268,6 +268,9 @@ mod tests {
         ));
     }
 
+    // Symlinks need a privilege on Windows that a test process does not have,
+    // and the mismatch this guards against is a Unix one to begin with.
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_directory_still_matches() {
         // macOS reports `/tmp/x` as `/private/tmp/x`, and text comparison of

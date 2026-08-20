@@ -1974,6 +1974,19 @@ fn restart_warning(process: &crate::pm2::Pm2Process) -> Option<String> {
 /// Deliberately silent when it cannot tell. Anything with shell syntax in it is
 /// run through `sh -c` and may resolve in ways this cannot follow, and a
 /// warning that fires on working services is worse than no warning.
+fn is_first_with_an_extension(found: &str, first: &str) -> bool {
+    // On Windows a command is written without its extension and stored with
+    // one: `node` on the command line is `node.exe` on disk. Comparing names
+    // exactly would report every working command as missing.
+    if !cfg!(windows) {
+        return false;
+    }
+    let Some(stem) = found.rsplit_once('.').map(|(stem, _)| stem) else {
+        return false;
+    };
+    stem.eq_ignore_ascii_case(first)
+}
+
 fn command_is_findable(command: &str) -> bool {
     /// Not on `PATH`, and perfectly runnable.
     const BUILTINS: &[&str] = &[
@@ -2008,7 +2021,7 @@ fn command_is_findable(command: &str) -> bool {
     if BUILTINS.contains(&first) {
         return true;
     }
-    if first.contains('/') {
+    if first.contains('/') || first.contains('\\') {
         return std::path::Path::new(first).is_file();
     }
     looks_runnable(trimmed)
@@ -2026,7 +2039,7 @@ fn looks_runnable(command: &str) -> bool {
         return false;
     };
     // An absolute path, or something a shell could find.
-    if first.contains('/') {
+    if first.contains('/') || first.contains('\\') {
         return true;
     }
     // A bare word is only a command if it is on PATH. A title like
@@ -2044,9 +2057,11 @@ fn looks_runnable(command: &str) -> bool {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return false;
         };
-        entries
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy() == first)
+        entries.flatten().any(|entry| {
+            let found = entry.file_name();
+            let found = found.to_string_lossy();
+            found == first || is_first_with_an_extension(&found, first)
+        })
     })
 }
 

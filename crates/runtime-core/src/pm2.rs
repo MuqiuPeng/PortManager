@@ -195,63 +195,53 @@ impl Pm2 {
     }
 }
 
+/// Where PM2 might be, given that a daemon launched by the app does not have a
+/// shell's `PATH`.
+///
+/// Searched rather than shelled out to. `which` is not a program on Windows,
+/// and running one to find another is a dependency on the very environment
+/// this is compensating for.
 fn find_binary() -> Option<PathBuf> {
-    // The usual install is global npm, which is not on a daemon's PATH when it
-    // was launched by the app rather than a shell.
-    let candidates = [
-        "pm2",
-        "/opt/homebrew/bin/pm2",
-        "/usr/local/bin/pm2",
-    ];
-    for candidate in candidates {
-        if let Ok(path) = which(candidate) {
+    for name in EXECUTABLE_NAMES {
+        if let Some(path) = on_path(name) {
             return Some(path);
         }
     }
-    // Node version managers put it under a versioned prefix.
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let versions = home.join(".nvm/versions/node");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(versions)
+    // A node version manager puts it under a versioned prefix that is on a
+    // shell's PATH and nothing else's. Newest wins, matching what a shell
+    // would have picked.
+    let home = home_dir()?;
+    let mut found: Vec<PathBuf> = std::fs::read_dir(home.join(".nvm/versions/node"))
         .ok()?
         .flatten()
-        .map(|entry| entry.path().join("bin/pm2"))
+        .flat_map(|entry| {
+            EXECUTABLE_NAMES
+                .iter()
+                .map(move |name| entry.path().join("bin").join(name))
+        })
         .filter(|path| path.is_file())
         .collect();
     found.sort();
     found.pop()
 }
 
-fn which(candidate: &str) -> std::io::Result<PathBuf> {
-    let path = PathBuf::from(candidate);
-    if path.is_absolute() {
-        return if path.is_file() {
-            Ok(path)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "not found",
-            ))
-        };
-    }
-    let output = Command::new("/usr/bin/env")
-        .args(["which", candidate])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()?;
-    if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "not found",
-        ));
-    }
-    let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if found.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "not found",
-        ));
-    }
-    Ok(PathBuf::from(found))
+/// What the executable is called. Windows needs the extension.
+#[cfg(windows)]
+const EXECUTABLE_NAMES: &[&str] = &["pm2.cmd", "pm2.exe", "pm2"];
+#[cfg(not(windows))]
+const EXECUTABLE_NAMES: &[&str] = &["pm2"];
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Read `pm2 jlist`.
@@ -337,13 +327,35 @@ pub fn parse(raw: &str) -> Vec<Pm2Process> {
         .collect()
 }
 
+/// How to actually execute what `find_binary` turned up.
+///
+/// A global npm install on Windows is a `.cmd` shim — a batch script rather
+/// than an image, which the process API declines to execute. `cmd /C` is what
+/// runs one, and doing it here keeps every caller from having to know.
+fn launcher(binary: &PathBuf) -> Command {
+    let is_script = binary
+        .extension()
+        .map(|extension| {
+            let extension = extension.to_string_lossy().to_ascii_lowercase();
+            extension == "cmd" || extension == "bat"
+        })
+        .unwrap_or(false);
+
+    if cfg!(windows) && is_script {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(binary);
+        return command;
+    }
+    Command::new(binary)
+}
+
 /// Run a pm2 command with a deadline, draining output as it goes.
 ///
 /// Same shape as the Docker runner and for the same reason: waiting for exit
 /// without reading first deadlocks once the output passes the pipe buffer, and
 /// the symptom is silence rather than a hang.
 fn run(binary: &PathBuf, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(binary)
+    let mut child = launcher(binary)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
