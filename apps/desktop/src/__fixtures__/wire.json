@@ -1,0 +1,108 @@
+{
+  "container_minimal": {
+    "image": "postgres",
+    "name": "db",
+    "status": "exited"
+  },
+  "external_minimal": {
+    "pid": 1,
+    "port": 5555
+  },
+  "finding": {
+    "certain": true,
+    "message": "depends on 'db', which this checkout does not declare",
+    "subject": "Loom/api"
+  },
+  "service_full": {
+    "actual_port": 3000,
+    "auto_start": false,
+    "command": "pnpm dev",
+    "conflict_policy": "reuse",
+    "cwd": "/repo",
+    "depends_on": [
+      "db"
+    ],
+    "env": {},
+    "id": "svc",
+    "instance": {
+      "id": "inst",
+      "pid": 42,
+      "port": 3000,
+      "process_start_time": 0,
+      "service_id": "svc",
+      "started_at": "2026-08-20T16:05:13.405234Z",
+      "started_by": "claude-code",
+      "status": "healthy"
+    },
+    "managed": false,
+    "name": "web",
+    "one_shot": false,
+    "preferred_port": 3000,
+    "service_type": "web",
+    "status": "healthy",
+    "supervisor": "pm2",
+    "supervisor_entry": "flip7",
+    "url": "http://localhost:3000",
+    "workspace_id": "ws"
+  },
+  "service_minimal": {
+    "auto_start": false,
+    "command": "pnpm dev",
+    "conflict_policy": "reuse",
+    "cwd": "/repo",
+    "env": {},
+    "id": "svc",
+    "managed": false,
+    "name": "web",
+    "one_shot": false,
+    "preferred_port": 3000,
+    "service_type": "web",
+    "status": "stopped",
+    "workspace_id": "ws"
+  },
+  "service_one_shot_ran": {
+    "auto_start": false,
+    "command": "pnpm dev",
+    "conflict_policy": "reuse",
+    "cwd": "/repo",
+    "env": {},
+    "id": "svc",
+    "instance": {
+      "exit_code": 0,
+      "id": "inst",
+      "pid": 0,
+      "process_start_time": 0,
+      "service_id": "svc",
+      "started_at": "2026-08-20T16:05:13.405286Z",
+      "started_by": "unknown",
+      "status": "stopped",
+      "stopped_at": "2026-08-20T16:05:13.405286Z"
+    },
+    "managed": false,
+    "name": "web",
+    "one_shot": true,
+    "service_type": "web",
+    "status": "stopped",
+    "workspace_id": "ws"
+  },
+  "supervised_full": {
+    "command": "node server.mjs",
+    "name": "flip7",
+    "pid": 29106,
+    "ports": [
+      3007
+    ],
+    "restart_warning": "holds a development build",
+    "restarts": 22,
+    "status": "online",
+    "supervisor": "pm2",
+    "url": "http://localhost:3007"
+  },
+  "supervised_minimal": {
+    "command": "cloudflared tunnel run",
+    "name": "loom-tunnel",
+    "restarts": 0,
+    "status": "stopped",
+    "supervisor": "pm2"
+  }
+}

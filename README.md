@@ -328,12 +328,19 @@ packages/runtime-mcp/  MCP server for coding agents
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets
-pnpm --dir apps/desktop build          # type-check and bundle the frontend
+pnpm --dir apps/desktop build          # type-check, test and bundle the frontend
 pnpm --dir packages/runtime-mcp test   # MCP server
 # type-check the whole stack for Windows, from anywhere
 cargo check --workspace --exclude runtime-desktop --all-targets \
   --no-default-features --target x86_64-pc-windows-msvc
 ```
+
+The frontend tests render every row against fixtures written by the Rust types
+themselves — including the shape where every optional field is absent, which is
+what `skip_serializing_if` produces and what once took the window down: a
+component read `.length` off a field the daemon had omitted, React unmounted the
+tree, and the result was a blank window with nothing in the console. Regenerate
+the fixtures with `pnpm --dir apps/desktop fixtures` after changing a view type.
 
 `--no-default-features` turns off `bundled-sqlite`, which compiles SQLite from
 source and needs a C toolchain for the target. Everything else still type-checks,

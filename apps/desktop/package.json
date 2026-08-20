@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vitest run && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
-    "build:bundle": "pnpm prepare-sidecar && pnpm build"
+    "build:bundle": "pnpm prepare-sidecar && pnpm build",
+    "test": "vitest run",
+    "fixtures": "cargo run -q -p runtime-types --example shapes > src/__fixtures__/wire.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,6 +25,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^4.1.11"
   }
 }
