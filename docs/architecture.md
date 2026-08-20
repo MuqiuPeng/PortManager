@@ -248,6 +248,16 @@ port table shows three of its ports live.
   Listed separately rather than pinned to whichever service looks closest,
   because that would be a guess, and a service shown as running when something
   else holds its port is worse than an honest gap.
+* **Supervised** — something else starts and restarts it: PM2, systemd. Not a
+  fourth kind of ownership so much as an answer to "why can I not stop this?",
+  and one the runtime can act on — see [Other supervisors](#other-supervisors).
+
+Every operation has to read all of these, not just the runtime's own instance
+record. That is one bug, found four times: `stop` reported "not running" for a
+service the view showed serving; `health` said the same; `start` launched a
+second copy beside the one already up; `restart` skipped the stop and did the
+same. On a machine where most services were started elsewhere, an operation
+that consults only the instance table is wrong about most of the machine.
 
 Which is why services are editable. Detection guesses a framework's default
 port, and correcting it is usually all that stands between "stopped, plus an
@@ -269,6 +279,124 @@ most one is, and nothing in the process says which. Reporting neither leaves the
 port visible as unexplained, which is true. In practice most already-running services land in the third bucket,
 because an inferred default port (Next.js 3000) rarely matches what is actually
 running (3007) — which is the honest answer, not a shortcoming to paper over.
+
+## Other supervisors
+
+PM2, systemd and launchd start services too, and a runtime that only reports
+them is missing the useful half. The split is the one containers already get:
+**the supervisor owns what the service is and whether it comes back after a
+reboot; this owns whether it is running right now.** So `start`, `stop` and
+`restart` are wrapped — named, reversible operations the supervisor offers
+itself, which leave its registry untouched — and `delete` is not. Removing an
+entry from PM2 is usually also what stops it starting at boot, and that is a
+decision about the machine rather than about this registry.
+
+Detection walks the ancestor chain rather than reading the command, since a dev
+server started by PM2 looks exactly like one started from a terminal; the
+difference is above it in the tree. It needs each ancestor's own argv, which the
+bulk process listing does not carry on macOS — and PM2 renames its process, so
+in that listing it is just another `node`. The chain above one port is a handful
+of processes, so they are read individually.
+
+Knowing the supervisor turns two answers actionable. A service row can offer a
+Stop that sticks, by routing it through whoever is holding the process. And a
+restart that would fail can be predicted rather than discovered: an entry
+running in production mode whose `.next` holds a development build keeps serving
+until something restarts it, and then cannot start at all. Both facts are
+already known; saying them together is the whole feature.
+
+## Recorded launches
+
+A running process gives up its pid, its port and its directory. The one thing it
+cannot be asked for is the command that would start it again — which is exactly
+what a runtime needs to be useful, and exactly what inference gets wrong. A
+project whose `dev` and `start` scripts write to the same build directory is
+left unable to boot by adopting it under the wrong one.
+
+So the runtime asks to be told. A Claude Code `PreToolUse` hook records the
+command before it runs and returns nothing, which Claude reads as "proceed
+unchanged". Deliberately a recorder and not a rewriter:
+
+* The command shown for approval stays the command that runs, so allow-lists
+  keep matching and a transcript still says what happened.
+* The daemon executes only registered service definitions. A token indirection
+  that let the hook enqueue arbitrary commands would make it a general-purpose
+  execution service for anything that can reach the socket.
+* Every failure path exits 0 in silence. A runtime that is down must not be able
+  to wedge a shell command.
+
+Nothing is claimed on the strength of the recording alone. A note is matched
+only to a port that appeared after it, from a directory beneath the one it was
+announced in; everything else expires unclaimed, which is the right outcome for
+the `git status` calls that make up most of what gets recorded. Paths are
+canonicalised on both sides — a shell in `/tmp/x` is reported by the process
+table as `/private/tmp/x`, and comparing them as text quietly matches nothing.
+
+What survives that test is evidence rather than a guess, so its children are
+attributed to it too.
+
+### The environment is part of how a service runs
+
+Reading the command off the process is necessary and was not sufficient. `node
+server.mjs` is a project's development server or its production one depending on
+`NODE_ENV` alone, and they overwrite each other's build output. Adopting
+captures the environment as well — filtered to the dozen variables that select a
+*mode* (`NODE_ENV`, `RAILS_ENV`, `DJANGO_SETTINGS_MODULE`, …). The rest of an
+environment is credentials, and a registry that copies it wholesale has written
+them to disk. For a supervised service the values come from the supervisor,
+which also has them for an entry that is currently stopped.
+
+## Ordering
+
+Dependencies are named services in the same checkout, resolved into a plan
+before anything starts. A cycle is reported with the cycle in it; a missing
+dependency names what is missing.
+
+A dependency already running is left exactly as it is. Restarting it would take
+a working service down to reach the state it was already in, and where something
+else supervises it, would lose a race for the port as well.
+
+A **one-shot** step runs to completion instead of staying up, and it is not a
+service that happens to exit quickly — the two have opposite tests for success.
+A server that exits has failed; a migration that keeps running has hung. They
+cannot share one definition of "started", which is why `one_shot` is a property
+of the service rather than a shorter health check. A failed one-shot stops what
+would have followed it: starting an API against a database whose migration
+failed is worse than not starting it.
+
+Its run is recorded even though there is nothing left to stop. "Did the
+migration work?" is the only question this kind of step raises, and without a
+record the answer is whatever the last attempt left behind — which is how a run
+that succeeded goes on reporting the failure before it.
+
+A **task** is a named sequence over both. Dependencies say what one service
+needs; a task says what *you* want up, which is often not one service's chain.
+Each step brings up its own dependencies, so a step already covered by an
+earlier one does nothing.
+
+## Health
+
+The default depends on what the service says it is:
+
+| Declared as | Checked by |
+| --- | --- |
+| Web, API | An HTTP `GET /`, any response |
+| Anything else with a port | A TCP connect |
+| No port | The process is alive |
+
+A TCP connect proves something holds the port, which is exactly what a wedged
+dev server does — one on this machine accepted connections, answered none of
+them, and was reported healthy for an unknown length of time. Anything declared
+as serving HTTP is asked to answer.
+
+*Any* response counts. Real services reply to a bare `GET /` with 302, 307 and
+404 as often as with 200, and none of that means anything is wrong; the question
+is whether it is alive, not whether it agrees about the path. An empty
+`expect_status` is what asks for that, so it cannot happen by accident.
+
+Only for the types that claim HTTP. A database holding a port would fail an HTTP
+check while being perfectly well, and a check wrong in that direction is worse
+than a weak one: it teaches the reader to skip it.
 
 ## Port -> project resolution
 

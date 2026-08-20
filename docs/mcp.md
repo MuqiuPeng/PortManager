@@ -9,18 +9,32 @@ agent starts is visible in the GUI immediately and outlives the agent's session.
 ```bash
 cd packages/runtime-mcp
 pnpm install && pnpm build
+runtime hook mcp        # registers it for every project, over stdio
 ```
 
-Then register it with your agent. For Claude Code:
+`hook mcp` wraps `claude mcp add --scope user`. User scope because the runtime is
+a property of the machine rather than of a checkout, and a tool that has to be
+added again in each repository is one an agent will mostly not have.
 
-```bash
-claude mcp add local-runtime -- node /absolute/path/to/packages/runtime-mcp/dist/index.js --client claude-code
-```
+Stdio rather than a local HTTP endpoint: a port manager that needs a port of its
+own to be reachable has an obvious failure mode on the day it is most needed.
 
 The `runtime` CLI must be on `PATH`: the server asks it for the daemon's
 endpoint rather than reimplementing the data-directory rules in a second
 language, and that call also starts the daemon if it is not running. Set
 `LOCAL_RUNTIME_SOCKET` to bypass the CLI entirely.
+
+Worth knowing when writing a launcher script by hand: the server is started by
+whatever launches the agent, whose `PATH` has neither a node version manager nor
+`~/.local/bin` on it. Both the interpreter and the CLI have to be findable, or
+the server starts and then cannot reach anything.
+
+### The other half
+
+MCP gives an agent the operations. It does not stop the agent reaching for a
+shell — an agent that decides to run `pnpm dev` directly is not doing anything
+wrong, and no tool description prevents it. `runtime hook install` covers that
+case by recording what gets started, without changing it. See the README.
 
 ## Agent ownership
 
@@ -93,6 +107,27 @@ if the attribution matters to you.
 | `get_logs` | Captured stdout/stderr, with a cursor for incremental reads |
 | `list_worktrees` | A project's checkouts and their port offsets; registers new ones |
 | `register_worktree` | Register a checkout and give it a stable port offset |
+
+### Other supervisors
+
+* `control_supervised` — `start`, `stop` or `restart` a service PM2 or systemd
+  keeps. Use this rather than `start_service`/`stop_service` when a service
+  reports a supervisor: the runtime did not start it, and a stop issued any
+  other way is undone the moment that supervisor notices. There is no delete.
+
+### Taking things over
+
+* `adopt_port` — declare whatever is already listening, so it can be started
+  again later. The command is read off the running process, never guessed from
+  `package.json`. Refuses when a supervisor holds it, unless forced.
+* `list_launches` — what an agent or a terminal started, with the command
+  exactly as given, and the port and pid it turned into.
+
+### Ordering
+
+* `list_tasks`, `set_task` — named step sequences over a project's services.
+* `run_task` — bring up every step in order, waiting for each to report healthy.
+  A step that runs to completion must succeed or the task stops there.
 
 ## What it deliberately does not expose
 

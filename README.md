@@ -118,20 +118,33 @@ implemented yet; [docs/windows.md](docs/windows.md) has the plan.
 
 ## Coding agents
 
+Two halves, and they do different jobs.
+
 ```bash
-cd packages/runtime-mcp
-pnpm install && pnpm build
-claude mcp add local-runtime -- node "$PWD/dist/index.js" --client claude-code
+cd packages/runtime-mcp && pnpm install && pnpm build
+runtime hook mcp        # register the MCP server for every project
+runtime hook install    # record what gets started outside it
 ```
 
-An agent can then answer "start this project's frontend and API and wait until
-they are healthy" or "why is localhost:3000 unavailable?" without a shell — and
-the runtime records which agent started what, so the desktop app shows
-`● api :8000  feature/refund  started by claude-code`.
+The **MCP server** gives an agent the operations: "start this project's frontend
+and API and wait until they are healthy", "why is localhost:3000 unavailable?",
+"run the dev task". There is no `execute_shell`, no `kill_pid` and no
+`run_command` — the daemon's protocol does not offer them, so the server cannot
+expose them. See [docs/mcp.md](docs/mcp.md).
 
-There is no `execute_shell`, no `kill_pid` and no `run_command`: the daemon's
-protocol does not offer them, so the MCP server cannot expose them. See
-[docs/mcp.md](docs/mcp.md) for the tool list.
+The **hook** covers what the MCP server cannot: an agent that runs `pnpm dev` in
+a terminal anyway. A `PreToolUse` hook records the command before it runs and
+changes nothing about it — the command Claude sees approved is the command that
+runs. What that buys is the one fact a running process cannot be asked for
+afterwards: how to start it again. Inferring that from a project's scripts is
+how a checkout ends up with its production build overwritten by a development
+one.
+
+Every failure path in the hook exits 0 in silence. A runtime that is down must
+not be able to wedge a shell command.
+
+The runtime records which agent started what, so the desktop app shows
+`● api :8000  feature/refund  started by claude-code`.
 
 ## Commands
 
@@ -147,11 +160,23 @@ runtime restart <service> [--wait]
 runtime logs <service> [-n N] [--follow]   captured output, kept across restarts
 runtime health <service> [--wait S]
 runtime port list|check|reserve|release
+runtime adopt <port> [--force]      declare what is already on a port
+runtime supervised start|stop|restart <name>   drive PM2, without taking it over
+runtime task list|set|remove|run    named step sequences
 runtime container start|stop|restart|logs
 runtime worktree list|add
+runtime hook install|uninstall|status|mcp|log
 runtime daemon start|stop|status
 runtime doctor
 ```
+
+`adopt` writes down what is running so the runtime can start it again, taking
+the command from the process rather than from `package.json`. It refuses when
+another supervisor is keeping the service alive, since taking it over for real
+means removing it from there — and that usually changes what starts at boot.
+
+`supervised` is the other answer to that: PM2 still owns what the service is,
+this owns whether it is running now. There is no `delete`.
 
 A service is named `web`, or `<branch>/<name>` to reach a git worktree:
 
@@ -171,16 +196,32 @@ inferred:
 {
   "name": "dossh",
   "services": {
-    "web": { "command": "pnpm dev", "port": 3000 },
+    "migrate": { "command": "pnpm db:migrate", "one_shot": true },
+    "web": { "command": "pnpm dev", "port": 3000, "depends_on": ["api"] },
     "api": {
       "command": "pnpm api:dev",
       "port": 8000,
       "type": "api",
+      "depends_on": ["migrate"],
       "health": { "kind": "http", "path": "/health", "expect_status": [200] }
     }
   }
 }
 ```
+
+`depends_on` names services in the same checkout. Starting one brings them up in
+order and waits for each to report healthy — and leaves alone any that is
+already running, whoever started it.
+
+`one_shot` marks a step that runs to completion rather than staying up. It is
+not a service that exits quickly: a server that exits has failed and a migration
+that keeps running has hung, so the two cannot share one test for success. A
+one-shot that fails stops what would have followed it.
+
+Omitting `health` is not the weakest option. A service declared as `web` or
+`api` is asked for an HTTP response, since a TCP connect cannot tell a working
+server from one that holds the port and answers nothing. Any response counts —
+302, 404 and 200 all mean it is alive.
 
 See [config/runtime.example.json](config/runtime.example.json) for every field.
 
@@ -227,6 +268,28 @@ its port is reported as running and marked unmanaged — claiming otherwise whil
 the port table shows it up is the contradiction this tool exists to remove. Live
 ports that no declared service explains are listed as external rather than
 guessed at.
+
+That has to hold for every operation, not just the display. An operation that
+reads the runtime's own instance record alone cannot see a service somebody else
+started, which on a working machine is most of them — and the failures are not
+symmetrical. `stop` and `health` merely said "not running" about something
+visibly running. `start` launched a second copy beside it, which for a project
+whose dev and production servers share a build directory is how the running one
+gets broken.
+
+**Something else may already be in charge.** PM2 and systemd start services too,
+and a stop issued anywhere else is undone the moment they notice. Where one is
+found, the runtime says so and can drive it — `start`, `stop`, `restart`, the
+supervisor's own reversible verbs. It will not `delete`: removing an entry is
+usually also what stops it starting at boot, which is a decision about the
+machine rather than about this registry.
+
+**Ask to be told, do not infer.** The command that would restart a service
+cannot be recovered from the running process, and guessing it from
+`package.json` is how a checkout is left unable to boot. So the Claude Code hook
+records commands before they run — and records the environment too, since `node
+server.mjs` is the development server or the production one depending on
+`NODE_ENV` alone.
 
 **A port is a lease, not an observation.** A service claims its port before the
 process starts, so a conflict is reported as an answer rather than discovered as
