@@ -260,6 +260,13 @@ fn responses() -> Vec<ResponseBody> {
         ResponseBody::TaskRun {
             steps: vec!["migrate (ran)".to_string(), "api".to_string()],
         },
+        ResponseBody::Findings {
+            items: vec![Finding {
+                subject: "Loom/api".to_string(),
+                message: "depends on 'db', which this checkout does not declare".to_string(),
+                certain: true,
+            }],
+        },
         ResponseBody::Sessions {
             items: vec![AgentSession {
                 id: SessionId::from("sess"),
@@ -348,6 +355,7 @@ fn every_request_survives_a_round_trip() {
             session: Some("s1".to_string()),
         },
         Request::ListLaunches,
+        Request::Diagnose,
         Request::ListTasks { selector: ".".to_string() },
         Request::SetTask {
             selector: ".".to_string(),

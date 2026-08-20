@@ -273,7 +273,9 @@ export function formatAdopted(outcome: AdoptOutcome): string {
   lines.push(
     outcome.command_source === "recorded"
       ? "  Taken from the launch recorded for it."
-      : "  Taken from the running process, not from package.json.",
+      : outcome.command_source === "supervisor"
+        ? "  Taken from the supervisor, which holds what it runs next."
+        : "  Taken from the running process, not from package.json.",
   );
   if (outcome.supervisor) {
     lines.push(

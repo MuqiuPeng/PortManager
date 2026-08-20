@@ -907,6 +907,9 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
                 runtime_types::CommandSource::ProcessArgv => {
                     "  taken from the running process, not from package.json\n"
                 }
+                runtime_types::CommandSource::Supervisor => {
+                    "  taken from the supervisor, which holds what it runs next\n"
+                }
             });
             if let Some(supervisor) = &outcome.supervisor {
                 out.push_str(&format!(
@@ -914,6 +917,24 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
                 ));
             }
             out.trim_end().to_string()
+        }
+        ResponseBody::Findings { items } => {
+            if items.is_empty() {
+                "Nothing to report.".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|finding| {
+                        format!(
+                            "{} {}: {}",
+                            if finding.certain { "!" } else { "?" },
+                            finding.subject,
+                            finding.message
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
         }
         ResponseBody::Launches { items } => {
             if items.is_empty() {
@@ -1086,6 +1107,33 @@ async fn doctor() -> Result<String> {
     if self_info.is_none() || processes.is_empty() {
         out.push_str("\nProcess discovery is not working on this platform.\n");
     }
+
+    // What is wired into the tools that would use this.
+    out.push_str(&format!("\nclaude code hook  {}\n", hook::status()));
+    out.push_str(&format!("mcp server        {}\n", hook::mcp_status()));
+
+    // And what is wrong with what is declared — which needs the registry, so
+    // only when there is a daemon to ask.
+    if runtime_ipc::client::is_running().await {
+        let mut client = Client::connect_default().await?;
+        if let ResponseBody::Findings { items } = client.call(Request::Diagnose).await? {
+            out.push_str(&format!("\ndeclared services\n"));
+            if items.is_empty() {
+                out.push_str("  nothing to report\n");
+            }
+            for finding in &items {
+                // The certain ones first in the eye: they will fail, where the
+                // rest only might.
+                out.push_str(&format!(
+                    "  {} {}: {}\n",
+                    if finding.certain { "!" } else { "?" },
+                    finding.subject,
+                    finding.message
+                ));
+            }
+        }
+    }
+
     Ok(out.trim_end().to_string())
 }
 

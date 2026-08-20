@@ -330,3 +330,27 @@ pub fn install_mcp(command: &str) -> Result<String, String> {
         format!("`claude mcp add` failed: {detail}")
     })
 }
+
+/// Whether the MCP server is registered with Claude Code.
+pub fn mcp_status() -> String {
+    let Some(home) = dirs_home() else {
+        return "cannot find a home directory".to_string();
+    };
+    // Claude Code keeps user-scoped servers here. Read rather than shelled out
+    // to, since `doctor` should stay useful when `claude` is not installed.
+    let path = home.join(".claude.json");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return "not registered".to_string();
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return "not registered".to_string();
+    };
+    match settings
+        .get("mcpServers")
+        .and_then(|servers| servers.as_object())
+        .map(|servers| servers.keys().any(|key| key == "localruntime"))
+    {
+        Some(true) => "registered".to_string(),
+        _ => "not registered (`runtime hook mcp`)".to_string(),
+    }
+}

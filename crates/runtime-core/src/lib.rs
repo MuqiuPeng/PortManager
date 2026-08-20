@@ -35,7 +35,7 @@ use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
     AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
     PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance,
-    Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
+    Finding, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
     Workspace,
     WorkspaceId,
     WorkspaceView,
@@ -1160,6 +1160,119 @@ impl Runtime {
         self.store.remove_task(&task.id)
     }
 
+    // ---- diagnosis -------------------------------------------------------
+
+    /// Everything wrong with what is declared, looked for rather than waited on.
+    ///
+    /// The point is timing. Each of these is already knowable now and only
+    /// announces itself later, at the worst moment: a dependency that names
+    /// nothing fails halfway through a start, having brought up everything
+    /// before it; a cycle hangs; a shared build breaks the service that is not
+    /// looking, on its next restart, hours after the cause.
+    pub fn diagnose(&self) -> Result<Vec<Finding>> {
+        let mut findings = Vec::new();
+
+        for project in self.store.list_projects()? {
+            for workspace in self.store.list_workspaces(&project.id)? {
+                let declared = self.store.list_services(&workspace.id)?;
+
+                for service in &declared {
+                    let subject = format!("{}/{}", project.name, service.name);
+
+                    for dependency in &service.depends_on {
+                        if !declared.iter().any(|other| &other.name == dependency) {
+                            findings.push(Finding {
+                                subject: subject.clone(),
+                                message: format!(
+                                    "depends on '{dependency}', which this checkout does not declare"
+                                ),
+                                certain: true,
+                            });
+                        }
+                    }
+
+                    // Reuses the planner rather than a second cycle check, so
+                    // the two cannot disagree about what a cycle is.
+                    if !service.depends_on.is_empty() {
+                        if let Err(error) =
+                            crate::graph::plan(std::slice::from_ref(service), &declared, |_| false)
+                        {
+                            let message = error.to_string();
+                            if message.contains("depend on each other") {
+                                findings.push(Finding {
+                                    subject: subject.clone(),
+                                    message,
+                                    certain: true,
+                                });
+                            }
+                        }
+                    }
+
+                    if let Some(hazard) = self.build_hazard(service) {
+                        findings.push(Finding {
+                            subject: subject.clone(),
+                            message: hazard.describe(),
+                            // The overwrite only happens if it is started;
+                            // the missing build fails whenever it next is.
+                            certain: matches!(
+                                hazard,
+                                crate::builds::BuildHazard::MissingProductionBuild { .. }
+                            ),
+                        });
+                    }
+                }
+
+                // A task validates its steps when it is declared, and a service
+                // can be renamed or removed afterwards.
+                for task in self.store.list_tasks(&workspace.id)? {
+                    for step in &task.steps {
+                        if !declared.iter().any(|service| &service.name == step) {
+                            findings.push(Finding {
+                                subject: format!("{}/{}", project.name, task.name),
+                                message: format!("step '{step}' is no longer a service here"),
+                                certain: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deduplicated: one build directory shared by three services produces
+        // the same sentence three times, which reads as three problems.
+        findings.dedup_by(|a, b| a.subject == b.subject && a.message == b.message);
+        Ok(findings)
+    }
+
+    /// The supervisor entry that would start this service, running or not.
+    ///
+    /// `ServiceView::supervisor_entry` is found through the pid holding the
+    /// port, which answers only for a service that is already up — and the
+    /// question that matters here is the other one: who should be asked to
+    /// start it. So a stopped entry is matched by its working directory.
+    ///
+    /// Only when exactly one entry matches. Two entries in a directory is the
+    /// same ambiguity that stops a port being adopted into two services, and
+    /// picking one would be a guess about which of them somebody meant.
+    pub fn supervised_entry_for(&self, service: &Service) -> Option<String> {
+        if let Ok(view) = self.service_view(service) {
+            if let Some(entry) = view.supervisor_entry {
+                return Some(entry);
+            }
+        }
+
+        let mut matches = self
+            .pm2
+            .processes()
+            .into_iter()
+            .filter(|entry| entry.cwd.as_deref() == Some(service.cwd.as_path()));
+        let only = matches.next()?;
+        match matches.next() {
+            Some(_) => None,
+            None => Some(only.name),
+        }
+    }
+
     // ---- build hazards ---------------------------------------------------
 
     /// What starting this service would do to a build directory in use.
@@ -1278,10 +1391,32 @@ impl Runtime {
             .into_iter()
             .find(|entry| entry.pid == Some(owner.pid));
 
-        let (command, source) = match &recorded {
-            Some(entry) => (entry.command.clone(), CommandSource::Recorded),
-            None => match &owner.command_line {
-                Some(argv) => (argv.trim().to_string(), CommandSource::ProcessArgv),
+        // A supervisor is a better source than the process for the same reason
+        // it is a better source for the environment: it holds what it will run
+        // next time. It is also the only source that survives the process
+        // renaming itself — Next reports its argv as `next-server (v14.2.35)`,
+        // which describes it accurately and cannot be executed.
+        let supervised = self
+            .pm2
+            .processes()
+            .into_iter()
+            .find(|entry| entry.pid == Some(owner.pid));
+
+        let (command, source) = match (&recorded, &supervised) {
+            (Some(entry), _) => (entry.command.clone(), CommandSource::Recorded),
+            (None, Some(entry)) => (entry.command.clone(), CommandSource::Supervisor),
+            (None, None) => match &owner.command_line {
+                Some(argv) if looks_runnable(argv) => {
+                    (argv.trim().to_string(), CommandSource::ProcessArgv)
+                }
+                Some(argv) => {
+                    return Err(RuntimeError::invalid(format!(
+                        "the process on {port} reports itself as '{}', which describes it \
+                         rather than starting it; declare the service by hand, or record a \
+                         launch with the Claude Code hook",
+                        argv.trim()
+                    )))
+                }
                 None => {
                     return Err(RuntimeError::invalid(format!(
                         "the process on {port} will not say what it was started with"
@@ -1810,4 +1945,62 @@ fn restart_warning(process: &crate::pm2::Pm2Process) -> Option<String> {
         "runs in production mode but {} holds a development build; restarting it will fail until `next build` is run",
         next.display()
     ))
+}
+
+/// Whether a reported command line could actually start anything.
+///
+/// A process may rename itself, and the good ones do: `next-server (v14.2.35)`
+/// and `PM2 v6.0.14: God Daemon` are far more useful in a process listing than
+/// the paths they replaced. They are also not commands. Writing one into a
+/// service definition produces a service that looks correctly declared and
+/// cannot start — which is worse than declining to guess.
+fn looks_runnable(command: &str) -> bool {
+    let Some(first) = command.split_whitespace().next() else {
+        return false;
+    };
+    // An absolute path, or something a shell could find.
+    if first.contains('/') {
+        return true;
+    }
+    // A bare word is only a command if it is on PATH. A title like
+    // `next-server` is a bare word too, so this is the test that separates
+    // them.
+    //
+    // Compared against the directory's real entries rather than by asking
+    // whether the path exists: macOS is case-insensitive by default, so
+    // `dir.join("PM2").is_file()` answers yes for a `pm2` that is nothing to
+    // do with it — and `PM2 v6.0.14: God Daemon` would read as runnable.
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return false;
+        };
+        entries
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy() == first)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_renamed_process_title_is_not_mistaken_for_a_command() {
+        // The good ones rename themselves: `next-server (v14.2.35)` and
+        // `PM2 v6.0.14: God Daemon` say far more in a process listing than the
+        // paths they replaced. Writing one into a service definition produces
+        // something that looks declared and cannot start.
+        assert!(!looks_runnable("next-server (v14.2.35)"));
+        assert!(!looks_runnable("PM2 v6.0.14: God Daemon (/Users/x/.pm2)"));
+        assert!(!looks_runnable(""));
+    }
+
+    #[test]
+    fn a_real_command_line_still_passes() {
+        assert!(looks_runnable("/usr/local/bin/node server.mjs"));
+        assert!(looks_runnable("sh -c 'pnpm dev'"));
+    }
 }

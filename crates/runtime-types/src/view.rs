@@ -302,6 +302,9 @@ pub enum CommandSource {
     /// The process's own argv: what the shell and the package manager turned
     /// that request into.
     ProcessArgv,
+    /// The supervisor that runs it, which holds what it will run next time —
+    /// and which is the only source that survives a process renaming itself.
+    Supervisor,
 }
 
 /// A service another supervisor keeps, that the runtime can switch.
@@ -336,4 +339,19 @@ pub struct SupervisedView {
     /// before the restart rather than after.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_warning: Option<String>,
+}
+
+/// Something wrong with what is declared, found without being asked.
+///
+/// Every one of these is a problem that stays quiet until the moment it is
+/// expensive: a dependency naming a service that does not exist fails halfway
+/// through a start, having already brought up everything before it; a build
+/// two services share breaks the one that is not looking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    /// Where it is, as a person would say it: `Loom/api`.
+    pub subject: String,
+    pub message: String,
+    /// True when it will fail rather than merely might.
+    pub certain: bool,
 }

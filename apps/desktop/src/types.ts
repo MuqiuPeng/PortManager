@@ -269,7 +269,7 @@ export function isLive(status: ServiceStatus): boolean {
 export interface AdoptOutcome {
   service: ServiceView;
   /** Where the command came from. Never the project's scripts. */
-  command_source: "recorded" | "process_argv";
+  command_source: "recorded" | "process_argv" | "supervisor";
   /** False when the service was already declared and nothing changed. */
   declared: boolean;
   /** The command written down before, when adopting replaced it. */

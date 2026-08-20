@@ -227,6 +227,8 @@ impl Dispatcher {
                 Ok(ResponseBody::TaskRun { steps: runtime.run_task(&workspace.id, &name).await? })
             }
 
+            Request::Diagnose => Ok(ResponseBody::Findings { items: runtime.diagnose()? }),
+
             Request::AdoptPort { port, force } => {
                 Ok(ResponseBody::Adopted(runtime.adopt_port(port, force)?))
             }

@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
-    AdoptOutcome, AgentSession, DaemonInfo, HealthReport, LaunchObservation, LogLine,
+    AdoptOutcome, AgentSession, DaemonInfo, Finding, HealthReport, LaunchObservation,
+    LogLine,
     PortOwner, SupervisedView, Task,
     PortReservation, PortStatus,
     ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
@@ -115,6 +116,9 @@ pub enum Request {
     },
     /// Launches recorded recently, newest first.
     ListLaunches,
+
+    /// Everything wrong with what is declared, looked for rather than waited on.
+    Diagnose,
 
     /// Named step sequences declared in a checkout.
     ListTasks { selector: String },
@@ -287,6 +291,7 @@ pub enum ResponseBody {
     Logs { items: Vec<LogLine> },
     Setting { value: Option<String> },
     Launches { items: Vec<LaunchObservation> },
+    Findings { items: Vec<Finding> },
     Tasks { items: Vec<Task> },
     TaskRun { steps: Vec<String> },
     Supervised(SupervisedView),

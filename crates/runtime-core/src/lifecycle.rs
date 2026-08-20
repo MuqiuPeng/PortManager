@@ -149,7 +149,22 @@ impl Runtime {
                 if step.one_shot {
                     self.run_to_completion(&step.service_id).await?;
                 } else {
-                    Box::pin(self.start_service(&step.service_id, StartOptions::default())).await?;
+                    // A dependency somebody else supervises cannot be started
+                    // here — the runtime would spawn a second copy beside the
+                    // one that supervisor is about to bring back. Ask them
+                    // instead, which is a start that sticks.
+                    let dependency = self.require_service(&step.service_id)?;
+                    match self.supervised_entry_for(&dependency) {
+                        Some(entry) => {
+                            self.control_supervised(&entry, crate::pm2::Pm2Action::Start)?;
+                        }
+                        None => {
+                            Box::pin(
+                                self.start_service(&step.service_id, StartOptions::default()),
+                            )
+                            .await?;
+                        }
+                    }
                     // A dependency that is up but not yet answering is not a
                     // dependency met: the whole point of the ordering is that
                     // the next service can talk to it.

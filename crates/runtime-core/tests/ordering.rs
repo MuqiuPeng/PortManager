@@ -293,3 +293,91 @@ async fn restarting_something_the_runtime_did_not_start_is_refused() {
     assert!(text.contains("not started by the runtime"), "{text}");
     let _ = child.kill();
 }
+
+#[tokio::test]
+async fn a_dependency_naming_nothing_is_found_before_it_is_needed() {
+    // Otherwise it is found halfway through a start, with everything before it
+    // already up.
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    declare(&runtime, &workspace.id, dir.path(), "api", "sleep 30", &["db"], false);
+
+    let findings = runtime.diagnose().unwrap();
+    let found = findings
+        .iter()
+        .find(|f| f.message.contains("'db'"))
+        .expect("a dependency that names nothing is a finding");
+    assert!(found.certain);
+    assert!(found.subject.ends_with("/api"), "{}", found.subject);
+}
+
+#[tokio::test]
+async fn services_that_depend_on_each_other_are_found() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    declare(&runtime, &workspace.id, dir.path(), "a", "sleep 30", &["b"], false);
+    declare(&runtime, &workspace.id, dir.path(), "b", "sleep 30", &["a"], false);
+
+    let findings = runtime.diagnose().unwrap();
+    assert!(
+        findings.iter().any(|f| f.message.contains("depend on each other")),
+        "{findings:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_task_step_that_was_removed_is_found() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let web = declare(&runtime, &workspace.id, dir.path(), "web", "sleep 30", &[], false);
+    runtime
+        .set_task(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+    // Steps are checked when a task is declared; a service can go afterwards.
+    runtime.delete_service(&web.id).unwrap();
+
+    let findings = runtime.diagnose().unwrap();
+    assert!(
+        findings.iter().any(|f| f.message.contains("no longer a service")),
+        "{findings:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_healthy_checkout_reports_nothing() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let db = declare(&runtime, &workspace.id, dir.path(), "db", "sleep 30", &[], false);
+    declare(&runtime, &workspace.id, dir.path(), "api", "sleep 30", &["db"], false);
+    let _ = db;
+
+    assert!(runtime.diagnose().unwrap().is_empty(), "quiet is the point");
+}
