@@ -75,6 +75,8 @@ pub fn run() {
             commands::add_service,
             commands::remove_service,
             commands::start_service,
+            commands::adopt_port,
+            commands::control_supervised,
             commands::stop_service,
             commands::restart_service,
             commands::get_logs,

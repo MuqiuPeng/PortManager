@@ -70,6 +70,7 @@ impl<'a> PortResolver<'a> {
                 service_name: None,
                 started_by: None,
                 container: None,
+                supervisor: None,
                 managed: false,
             }));
         };
@@ -92,8 +93,25 @@ impl<'a> PortResolver<'a> {
             service_name: None,
             started_by: None,
             container: None,
+            supervisor: None,
             managed: false,
         };
+
+        // Who else is already keeping this alive. Read here rather than at the
+        // call sites so that every path producing a `PortOwner` carries it:
+        // `check_port` and the whole-machine scan are different code, and a
+        // fact known by only one of them is a fact the caller cannot rely on.
+        if let Ok(processes) = self.adapter.process().list_processes() {
+            owner.supervisor = crate::supervisors::detect(pid, &processes, |candidate| {
+                self.adapter
+                    .process()
+                    .process_info(candidate)
+                    .ok()
+                    .flatten()
+                    .map(|info| info.command_string())
+            })
+            .map(|found| found.kind);
+        }
 
         // A process the runtime started is identified exactly, by pid and start
         // time. This is the only path that may set `managed`.

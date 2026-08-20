@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::id::{InstanceId, ProjectId, ServiceId, SessionId, WorkspaceId};
+use crate::id::{InstanceId, ProjectId, ServiceId, SessionId, TaskId, WorkspaceId};
 
 /// A repository as the user thinks of it, independent of which checkout is open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +73,36 @@ pub struct Service {
     pub auto_start: bool,
     #[serde(default)]
     pub conflict_policy: ConflictPolicy,
+    /// Services in the same checkout that must be up first.
+    ///
+    /// By name, because a name is what a person writes in a config file and
+    /// what survives a service being re-detected. Starting this one brings
+    /// them up in order and waits for each to report healthy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    /// Runs to completion rather than staying up.
+    ///
+    /// A migration is not a service that happens to exit quickly; it is a
+    /// different thing with a different notion of success. A server that exits
+    /// has failed, and a migration that keeps running has hung — so the two
+    /// cannot share one definition of "started".
+    #[serde(default)]
+    pub one_shot: bool,
+}
+
+/// A named sequence of steps in a checkout.
+///
+/// Dependencies say what a single service needs. A task says what *you* want
+/// brought up, which is not always one service's chain: a dev session is often
+/// an API and a web front end side by side, plus a migration in front of both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub name: String,
+    /// Service names, run in this order. Each brings up its own dependencies
+    /// first, so a step already covered by an earlier one is a no-op.
+    pub steps: Vec<String>,
 }
 
 /// Who asked for a service to start. Drives ownership display and kill safety.
@@ -396,6 +426,8 @@ mod tests {
             health_check: None,
             auto_start: false,
             conflict_policy: ConflictPolicy::AllocateNext,
+            depends_on: Vec::new(),
+            one_shot: false,
         };
 
         ServicePatch {
@@ -429,6 +461,8 @@ mod tests {
             health_check: None,
             auto_start: false,
             conflict_policy: ConflictPolicy::AllocateNext,
+            depends_on: Vec::new(),
+            one_shot: false,
         };
 
         ServicePatch {

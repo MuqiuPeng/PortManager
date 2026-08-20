@@ -39,4 +39,10 @@ pub struct ServiceConfig {
     pub auto_start: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_conflict: Option<ConflictPolicy>,
+    /// Services in the same checkout that must be up first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    /// Runs to completion instead of staying up: a migration, a seed, a build.
+    #[serde(default)]
+    pub one_shot: bool,
 }

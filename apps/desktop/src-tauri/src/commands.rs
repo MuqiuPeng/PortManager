@@ -8,8 +8,8 @@ use runtime_core::discover::Discovery;
 use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
-    DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceView,
-    StartOutcome, Workspace,
+    AdoptOutcome, DaemonInfo, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
+    ServiceView, StartOutcome, SupervisedView, Workspace,
 };
 use tauri::State;
 
@@ -150,6 +150,8 @@ pub async fn add_service(
             health: None,
             auto_start: false,
             on_conflict: None,
+            depends_on: Vec::new(),
+            one_shot: false,
         },
     };
     match call(&state, request).await? {
@@ -187,6 +189,40 @@ pub async fn start_service(
     };
     match call(&state, request).await? {
         ResponseBody::Started(outcome) => Ok(outcome),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Declare whatever is on a port so the runtime can start it again.
+///
+/// Refused by the daemon when another supervisor is keeping it alive, unless
+/// `force` — taking a service away from PM2 means deleting it there, which
+/// usually changes what starts at boot.
+#[tauri::command]
+pub async fn adopt_port(
+    state: State<'_, DaemonHandle>,
+    port: u16,
+    force: bool,
+) -> CmdResult<AdoptOutcome> {
+    match call(&state, Request::AdoptPort { port, force }).await? {
+        ResponseBody::Adopted(outcome) => Ok(outcome),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Switch an entry another supervisor keeps.
+///
+/// PM2 still owns what it is and whether it starts at boot; this owns whether
+/// it is running now. Only start, stop and restart — deleting an entry is what
+/// stops it coming back, and is not offered.
+#[tauri::command]
+pub async fn control_supervised(
+    state: State<'_, DaemonHandle>,
+    name: String,
+    action: String,
+) -> CmdResult<SupervisedView> {
+    match call(&state, Request::ControlSupervised { name, action }).await? {
+        ResponseBody::Supervised(view) => Ok(view),
         other => Err(unexpected(&other)),
     }
 }

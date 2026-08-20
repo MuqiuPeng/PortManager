@@ -405,6 +405,8 @@ fn renaming_onto_an_existing_service_is_refused() {
                 health_check: None,
                 auto_start: false,
                 conflict_policy: Default::default(),
+                depends_on: Vec::new(),
+                one_shot: false,
             },
         )
         .unwrap();

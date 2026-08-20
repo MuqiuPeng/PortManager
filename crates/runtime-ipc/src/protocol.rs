@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
-    AgentSession, DaemonInfo, HealthReport, LaunchObservation, LogLine, PortOwner,
+    AdoptOutcome, AgentSession, DaemonInfo, HealthReport, LaunchObservation, LogLine,
+    PortOwner, SupervisedView, Task,
     PortReservation, PortStatus,
     ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
     ServiceView, StartOutcome, Workspace,
@@ -114,6 +115,37 @@ pub enum Request {
     },
     /// Launches recorded recently, newest first.
     ListLaunches,
+
+    /// Named step sequences declared in a checkout.
+    ListTasks { selector: String },
+    /// Declare or replace one.
+    SetTask {
+        selector: String,
+        name: String,
+        steps: Vec<String>,
+    },
+    RemoveTask { selector: String, name: String },
+    /// Bring up every step in order, each with its own dependencies.
+    RunTask { selector: String, name: String },
+
+    /// Switch an entry another supervisor keeps.
+    ///
+    /// Only the reversible verbs: `start`, `stop`, `restart`. Deleting an
+    /// entry is what stops it coming back at boot, and is not offered.
+    ControlSupervised {
+        name: String,
+        action: String,
+    },
+
+    /// Declare whatever is on a port, so it can be started again later.
+    ///
+    /// Takes the command from the process, not from the project's scripts.
+    AdoptPort {
+        port: u16,
+        /// Declare it even though another supervisor is keeping it alive.
+        #[serde(default)]
+        force: bool,
+    },
 
     StartService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,6 +287,10 @@ pub enum ResponseBody {
     Logs { items: Vec<LogLine> },
     Setting { value: Option<String> },
     Launches { items: Vec<LaunchObservation> },
+    Tasks { items: Vec<Task> },
+    TaskRun { steps: Vec<String> },
+    Supervised(SupervisedView),
+    Adopted(AdoptOutcome),
     Sessions { items: Vec<AgentSession> },
     Session(AgentSession),
     Done { ok: bool },

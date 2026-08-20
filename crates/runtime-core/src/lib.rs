@@ -10,6 +10,7 @@ pub mod discover;
 pub mod docker;
 pub mod dotenv;
 pub mod events;
+pub mod graph;
 pub mod git;
 pub mod health;
 pub mod lifecycle;
@@ -17,8 +18,10 @@ pub mod launch;
 pub mod logs;
 pub mod paths;
 pub mod platform;
+pub mod pm2;
 pub mod ports;
 pub mod store;
+pub mod supervisors;
 pub mod supervisor;
 
 use std::collections::HashSet;
@@ -29,9 +32,11 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
+    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
     PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance,
-    Service, ServiceId, ServiceStatus, ServiceView, StartedBy, Workspace, WorkspaceId,
+    Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
+    Workspace,
+    WorkspaceId,
     WorkspaceView,
 };
 
@@ -48,6 +53,7 @@ pub struct Runtime {
     logs: Arc<LogStore>,
     supervisor: Arc<Supervisor>,
     docker: Arc<Docker>,
+    pm2: Arc<crate::pm2::Pm2>,
     /// Resolving one port walks the process table, so answering "what is
     /// listening" for a whole machine would do it dozens of times over.
     port_owners: Mutex<Option<(Instant, Vec<PortOwner>)>>,
@@ -109,6 +115,7 @@ impl Runtime {
             logs: Arc::new(LogStore::default()),
             supervisor: Arc::new(Supervisor::new()),
             docker: Arc::new(Docker::new()),
+            pm2: Arc::new(crate::pm2::Pm2::new()),
             port_owners: Mutex::new(None),
             launches: crate::launch::LaunchLog::new(),
             events: EventBus::new(),
@@ -237,6 +244,8 @@ impl Runtime {
                 health_check: None,
                 auto_start: false,
                 conflict_policy: Default::default(),
+                depends_on: Vec::new(),
+                one_shot: false,
             };
             self.store.upsert_service(&service)?;
         }
@@ -567,6 +576,8 @@ impl Runtime {
                     health: service.health_check,
                     auto_start: service.auto_start,
                     on_conflict: Some(service.conflict_policy),
+                    depends_on: service.depends_on,
+                    one_shot: service.one_shot,
                 },
             );
         }
@@ -707,11 +718,25 @@ impl Runtime {
                 .collect();
 
             external_total += external.len();
+            // A PM2 entry that a declared service already stands for is not
+            // listed again. The same process appearing twice — once saying it
+            // cannot be stopped, once offering a Stop button — is the kind of
+            // contradiction this tool exists to remove.
+            let claimed: Vec<String> = services
+                .iter()
+                .filter_map(|view| view.supervisor_entry.clone())
+                .collect();
+            let supervised: Vec<SupervisedView> = self
+                .supervised_for(&workspace, &owners)
+                .into_iter()
+                .filter(|entry| !claimed.contains(&entry.name))
+                .collect();
             workspaces.push(WorkspaceView {
                 workspace,
                 services,
                 external,
                 containers,
+                supervised,
             });
         }
 
@@ -795,9 +820,82 @@ impl Runtime {
                 container: owner.container.clone(),
                 cwd: owner.cwd.clone(),
                 command_line: owner.command_line.clone(),
+                supervisor: owner.supervisor.clone(),
                 url: Some(format!("http://localhost:{}", owner.port)),
             })
             .collect()
+    }
+
+    /// Entries another supervisor keeps in this checkout.
+    ///
+    /// Listed beside the declared services rather than folded into them: PM2
+    /// decided what these are and whether they come back after a reboot, and
+    /// presenting them as the runtime's own would claim an ownership it does
+    /// not have — and must not take, since removing an entry from PM2 is
+    /// usually also what stops it starting at boot.
+    fn supervised_for(&self, workspace: &Workspace, owners: &[PortOwner]) -> Vec<SupervisedView> {
+        self.pm2
+            .processes_in(&workspace.path)
+            .into_iter()
+            .map(|process| {
+                let ports: Vec<u16> = process
+                    .pid
+                    .map(|pid| {
+                        owners
+                            .iter()
+                            .filter(|owner| owner.pid == pid)
+                            .map(|owner| owner.port)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                SupervisedView {
+                    url: ports.first().map(|port| format!("http://localhost:{port}")),
+                    restart_warning: restart_warning(&process),
+                    name: process.name,
+                    supervisor: "pm2".to_string(),
+                    status: process.status,
+                    pid: process.pid,
+                    command: process.command,
+                    restarts: process.restarts,
+                    ports,
+                }
+            })
+            .collect()
+    }
+
+    /// Switch a supervised entry on or off.
+    pub fn control_supervised(&self, name: &str, action: crate::pm2::Pm2Action) -> Result<SupervisedView> {
+        self.pm2.control(name, action)?;
+        self.invalidate_port_owners();
+
+        let process = self
+            .pm2
+            .process(name)
+            .ok_or_else(|| RuntimeError::invalid(format!("pm2 has no entry '{name}'")))?;
+        let owners = self.port_owners()?;
+        let ports: Vec<u16> = process
+            .pid
+            .map(|pid| {
+                owners
+                    .iter()
+                    .filter(|owner| owner.pid == pid)
+                    .map(|owner| owner.port)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(SupervisedView {
+            url: ports.first().map(|port| format!("http://localhost:{port}")),
+            restart_warning: restart_warning(&process),
+            name: process.name,
+            supervisor: "pm2".to_string(),
+            status: process.status,
+            pid: process.pid,
+            command: process.command,
+            restarts: process.restarts,
+            ports,
+        })
     }
 
     /// Containers compose defines for a checkout.
@@ -896,6 +994,8 @@ impl Runtime {
         let mut status = status;
         let mut managed = false;
         let mut actual_port = None;
+        let mut supervisor = None;
+        let mut supervisor_entry = None;
 
         if status.is_live() {
             managed = true;
@@ -909,6 +1009,20 @@ impl Runtime {
             // declares, so calling it stopped would contradict the port table.
             status = ServiceStatus::Healthy;
             actual_port = Some(port);
+            // Only for a service the runtime did not start. For one it did,
+            // the runtime is the supervisor, and naming another would be
+            // saying two things own the same process.
+            let owner = owners.iter().find(|owner| owner.port == port);
+            supervisor = owner.and_then(|owner| owner.supervisor.clone());
+            // Which entry, not just which supervisor: the difference between
+            // explaining why Stop is missing and being able to offer one.
+            supervisor_entry = owner.and_then(|owner| {
+                self.pm2
+                    .processes()
+                    .into_iter()
+                    .find(|process| process.pid == Some(owner.pid))
+                    .map(|process| process.name)
+            });
         }
 
         let url = actual_port.and_then(|port| match service.service_type {
@@ -923,6 +1037,8 @@ impl Runtime {
             actual_port,
             url,
             managed,
+            supervisor,
+            supervisor_entry,
         })
     }
 
@@ -992,6 +1108,257 @@ impl Runtime {
             self.store.release_lease(port)?;
         }
         Ok((ServiceStatus::Stopped, Some(instance)))
+    }
+
+    // ---- tasks -----------------------------------------------------------
+
+    pub fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Task>> {
+        self.store.list_tasks(workspace_id)
+    }
+
+    /// Declare a named sequence of steps.
+    ///
+    /// Every step is checked against the checkout now rather than when it is
+    /// run: a task naming a service that does not exist is a task that fails
+    /// halfway through, having already started the things before it.
+    pub fn set_task(&self, workspace_id: &WorkspaceId, name: &str, steps: Vec<String>) -> Result<Task> {
+        let declared = self.store.list_services(workspace_id)?;
+        for step in &steps {
+            if !declared.iter().any(|service| &service.name == step) {
+                return Err(RuntimeError::invalid(format!(
+                    "'{step}' is not a service in this checkout"
+                )));
+            }
+        }
+
+        let existing = self
+            .store
+            .list_tasks(workspace_id)?
+            .into_iter()
+            .find(|task| task.name == name);
+
+        let task = Task {
+            id: existing.map(|task| task.id).unwrap_or_else(TaskId::new),
+            workspace_id: workspace_id.clone(),
+            name: name.to_string(),
+            steps,
+        };
+        self.store.upsert_task(&task)?;
+        Ok(task)
+    }
+
+    pub fn remove_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<bool> {
+        let Some(task) = self
+            .store
+            .list_tasks(workspace_id)?
+            .into_iter()
+            .find(|task| task.name == name)
+        else {
+            return Ok(false);
+        };
+        self.store.remove_task(&task.id)
+    }
+
+    // ---- taking things over ---------------------------------------------
+
+    /// Write down what is on a port, so the runtime can start it again.
+    ///
+    /// The command comes from the process itself — its argv, or the launch that
+    /// was recorded for it — and never from the project's scripts. Those are
+    /// where the guessing happens: a checkout whose `dev` and `start` write to
+    /// the same build directory is left unable to boot by adopting it under the
+    /// wrong one, and the process table already knows which one is running.
+    ///
+    /// Nothing is stopped or started here. Adopting is about being *able* to,
+    /// and a service that is serving traffic should not go down because someone
+    /// asked the runtime to learn about it.
+    pub fn adopt_port(&self, port: u16, force: bool) -> Result<AdoptOutcome> {
+        let owners = self.port_owners()?;
+        let Some(owner) = owners.iter().find(|owner| owner.port == port) else {
+            return Err(RuntimeError::invalid(format!("nothing is listening on {port}")));
+        };
+
+        if let Some(container) = &owner.container {
+            return Err(RuntimeError::invalid(format!(
+                "{port} is served by container '{container}'; compose owns what it is, and the runtime can already switch it on and off"
+            )));
+        }
+
+        // Refused rather than warned: the caller is asking for a definition
+        // they can restart from, and restarting something PM2 watches means
+        // deleting it from PM2 — which usually changes what starts at boot.
+        // That is a decision about the machine, not about this registry.
+        if let Some(supervisor) = &owner.supervisor {
+            if !force {
+                let detail = self
+                    .adapter
+                    .process()
+                    .list_processes()
+                    .ok()
+                    .and_then(|processes| {
+                        crate::supervisors::detect(owner.pid, &processes, |candidate| {
+                            self.adapter
+                                .process()
+                                .process_info(candidate)
+                                .ok()
+                                .flatten()
+                                .map(|info| info.command_string())
+                        })
+                    })
+                    .map(|found| found.taking_over)
+                    .unwrap_or_else(|| "it will be restarted from there".to_string());
+                return Err(RuntimeError::invalid(format!(
+                    "{port} is kept alive by {supervisor}: {detail}. Pass --force to declare it here anyway"
+                )));
+            }
+        }
+
+        let Some(workspace_id) = owner.workspace_id.clone() else {
+            return Err(RuntimeError::invalid(format!(
+                "{port} does not resolve to a project the runtime knows about; add the project first"
+            )));
+        };
+        let workspace = self.require_workspace(&workspace_id)?;
+
+        // A recorded launch is the better source: it is what somebody asked
+        // for, where argv is what that turned into after the shell and the
+        // package manager were done with it.
+        let recorded = self
+            .launches
+            .all()
+            .into_iter()
+            .find(|entry| entry.pid == Some(owner.pid));
+
+        let (command, source) = match &recorded {
+            Some(entry) => (entry.command.clone(), CommandSource::Recorded),
+            None => match &owner.command_line {
+                Some(argv) => (argv.trim().to_string(), CommandSource::ProcessArgv),
+                None => {
+                    return Err(RuntimeError::invalid(format!(
+                        "the process on {port} will not say what it was started with"
+                    )))
+                }
+            },
+        };
+
+        let cwd = owner.cwd.clone().unwrap_or_else(|| workspace.path.clone());
+
+        // argv does not carry the environment, and for a great many services
+        // the environment is the whole difference: the same `node server.mjs`
+        // is the development server or the production one depending on
+        // NODE_ENV, and they overwrite each other's build output. Adopting
+        // without it produces a definition that looks exactly right and starts
+        // the wrong thing.
+        let env = self.mode_environment(owner);
+
+        let declared = self.store.list_services(&workspace_id)?;
+
+        if let Some(existing) = declared
+            .iter()
+            .find(|service| service.command == command && service.cwd == cwd)
+        {
+            // The command matching is not the same as the definition being
+            // right: a service declared before the runtime read environments
+            // has the correct command and no mode at all, which is precisely
+            // the state that starts a production service in development mode.
+            let missing: Vec<(String, String)> = env
+                .iter()
+                .filter(|(key, value)| existing.env.get(*key) != Some(*value))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if missing.is_empty() {
+                return Ok(AdoptOutcome {
+                    service: self.service_view(existing)?,
+                    command_source: source,
+                    declared: false,
+                    replaced_command: None,
+                    supervisor: owner.supervisor.clone(),
+                });
+            }
+
+            let mut corrected = existing.clone();
+            for (key, value) in missing {
+                corrected.env.insert(key, value);
+            }
+            self.store.upsert_service(&corrected)?;
+            self.announce_service(&corrected, false);
+            return Ok(AdoptOutcome {
+                service: self.service_view(&corrected)?,
+                command_source: source,
+                declared: false,
+                // The command did not change; what changed is the mode it runs
+                // in, which the caller needs told just as loudly.
+                replaced_command: Some(format!(
+                    "the same command with no environment ({} added)",
+                    corrected
+                        .env
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+                supervisor: owner.supervisor.clone(),
+            });
+        }
+
+        // A service that already claims this port is this service, however
+        // wrong its command is — and its command being wrong is the usual
+        // reason to be here. Declaring a second one would leave two services
+        // claiming one port, which the runtime resolves by adopting neither:
+        // the row that was at least reporting the truth goes dark instead.
+        //
+        // So correct it. What is running is a fact; what was written down was
+        // a guess, and this is the guess being replaced by the fact.
+        if let Some(existing) = declared.into_iter().find(|service| {
+            ports::PortResolver::preferred_port(service, &workspace) == Some(port)
+        }) {
+            let replaced = existing.command.clone();
+            let mut corrected = existing;
+            corrected.command = command;
+            corrected.cwd = cwd;
+            corrected.preferred_port = Some(port);
+            // Mode variables replace whatever was there; anything else the
+            // service was given by hand is left alone.
+            for (key, value) in env {
+                corrected.env.insert(key, value);
+            }
+            self.store.upsert_service(&corrected)?;
+            self.announce_service(&corrected, false);
+            return Ok(AdoptOutcome {
+                service: self.service_view(&corrected)?,
+                command_source: source,
+                declared: false,
+                replaced_command: (replaced != corrected.command).then_some(replaced),
+                supervisor: owner.supervisor.clone(),
+            });
+        }
+
+        let name = self.unused_service_name(&workspace_id, &cwd, &workspace.path)?;
+        let service = Service {
+            id: ServiceId::new(),
+            workspace_id,
+            name,
+            service_type: runtime_types::ServiceType::Web,
+            command,
+            cwd,
+            env,
+            preferred_port: Some(port),
+            health_check: None,
+            auto_start: false,
+            conflict_policy: ConflictPolicy::Reuse,
+            depends_on: Vec::new(),
+            one_shot: false,
+        };
+        self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
+
+        Ok(AdoptOutcome {
+            service: self.service_view(&service)?,
+            command_source: source,
+            declared: true,
+            replaced_command: None,
+            supervisor: owner.supervisor.clone(),
+        })
     }
 
     // ---- observed launches ---------------------------------------------
@@ -1130,17 +1497,60 @@ impl Runtime {
             service_type: runtime_types::ServiceType::Web,
             command: entry.command.clone(),
             cwd,
-            env: Default::default(),
+            // A recorded launch carries the command but not the environment the
+            // shell had around it, and the mode it ran in is part of how it
+            // runs. Read it off the process that answered.
+            env: self.mode_environment(owner),
             preferred_port: Some(owner.port),
             health_check: None,
             auto_start: false,
             // Something is already on this port. Reusing it is the only policy
             // that does not fight the process that is serving.
             conflict_policy: ConflictPolicy::Reuse,
+            depends_on: Vec::new(),
+            one_shot: false,
         };
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);
         Ok(Some(service.id))
+    }
+
+    /// The mode-selecting variables a running service was started with.
+    ///
+    /// Asked of PM2 first: it holds the environment it launched with, and
+    /// reading it there works for an entry that is currently stopped, where
+    /// the kernel has nothing to offer. Falls back to the process itself.
+    ///
+    /// Only the switches in `MODE_VARIABLES`. The rest of an environment is
+    /// credentials, and the registry is not the place for those.
+    fn mode_environment(&self, owner: &PortOwner) -> std::collections::BTreeMap<String, String> {
+        let mut found = std::collections::BTreeMap::new();
+
+        if let Some(pid) = Some(owner.pid).filter(|pid| *pid > 0) {
+            if let Some(entry) = self
+                .pm2
+                .processes()
+                .into_iter()
+                .find(|process| process.pid == Some(pid))
+            {
+                for (key, value) in entry.mode_environment {
+                    found.insert(key, value);
+                }
+            }
+
+            if found.is_empty() {
+                if let Ok(Some(pairs)) = self
+                    .adapter
+                    .process()
+                    .environment(pid, crate::launch::MODE_VARIABLES)
+                {
+                    for (key, value) in pairs {
+                        found.insert(key, value);
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// A name that reads like the directory and is not taken.
@@ -1321,4 +1731,28 @@ fn canonicalize(path: &Path) -> Result<PathBuf> {
     std::fs::canonicalize(&expanded).map_err(|err| {
         RuntimeError::io(format!("cannot resolve {}: {err}", expanded.display()))
     })
+}
+
+/// Why restarting a supervised entry would fail, when it would.
+///
+/// The pair of facts is what makes this knowable in advance: the entry runs in
+/// production mode, and its build directory holds a development build. Next
+/// writes both to `.next`, so a dev server run from the same checkout replaces
+/// the production build with one that has no `BUILD_ID` — and the running
+/// service does not notice, because it read what it needed at startup. The
+/// failure appears at the next restart, long after the cause, which is exactly
+/// the kind of gap this tool exists to close.
+fn restart_warning(process: &crate::pm2::Pm2Process) -> Option<String> {
+    if !process.production {
+        return None;
+    }
+    let cwd = process.cwd.as_ref()?;
+    let next = cwd.join(".next");
+    if !next.is_dir() || next.join("BUILD_ID").exists() {
+        return None;
+    }
+    Some(format!(
+        "runs in production mode but {} holds a development build; restarting it will fail until `next build` is run",
+        next.display()
+    ))
 }

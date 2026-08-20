@@ -5,9 +5,11 @@
 // Anything a caller might need to act on — ids, ports, pids — is still present.
 
 import type {
+  AdoptOutcome,
   ContainerView,
   Discovery,
   HealthReport,
+  LaunchObservation,
   LogLine,
   PortOwner,
   PortReservation,
@@ -182,6 +184,9 @@ export function formatPortOwner(owner: PortOwner): string {
   if (owner.started_by && owner.started_by !== "unknown") {
     lines.push(`started by ${owner.started_by}`);
   }
+  // The more useful half of "not managed": stopping this by hand achieves
+  // nothing while something else is watching for it to go.
+  if (owner.supervisor) lines.push(`kept alive by ${owner.supervisor}`);
   // Say it plainly: this is the process the runtime will refuse to terminate.
   if (!owner.managed) lines.push("not managed by the runtime");
   return lines.join("\n");
@@ -245,4 +250,44 @@ function indent(text: string, prefix = "  "): string {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+export function formatAdopted(outcome: AdoptOutcome): string {
+  const service = outcome.service;
+  const lines = [
+    outcome.declared
+      ? `Declared '${service.name}'.`
+      : outcome.replaced_command
+        ? `Corrected '${service.name}'. It was declared as ${truncate(outcome.replaced_command, 120)}.`
+        : `'${service.name}' was already declared; nothing changed.`,
+    `  command ${truncate(service.command, 160)}`,
+    `  cwd     ${service.cwd}`,
+  ];
+  // Where the command came from decides how much to trust it, so say it rather
+  // than leave the caller to assume.
+  lines.push(
+    outcome.command_source === "recorded"
+      ? "  Taken from the launch recorded for it."
+      : "  Taken from the running process, not from package.json.",
+  );
+  if (outcome.supervisor) {
+    lines.push(
+      `  Still kept alive by ${outcome.supervisor}: starting it from here will fight with it.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function formatLaunches(items: LaunchObservation[]): string {
+  if (items.length === 0) return "Nothing has been recorded.";
+  return items
+    .map((item) => {
+      const where =
+        item.port && item.pid ? `:${item.port} pid ${item.pid}` : "no port yet";
+      // Collapsed: a recorded command is whatever was typed, and an agent's
+      // shell call is routinely a whole script.
+      const command = truncate(item.command.split(/\s+/).join(" "), 160);
+      return `${item.state === "bound" ? "*" : "-"} ${command}\n    ${item.cwd}\n    ${where}, from ${item.source}`;
+    })
+    .join("\n");
 }

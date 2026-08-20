@@ -35,6 +35,21 @@ pub struct ServiceView {
     /// restarted from here, because the runtime does not own it.
     #[serde(default)]
     pub managed: bool,
+    /// Another supervisor keeping this alive, when one is.
+    ///
+    /// Only ever set for a service the runtime did not start. It is the answer
+    /// to "why can I not stop this?" — a stop issued here would be undone in a
+    /// second by whatever is watching, so the honest thing is to say who.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<String>,
+    /// That supervisor's own name for this service.
+    ///
+    /// The link that makes the row actionable: knowing PM2 holds the port says
+    /// only why the runtime cannot stop it, where knowing *which entry* is
+    /// enough to stop it through PM2 — which is a stop that works, rather than
+    /// one undone a second later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor_entry: Option<String>,
 }
 
 /// Something listening inside a project that no declared service accounts for.
@@ -54,6 +69,9 @@ pub struct ExternalService {
     pub command_line: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Another supervisor already keeping this alive, if one is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<String>,
 }
 
 /// A container belonging to a project, running or not.
@@ -96,6 +114,9 @@ pub struct WorkspaceView {
     /// Containers compose defines for this checkout.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub containers: Vec<ContainerView>,
+    /// Entries another supervisor keeps in this checkout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supervised: Vec<SupervisedView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +149,13 @@ pub struct PortOwner {
     pub project_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<WorkspaceId>,
+    /// Another supervisor already keeping this alive: `pm2`, `systemd`.
+    ///
+    /// Reported, never acted on. Something that restarts a service on its own
+    /// will undo a stop issued here, and taking it over means removing it from
+    /// wherever it is declared — which usually changes what starts at boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,4 +265,67 @@ pub enum LaunchState {
     Pending,
     /// A port appeared that this launch explains.
     Bound,
+}
+
+/// What adopting a port produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptOutcome {
+    pub service: ServiceView,
+    /// Where the command came from. Never the project's scripts.
+    pub command_source: CommandSource,
+    /// False when the service was already declared and nothing changed.
+    pub declared: bool,
+    /// The command that was written down before, when adopting replaced it.
+    ///
+    /// Worth saying out loud: a definition silently rewritten underneath
+    /// somebody is worse than one that was wrong openly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced_command: Option<String>,
+    /// Set when something else is still keeping it alive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandSource {
+    /// A launch recorded before it ran — what somebody actually asked for.
+    Recorded,
+    /// The process's own argv: what the shell and the package manager turned
+    /// that request into.
+    ProcessArgv,
+}
+
+/// A service another supervisor keeps, that the runtime can switch.
+///
+/// Reported separately from declared services for the same reason containers
+/// are: the runtime did not decide what this is and does not decide whether it
+/// comes back after a reboot. What it can do is start and stop it, using the
+/// named operations the supervisor offers itself, which leaves that
+/// supervisor's registry exactly as it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupervisedView {
+    /// The supervisor's own name for it.
+    pub name: String,
+    /// Which supervisor: `pm2`, `systemd`.
+    pub supervisor: String,
+    /// `online`, `stopped`, `errored`, …
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub command: String,
+    pub restarts: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Set when restarting this would fail, with the reason.
+    ///
+    /// A production entry whose build has been replaced by a dev server keeps
+    /// serving until something restarts it, and then cannot start at all. The
+    /// runtime knows both halves — that it runs in production mode, and that
+    /// the build directory has no production build in it — so it says so
+    /// before the restart rather than after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_warning: Option<String>,
 }

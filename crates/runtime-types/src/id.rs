@@ -70,3 +70,7 @@ define_id!(
     /// Identifies an `AgentSession` — one coding agent connected to the daemon.
     SessionId
 );
+define_id!(
+    /// Identifies a `Task` — a named sequence of steps in a workspace.
+    TaskId
+);

@@ -11,6 +11,8 @@ import { PromptSheet } from "./components/PromptSheet";
 import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
+import { SupervisedRow } from "./components/SupervisedRow";
+import { TakeControlSheet } from "./components/TakeControlSheet";
 import type { Discovery, LogLine, PortOwner, ProjectView, ServiceView } from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
@@ -160,6 +162,12 @@ export default function App() {
     return null;
   }, [project, selectedService]);
 
+  /** The port a Take control click is asking about, with its supervisor. */
+  const [takingOver, setTakingOver] = useState<{
+    port: number;
+    supervisor?: string;
+  } | null>(null);
+
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -222,6 +230,20 @@ export default function App() {
           onConfirm={([path]) => {
             setPrompt(null);
             void handleScanFolder(path);
+          }}
+        />
+      )}
+
+      {takingOver && (
+        <TakeControlSheet
+          port={takingOver.port}
+          supervisor={takingOver.supervisor}
+          busy={busy}
+          onCancel={() => setTakingOver(null)}
+          onConfirm={(force) => {
+            const { port } = takingOver;
+            setTakingOver(null);
+            void act(() => api.adoptPort(port, force));
           }}
         />
       )}
@@ -360,9 +382,37 @@ export default function App() {
                               act(() => openExternal(service.url as string))
                             }
                             onEdit={() => setEditing(service)}
+                            onSupervisedControl={(action) =>
+                              service.supervisor_entry !== undefined &&
+                              act(() =>
+                                api.controlSupervised(
+                                  service.supervisor_entry as string,
+                                  action,
+                                ),
+                              )
+                            }
+                            onTakeControl={() =>
+                              service.actual_port !== undefined &&
+                              setTakingOver({
+                                port: service.actual_port,
+                                supervisor: service.supervisor,
+                              })
+                            }
                           />
                         ))
                       )}
+
+                      {(workspace.supervised ?? []).map((entry) => (
+                        <SupervisedRow
+                          entry={entry}
+                          busy={busy}
+                          key={`${entry.supervisor}-${entry.name}`}
+                          onControl={(action) =>
+                            act(() => api.controlSupervised(entry.name, action))
+                          }
+                          onOpen={() => act(() => openExternal(entry.url as string))}
+                        />
+                      ))}
 
                       {(workspace.containers ?? []).map((container) => (
                         <ContainerRow
@@ -376,7 +426,17 @@ export default function App() {
                       ))}
 
                       {(workspace.external ?? []).map((item) => (
-                        <ExternalRow external={item} key={`${item.port}-${item.pid}`} />
+                        <ExternalRow
+                          external={item}
+                          busy={busy}
+                          key={`${item.port}-${item.pid}`}
+                          onTakeControl={() =>
+                            setTakingOver({
+                              port: item.port,
+                              supervisor: item.supervisor,
+                            })
+                          }
+                        />
                       ))}
                     </section>
                   ))}

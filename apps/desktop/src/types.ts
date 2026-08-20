@@ -80,6 +80,10 @@ export interface ServiceView {
   url?: string;
   /** False when the runtime found it already running and cannot stop it. */
   managed?: boolean;
+  /** Another supervisor keeping this alive: "pm2", "systemd". */
+  supervisor?: string;
+  /** That supervisor's own name for it — enough to stop it through them. */
+  supervisor_entry?: string;
 }
 
 /** A live port in a checkout that no declared service explains. */
@@ -90,6 +94,8 @@ export interface ExternalService {
   cwd?: string;
   command_line?: string;
   url?: string;
+  /** Another supervisor keeping this alive. */
+  supervisor?: string;
 }
 
 /**
@@ -126,6 +132,7 @@ export interface WorkspaceView extends Workspace {
   services: ServiceView[];
   external?: ExternalService[];
   containers?: ContainerView[];
+  supervised?: SupervisedView[];
 }
 
 export interface ProjectView extends Project {
@@ -247,4 +254,32 @@ export function isLive(status: ServiceStatus): boolean {
     status === "unhealthy" ||
     status === "stopping"
   );
+}
+
+/** What adopting a port produced. */
+export interface AdoptOutcome {
+  service: ServiceView;
+  /** Where the command came from. Never the project's scripts. */
+  command_source: "recorded" | "process_argv";
+  /** False when the service was already declared and nothing changed. */
+  declared: boolean;
+  /** The command written down before, when adopting replaced it. */
+  replaced_command?: string;
+  supervisor?: string;
+}
+
+/** A service another supervisor keeps, that the runtime can switch. */
+export interface SupervisedView {
+  name: string;
+  /** Which supervisor: "pm2", "systemd". */
+  supervisor: string;
+  status: string;
+  pid?: number;
+  command: string;
+  restarts: number;
+  /** Absent, not empty, when it holds no ports: the daemon omits empty lists. */
+  ports?: number[];
+  url?: string;
+  /** Set when restarting this would fail, with the reason. */
+  restart_warning?: string;
 }

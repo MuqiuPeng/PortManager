@@ -27,6 +27,8 @@ fn service() -> Service {
         health_check: Some(HealthCheck::Tcp { port: None }),
         auto_start: false,
         conflict_policy: ConflictPolicy::AllocateNext,
+        depends_on: vec!["db".to_string()],
+        one_shot: false,
     }
 }
 
@@ -51,6 +53,8 @@ fn service_view() -> ServiceView {
         actual_port: Some(3000),
         url: Some("http://localhost:3000".to_string()),
         managed: true,
+        supervisor: Some("pm2".to_string()),
+        supervisor_entry: Some("flip7".to_string()),
     }
 }
 
@@ -74,7 +78,9 @@ fn project_view() -> ProjectView {
                 cwd: None,
                 command_line: Some("node".to_string()),
                 url: None,
+                supervisor: Some("pm2".to_string()),
             }],
+            supervised: vec![],
             containers: vec![ContainerView {
                 name: "db".to_string(),
                 service: Some("db".to_string()),
@@ -106,6 +112,7 @@ fn port_owner() -> PortOwner {
         service_name: Some("web".to_string()),
         started_by: Some(StartedBy::Cli),
         container: None,
+        supervisor: Some("pm2".to_string()),
         managed: true,
     }
 }
@@ -153,6 +160,8 @@ fn responses() -> Vec<ResponseBody> {
                     health: None,
                     auto_start: false,
                     on_conflict: None,
+                    depends_on: vec!["db".to_string()],
+                    one_shot: true,
                 },
             )]),
         }),
@@ -220,6 +229,35 @@ fn responses() -> Vec<ResponseBody> {
                 pid: Some(42),
                 service_id: Some(ServiceId::from("svc")),
             }],
+        },
+        ResponseBody::Adopted(AdoptOutcome {
+            service: service_view(),
+            command_source: CommandSource::ProcessArgv,
+            declared: false,
+            replaced_command: Some("npm run dev".to_string()),
+            supervisor: Some("pm2".to_string()),
+        }),
+        ResponseBody::Supervised(SupervisedView {
+            name: "flip7".to_string(),
+            supervisor: "pm2".to_string(),
+            status: "online".to_string(),
+            pid: Some(29106),
+            command: "server.mjs".to_string(),
+            restarts: 22,
+            ports: vec![3007],
+            url: Some("http://localhost:3007".to_string()),
+            restart_warning: Some("holds a development build".to_string()),
+        }),
+        ResponseBody::Tasks {
+            items: vec![Task {
+                id: TaskId::from("task"),
+                workspace_id: WorkspaceId::from("ws"),
+                name: "dev".to_string(),
+                steps: vec!["migrate".to_string(), "api".to_string()],
+            }],
+        },
+        ResponseBody::TaskRun {
+            steps: vec!["migrate (ran)".to_string(), "api".to_string()],
         },
         ResponseBody::Sessions {
             items: vec![AgentSession {
@@ -296,6 +334,8 @@ fn every_request_survives_a_round_trip() {
                 health: None,
                 auto_start: false,
                 on_conflict: None,
+                depends_on: vec!["db".to_string()],
+                one_shot: true,
             },
         },
         Request::RemoveService { project: None, service: "web".to_string() },
@@ -307,6 +347,19 @@ fn every_request_survives_a_round_trip() {
             session: Some("s1".to_string()),
         },
         Request::ListLaunches,
+        Request::ListTasks { selector: ".".to_string() },
+        Request::SetTask {
+            selector: ".".to_string(),
+            name: "dev".to_string(),
+            steps: vec!["migrate".to_string(), "api".to_string()],
+        },
+        Request::RemoveTask { selector: ".".to_string(), name: "dev".to_string() },
+        Request::RunTask { selector: ".".to_string(), name: "dev".to_string() },
+        Request::ControlSupervised {
+            name: "flip7".to_string(),
+            action: "restart".to_string(),
+        },
+        Request::AdoptPort { port: 3007, force: true },
         Request::StartService {
             project: None,
             service: "web".to_string(),

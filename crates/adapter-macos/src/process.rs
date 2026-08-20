@@ -131,6 +131,49 @@ impl MacProcessProvider {
         }
     }
 
+    /// The environment of a running process.
+    ///
+    /// One `sysctl` with an `ARGMAX` buffer, as for argv, so it is made only
+    /// for single-process lookups.
+    fn environment(pid: u32) -> Option<Vec<(String, String)>> {
+        // SAFETY: as in `command_line` — mib lengths match, sizes are updated
+        // in place by the kernel, and reads are bounds-checked.
+        unsafe {
+            let mut argmax: libc::c_int = 0;
+            let mut size = std::mem::size_of::<libc::c_int>();
+            let mut mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+            if libc::sysctl(
+                mib.as_mut_ptr(),
+                2,
+                &mut argmax as *mut _ as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            ) != 0
+                || argmax <= 0
+            {
+                return None;
+            }
+
+            let mut buffer = vec![0u8; argmax as usize];
+            let mut size = buffer.len();
+            let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+            if libc::sysctl(
+                mib.as_mut_ptr(),
+                3,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return None;
+            }
+            buffer.truncate(size);
+            Some(parse_procenv(&buffer))
+        }
+    }
+
     fn refine(mut info: ProcessInfo) -> ProcessInfo {
         if let Some(start_time_ms) = Self::precise_start_time_ms(info.pid) {
             info.start_time_ms = start_time_ms;
@@ -171,6 +214,17 @@ impl ProcessProvider for MacProcessProvider {
             .into_iter()
             .map(Self::refine)
             .collect())
+    }
+
+    fn environment(&self, pid: u32, keys: &[&str]) -> Result<Option<Vec<(String, String)>>> {
+        let Some(all) = Self::environment(pid) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            all.into_iter()
+                .filter(|(key, _)| keys.contains(&key.as_str()))
+                .collect(),
+        ))
     }
 
     fn process_info(&self, pid: u32) -> Result<Option<ProcessInfo>> {
@@ -220,6 +274,54 @@ impl ProcessProvider for MacProcessProvider {
 ///
 /// Layout: a 4-byte argc, the executable path, NUL padding, then `argc`
 /// NUL-terminated arguments (the environment follows, and is ignored).
+/// The environment a process was started with, from the same buffer as argv.
+///
+/// `KERN_PROCARGS2` lays out argc, the executable path, argv, then envp, so the
+/// environment costs nothing beyond the read already being made. It matters
+/// because argv alone does not say how a service runs: `node server.mjs` is
+/// the development server or the production one depending only on `NODE_ENV`,
+/// and starting the wrong one replaces a project's production build with a
+/// development one it cannot boot from.
+fn parse_procenv(buffer: &[u8]) -> Vec<(String, String)> {
+    if buffer.len() < 4 {
+        return Vec::new();
+    }
+    let argc = i32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]).max(0) as usize;
+
+    // Skip the executable path and its padding, then argv.
+    let mut position = 4;
+    while position < buffer.len() && buffer[position] != 0 {
+        position += 1;
+    }
+    while position < buffer.len() && buffer[position] == 0 {
+        position += 1;
+    }
+    for _ in 0..argc {
+        while position < buffer.len() && buffer[position] != 0 {
+            position += 1;
+        }
+        position += 1;
+    }
+
+    let mut out = Vec::new();
+    while position < buffer.len() {
+        let start = position;
+        while position < buffer.len() && buffer[position] != 0 {
+            position += 1;
+        }
+        if start == position {
+            // The empty string that ends envp.
+            break;
+        }
+        let entry = String::from_utf8_lossy(&buffer[start..position]).to_string();
+        if let Some((key, value)) = entry.split_once('=') {
+            out.push((key.to_string(), value.to_string()));
+        }
+        position += 1;
+    }
+    out
+}
+
 fn parse_procargs(buffer: &[u8]) -> Vec<String> {
     if buffer.len() < 4 {
         return Vec::new();
@@ -252,6 +354,34 @@ fn parse_procargs(buffer: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_environment_that_follows_argv() {
+        // The case this exists for: argv is identical between a project's dev
+        // and production servers, and only NODE_ENV tells them apart.
+        let mut buffer = 2i32.to_ne_bytes().to_vec();
+        buffer.extend_from_slice(b"/usr/local/bin/node\0");
+        buffer.extend_from_slice(b"\0\0");
+        buffer.extend_from_slice(b"node\0");
+        buffer.extend_from_slice(b"server.mjs\0");
+        buffer.extend_from_slice(b"NODE_ENV=production\0");
+        buffer.extend_from_slice(b"DATABASE_URL=postgres://secret\0");
+
+        let env = parse_procenv(&buffer);
+        assert!(env.contains(&("NODE_ENV".to_string(), "production".to_string())));
+        // Everything is parsed here; the filtering to mode switches happens at
+        // the provider boundary, which is what keeps credentials out of the
+        // registry.
+        assert_eq!(env.len(), 2);
+    }
+
+    #[test]
+    fn an_environment_with_no_entries_is_not_a_panic() {
+        let mut buffer = 1i32.to_ne_bytes().to_vec();
+        buffer.extend_from_slice(b"/bin/ls\0\0");
+        buffer.extend_from_slice(b"ls\0");
+        assert!(parse_procenv(&buffer).is_empty());
+    }
 
     #[test]
     fn parses_a_procargs_buffer() {

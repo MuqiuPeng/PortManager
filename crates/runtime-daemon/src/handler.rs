@@ -160,6 +160,8 @@ impl Dispatcher {
                     health_check: config.health,
                     auto_start: config.auto_start,
                     conflict_policy: config.on_conflict.unwrap_or_default(),
+                    depends_on: config.depends_on,
+                    one_shot: config.one_shot,
                 };
                 let created = runtime.add_service(&workspace.id, service)?;
                 Ok(ResponseBody::Service(runtime.service_view(&created)?))
@@ -188,6 +190,39 @@ impl Dispatcher {
             }
 
             Request::ListLaunches => Ok(ResponseBody::Launches { items: runtime.launches() }),
+
+            Request::ControlSupervised { name, action } => {
+                let action = runtime_core::pm2::Pm2Action::parse(&action).ok_or_else(|| {
+                    RuntimeError::invalid(format!(
+                        "'{action}' is not one of start, stop, restart"
+                    ))
+                })?;
+                Ok(ResponseBody::Supervised(
+                    runtime.control_supervised(&name, action)?,
+                ))
+            }
+
+            Request::ListTasks { selector } => {
+                let workspace = self.primary_workspace(&selector)?;
+                Ok(ResponseBody::Tasks { items: runtime.list_tasks(&workspace.id)? })
+            }
+            Request::SetTask { selector, name, steps } => {
+                let workspace = self.primary_workspace(&selector)?;
+                runtime.set_task(&workspace.id, &name, steps)?;
+                Ok(ResponseBody::Tasks { items: runtime.list_tasks(&workspace.id)? })
+            }
+            Request::RemoveTask { selector, name } => {
+                let workspace = self.primary_workspace(&selector)?;
+                Ok(ResponseBody::Done { ok: runtime.remove_task(&workspace.id, &name)? })
+            }
+            Request::RunTask { selector, name } => {
+                let workspace = self.primary_workspace(&selector)?;
+                Ok(ResponseBody::TaskRun { steps: runtime.run_task(&workspace.id, &name).await? })
+            }
+
+            Request::AdoptPort { port, force } => {
+                Ok(ResponseBody::Adopted(runtime.adopt_port(port, force)?))
+            }
 
             Request::StartService {
                 project,
@@ -392,6 +427,24 @@ impl Dispatcher {
             // Handled by the connection loop, which needs the socket itself.
             Request::Subscribe => Ok(ResponseBody::Done { ok: true }),
         }
+    }
+
+    /// The checkout a task belongs to.
+    ///
+    /// The main one, not a worktree: a task names services by the names they
+    /// have in the project, and every worktree has the same set under different
+    /// ports. Declaring one per worktree would multiply the same task by the
+    /// number of branches somebody happens to have checked out.
+    fn primary_workspace(&self, selector: &str) -> Result<runtime_types::Workspace> {
+        let project = self.runtime.resolve_project(selector)?;
+        self.runtime
+            .store()
+            .list_workspaces(&project.id)?
+            .into_iter()
+            .find(|workspace| !workspace.worktree)
+            .ok_or_else(|| {
+                RuntimeError::invalid(format!("'{}' has no main checkout", project.name))
+            })
     }
 
     fn resolve_service(&self, project: Option<&str>, selector: &str) -> Result<Service> {

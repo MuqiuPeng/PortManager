@@ -6,7 +6,7 @@
 use runtime_core::discover::Discovery;
 use runtime_types::{
     ContainerView, DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
-    ServiceView, StartOutcome, Workspace,
+    ServiceView, StartOutcome, SupervisedView, Workspace,
 };
 
 /// A filled dot for live services, hollow for stopped — readable at a glance
@@ -74,6 +74,9 @@ pub fn projects(views: &[ProjectView]) -> String {
             for service in &workspace.services {
                 out.push_str(&format!("    {}\n", service_line(service)));
             }
+            for entry in &workspace.supervised {
+                out.push_str(&format!("    {}\n", supervised_line(entry)));
+            }
             for container in &workspace.containers {
                 out.push_str(&format!("    {}\n", container_line(container)));
             }
@@ -107,6 +110,35 @@ pub fn service_line(view: &ServiceView) -> String {
 }
 
 /// A container compose defines for this checkout.
+pub fn supervised_line(view: &SupervisedView) -> String {
+    let ports = if view.ports.is_empty() {
+        "-".to_string()
+    } else {
+        view.ports
+            .iter()
+            .map(|port| format!(":{port}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // The warning goes on the row, not in a detail pane. It is only useful
+    // before somebody restarts the service, and by the time they open a detail
+    // pane they have usually decided to.
+    let warning = if view.restart_warning.is_some() {
+        "  ! restarting this will fail"
+    } else {
+        ""
+    };
+    format!(
+        "{} {:<12} {:<8} {}  [{} {}]{warning}",
+        if view.status == "online" { "◈" } else { "◇" },
+        view.name,
+        ports,
+        view.status,
+        view.supervisor,
+        view.name,
+    )
+}
+
 pub fn container_line(view: &ContainerView) -> String {
     let ports = if view.ports.is_empty() {
         "-".to_string()
@@ -144,7 +176,15 @@ fn external_line(external: &ExternalService) -> String {
                 .map(|command| command.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
         })
         .unwrap_or_else(|| format!("pid {}", external.pid));
-    format!("◆ {:<12} :{:<7} {}", "(external)", external.port, what)
+    let supervisor = external
+        .supervisor
+        .as_ref()
+        .map(|kind| format!("  [{kind}]"))
+        .unwrap_or_default();
+    format!(
+        "◆ {:<12} :{:<7} {}{supervisor}",
+        "(external)", external.port, what
+    )
 }
 
 pub fn services(views: &[ServiceView]) -> String {
@@ -281,6 +321,12 @@ pub fn port_owner(owner: &PortOwner) -> String {
         {
             out.push_str(&format!("  started by {label}\n"));
         }
+    }
+    if let Some(supervisor) = &owner.supervisor {
+        // Before "not managed by the runtime", because it is the more useful
+        // half: stopping this by hand achieves nothing while something else is
+        // watching for it to go.
+        out.push_str(&format!("  kept alive by {supervisor}\n"));
     }
     if !owner.managed {
         out.push_str("  not managed by the runtime\n");

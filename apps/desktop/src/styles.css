@@ -1013,3 +1013,18 @@ button {
 .sheet.narrow {
   width: min(420px, calc(100vw - 48px));
 }
+
+/* A supervised entry is not the runtime's own, but it is switchable — so it
+   reads like a service row rather than the dimmed external one. */
+.service.supervised .service-name .badge {
+  margin-left: 6px;
+}
+
+/* Only useful before somebody presses Restart, so it sits on the row. */
+.service-warning {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--warning, #d08b3c);
+}

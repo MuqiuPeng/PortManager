@@ -9,7 +9,13 @@ import type { ExternalService } from "../types";
  * it is would be a guess, and a service reported as running when something else
  * holds its port is worse than an honest gap.
  */
-export function ExternalRow({ external }: { external: ExternalService }) {
+interface Props {
+  external: ExternalService;
+  busy: boolean;
+  onTakeControl: () => void;
+}
+
+export function ExternalRow({ external, busy, onTakeControl }: Props) {
   const what =
     external.container ?? external.command_line?.split(/\s+/)[0]?.split(/[/\\]/).pop();
 
@@ -20,13 +26,23 @@ export function ExternalRow({ external }: { external: ExternalService }) {
       <span className="service-body">
         <span className="service-name">{what ?? `pid ${external.pid}`}</span>
         <span className="service-meta">
-          running · not started by the runtime
+          {external.supervisor
+            ? `running · kept alive by ${external.supervisor}`
+            : "running · not started by the runtime"}
         </span>
       </span>
 
       <span className="service-port">:{external.port}</span>
 
       <span className="service-actions">
+        <button
+          className="ghost"
+          onClick={onTakeControl}
+          disabled={busy}
+          title="Declare this so the runtime can start it again"
+        >
+          Take control
+        </button>
         {external.url && (
           <button
             className="ghost"

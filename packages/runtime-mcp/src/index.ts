@@ -19,9 +19,11 @@ import { z } from "zod";
 
 import { DaemonClient, resolveEndpoint } from "./client.js";
 import {
+  formatAdopted,
   formatContainer,
   formatDiscoveries,
   formatHealth,
+  formatLaunches,
   formatLogs,
   formatPortStatus,
   formatPorts,
@@ -546,6 +548,40 @@ function registerTools(
     async () =>
       run("list_ports", undefined, (body) =>
         body.type === "ports" ? formatPorts(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "adopt_port",
+    {
+      title: "Take control of a port",
+      description:
+        "Declare whatever is already listening on a port as a service, so it can be stopped and started from here afterwards. The command is read off the running process, never guessed from package.json — a project whose dev and start scripts share a build directory is left unable to boot if it is adopted under the wrong one. Nothing is stopped or restarted. Refuses when another supervisor (PM2, systemd) is keeping the service alive, because taking it over means removing it from there, which usually changes what starts at boot; pass force to declare it anyway.",
+      inputSchema: {
+        port: z.number().int().min(1).max(65535),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Declare it even though another supervisor keeps it alive."),
+      },
+    },
+    async ({ port, force }) =>
+      run("adopt_port", { port, force: force ?? false }, (body) =>
+        body.type === "adopted" ? formatAdopted(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "list_launches",
+    {
+      title: "List recorded launches",
+      description:
+        "List the service launches the runtime was told about but did not perform — what an agent or a terminal started, with the command exactly as it was given. A launch that turned into a listening port carries the port and pid it became. Use this to find out how something now running was actually started.",
+      inputSchema: {},
+    },
+    async () =>
+      run("list_launches", undefined, (body) =>
+        body.type === "launches" ? formatLaunches(body.items) : unexpected(body),
       ),
   );
 

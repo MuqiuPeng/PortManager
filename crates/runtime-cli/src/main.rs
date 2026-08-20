@@ -116,6 +116,16 @@ enum Command {
     #[command(subcommand)]
     Port(PortCommand),
 
+    /// Switch entries another supervisor keeps, without taking them over.
+    ///
+    /// PM2 still decides what these are and whether they start at boot; this
+    /// decides whether they are running now. Deleting an entry is not offered.
+    Supervised {
+        /// start | stop | restart
+        action: String,
+        name: String,
+    },
+
     /// Switch containers on and off.
     ///
     /// Compose still owns what these services are; this owns whether they run.
@@ -130,6 +140,10 @@ enum Command {
         write: bool,
     },
 
+    /// Named step sequences: bring up a set of services in order.
+    #[command(subcommand)]
+    Task(TaskCommand),
+
     /// Manage git worktrees of a project.
     #[command(subcommand)]
     Worktree(WorktreeCommand),
@@ -142,8 +156,37 @@ enum Command {
     #[command(subcommand)]
     Hook(HookCommand),
 
+    /// Declare whatever is on a port, so it can be started again later.
+    ///
+    /// The command is taken from the running process, never from the project's
+    /// scripts: `dev` and `start` can write to the same build directory, and
+    /// adopting under the wrong one leaves the service unable to boot.
+    Adopt {
+        port: u16,
+        /// Declare it even though another supervisor is keeping it alive.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Check that the runtime can see processes and ports on this machine.
     Doctor,
+}
+
+#[derive(Debug, Subcommand)]
+enum TaskCommand {
+    /// List the tasks declared in a project.
+    List,
+    /// Declare or replace one. Steps run in the order given.
+    Set {
+        name: String,
+        /// Service names, in order. Each brings up its own dependencies first.
+        #[arg(required = true)]
+        steps: Vec<String>,
+    },
+    /// Remove a task. Nothing running is touched.
+    Remove { name: String },
+    /// Bring up every step in order.
+    Run { name: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -163,6 +206,12 @@ enum HookCommand {
     PreToolUse,
     /// Show what has been recorded recently.
     Log,
+    /// Register the MCP server with Claude Code for every project.
+    Mcp {
+        /// The MCP server command. Defaults to `runtime-mcp` on PATH.
+        #[arg(long, default_value = "runtime-mcp")]
+        command: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -230,6 +279,12 @@ enum ServiceCommand {
         cwd: Option<PathBuf>,
         #[arg(long = "type")]
         service_type: Option<String>,
+        /// Services here that must be up first. Repeatable.
+        #[arg(long = "depends-on")]
+        depends_on: Vec<String>,
+        /// Runs to completion instead of staying up: a migration, a seed.
+        #[arg(long = "one-shot")]
+        one_shot: bool,
     },
 
     /// Remove a declared service. Nothing running is touched.
@@ -327,6 +382,9 @@ async fn run(cli: Cli) -> Result<String> {
                 return hook::uninstall().map_err(RuntimeError::invalid);
             }
             HookCommand::Status => return Ok(hook::status()),
+            HookCommand::Mcp { command } => {
+                return hook::install_mcp(command).map_err(RuntimeError::invalid);
+            }
             HookCommand::Log => {
                 let mut client = connect().await?;
                 let response = client.call(Request::ListLaunches).await?;
@@ -340,6 +398,30 @@ async fn run(cli: Cli) -> Result<String> {
 
     let response = match cli.command {
         Command::List => client.call(Request::ListProjects).await?,
+
+        Command::Task(command) => {
+            let selector = project.clone().unwrap_or_else(|| ".".to_string());
+            match command {
+                TaskCommand::List => client.call(Request::ListTasks { selector }).await?,
+                TaskCommand::Set { name, steps } => {
+                    client.call(Request::SetTask { selector, name, steps }).await?
+                }
+                TaskCommand::Remove { name } => {
+                    client.call(Request::RemoveTask { selector, name }).await?
+                }
+                TaskCommand::Run { name } => {
+                    client.call(Request::RunTask { selector, name }).await?
+                }
+            }
+        }
+
+        Command::Supervised { action, name } => {
+            client.call(Request::ControlSupervised { name, action }).await?
+        }
+
+        Command::Adopt { port, force } => {
+            client.call(Request::AdoptPort { port, force }).await?
+        }
 
         Command::Scan { path, add } => {
             let mut paths = Vec::new();
@@ -431,6 +513,8 @@ async fn run(cli: Cli) -> Result<String> {
             port,
             cwd,
             service_type,
+            depends_on,
+            one_shot,
         }) => {
             let selector = project.unwrap_or_else(|| ".".to_string());
             client
@@ -449,6 +533,8 @@ async fn run(cli: Cli) -> Result<String> {
                         health: None,
                         auto_start: false,
                         on_conflict: None,
+                        depends_on,
+                        one_shot,
                     },
                 })
                 .await?
@@ -735,6 +821,76 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         }
         ResponseBody::Logs { items } => render::logs(items),
         ResponseBody::Setting { value } => value.clone().unwrap_or_else(|| "(unset)".to_string()),
+        ResponseBody::Tasks { items } => {
+            if items.is_empty() {
+                "No tasks declared.".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|task| format!("{}\n    {}", task.name, task.steps.join(" -> ")))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        ResponseBody::TaskRun { steps } => {
+            if steps.is_empty() {
+                "Nothing to do.".to_string()
+            } else {
+                steps
+                    .iter()
+                    .map(|step| format!("\u{2713} {step}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        ResponseBody::Supervised(view) => {
+            let mut out = format!("{} — {} [{}]\n", view.name, view.status, view.supervisor);
+            if let Some(pid) = view.pid {
+                out.push_str(&format!("  pid {pid}\n"));
+            }
+            if !view.ports.is_empty() {
+                let ports = view
+                    .ports
+                    .iter()
+                    .map(|port| format!(":{port}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                out.push_str(&format!("  {ports}\n"));
+            }
+            out.push_str(&format!("  {}\n", view.command));
+            if let Some(warning) = &view.restart_warning {
+                out.push_str(&format!("  ! {warning}\n"));
+            }
+            out.trim_end().to_string()
+        }
+        ResponseBody::Adopted(outcome) => {
+            let name = &outcome.service.service.name;
+            let mut out = match (&outcome.declared, &outcome.replaced_command) {
+                (true, _) => format!("declared '{name}'\n"),
+                (false, Some(replaced)) => {
+                    format!("corrected '{name}'\n  was     {replaced}\n")
+                }
+                (false, None) => format!("'{name}' was already declared\n"),
+            };
+            out.push_str(&format!("  command {}\n", outcome.service.service.command));
+            out.push_str(&format!("  cwd     {}\n", outcome.service.service.cwd.display()));
+            // Where the command came from decides how much to trust it, so it
+            // is said out loud rather than left for the caller to assume.
+            out.push_str(match outcome.command_source {
+                runtime_types::CommandSource::Recorded => {
+                    "  taken from the launch that was recorded for it\n"
+                }
+                runtime_types::CommandSource::ProcessArgv => {
+                    "  taken from the running process, not from package.json\n"
+                }
+            });
+            if let Some(supervisor) = &outcome.supervisor {
+                out.push_str(&format!(
+                    "  still kept alive by {supervisor}: starting it here will fight with it\n"
+                ));
+            }
+            out.trim_end().to_string()
+        }
         ResponseBody::Launches { items } => {
             if items.is_empty() {
                 "nothing recorded".to_string()

@@ -118,8 +118,36 @@ export interface PortOwner {
   started_by?: string;
   /** Container publishing this port, when it is not a plain process. */
   container?: string;
+  /** Another supervisor keeping this alive: "pm2", "systemd". */
+  supervisor?: string;
   /** Only a process the runtime started may ever be terminated automatically. */
   managed: boolean;
+}
+
+/** A launch the runtime was told about but did not perform. */
+export interface LaunchObservation {
+  id: string;
+  /** Exactly as given, never a script name inferred from it. */
+  command: string;
+  cwd: string;
+  source: string;
+  session?: string;
+  observed_at: string;
+  state: "pending" | "bound";
+  port?: number;
+  pid?: number;
+  service_id?: string;
+}
+
+export interface AdoptOutcome {
+  service: ServiceView;
+  /** Where the command came from. Never the project's scripts. */
+  command_source: "recorded" | "process_argv";
+  /** False when the service was already declared and nothing changed. */
+  declared: boolean;
+  /** The command written down before, when adopting replaced it. */
+  replaced_command?: string;
+  supervisor?: string;
 }
 
 export interface PortStatus {
@@ -197,6 +225,8 @@ export type ResponseBody =
   | { type: "ports"; items: PortOwner[] }
   | ({ type: "reservation" } & PortReservation)
   | { type: "logs"; items: LogLine[] }
+  | { type: "launches"; items: LaunchObservation[] }
+  | ({ type: "adopted" } & AdoptOutcome)
   | { type: "sessions"; items: AgentSession[] }
   | ({ type: "session" } & AgentSession)
   | { type: "done"; ok: boolean };

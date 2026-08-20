@@ -105,6 +105,20 @@ pub trait ProcessProvider: Send + Sync {
         Ok(out)
     }
 
+    /// Variables a running process was started with, filtered to `keys`.
+    ///
+    /// Filtered rather than whole, and by the caller's list rather than this
+    /// one's judgement: an environment holds credentials, and a runtime that
+    /// copies it wholesale into a registry has quietly written them to disk.
+    /// What the caller actually needs is much smaller — the handful of
+    /// variables that select which *mode* a service runs in.
+    ///
+    /// The default is "cannot tell", which callers must treat as unknown
+    /// rather than as empty.
+    fn environment(&self, _pid: u32, _keys: &[&str]) -> Result<Option<Vec<(String, String)>>> {
+        Ok(None)
+    }
+
     /// Signal the process and everything it spawned.
     ///
     /// Returns `Ok(false)` when the identity no longer matches a live process,

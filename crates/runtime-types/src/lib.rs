@@ -11,12 +11,10 @@ pub mod view;
 
 pub use config::{ProjectConfig, ServiceConfig, CONFIG_FILE_NAME};
 pub use error::{Result, RuntimeError};
-pub use id::{InstanceId, ProjectId, ServiceId, SessionId, WorkspaceId};
+pub use id::{InstanceId, ProjectId, ServiceId, SessionId, TaskId, WorkspaceId};
 pub use model::{
-    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus,
-    Project, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy,
-    Workspace,
+    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy, Task, Workspace,
 };
 pub use view::{
-    ContainerView, DaemonInfo, ExternalService, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, WorkspaceView,
+    AdoptOutcome, CommandSource, ContainerView, DaemonInfo, ExternalService, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, SupervisedView, WorkspaceView,
 };

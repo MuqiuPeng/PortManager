@@ -291,3 +291,42 @@ mod tests {
         assert_eq!(input.tool_name.as_deref(), Some("Bash"));
     }
 }
+
+// ---- the MCP server ----------------------------------------------------
+
+/// Register the MCP server for every project this user works on.
+///
+/// User scope rather than per-project: the runtime is a property of the
+/// machine, not of a checkout, and a tool that has to be added again in each
+/// repository is one an agent will mostly not have. Stdio rather than a local
+/// HTTP endpoint, because a port manager that needs a port of its own to be
+/// reachable has an obvious failure mode on the day it is most needed.
+pub fn install_mcp(command: &str) -> Result<String, String> {
+    let output = std::process::Command::new("claude")
+        .args([
+            "mcp",
+            "add",
+            "--scope",
+            "user",
+            "--transport",
+            "stdio",
+            "localruntime",
+            "--",
+            command,
+        ])
+        .output()
+        .map_err(|err| format!("could not run `claude`: {err}"))?;
+
+    if output.status.success() {
+        return Ok(format!(
+            "registered '{command}' as the localruntime MCP server for every project"
+        ));
+    }
+    let detail = String::from_utf8_lossy(&output.stderr);
+    let detail = detail.trim();
+    Err(if detail.is_empty() {
+        "`claude mcp add` failed".to_string()
+    } else {
+        format!("`claude mcp add` failed: {detail}")
+    })
+}

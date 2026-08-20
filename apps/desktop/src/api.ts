@@ -3,19 +3,21 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  AdoptOutcome,
   ContainerView,
   DaemonInfo,
   Discovery,
+  LogLine,
   PanelSettings,
   PanelState,
-  ScreenInfo,
-  LogLine,
   PortOwner,
   ProjectView,
   RuntimeEvent,
+  ScreenInfo,
   ServicePatch,
   ServiceView,
   StartOutcome,
+  SupervisedView,
 } from "./types";
 
 /** The channel `lib.rs` re-emits daemon events on. */
@@ -37,6 +39,12 @@ export const api = {
     invoke<boolean>("remove_project", { selector }),
 
   getService: (service: string) => invoke<ServiceView>("get_service", { service }),
+
+  adoptPort: (port: number, force = false) =>
+    invoke<AdoptOutcome>("adopt_port", { port, force }),
+
+  controlSupervised: (name: string, action: "start" | "stop" | "restart") =>
+    invoke<SupervisedView>("control_supervised", { name, action }),
 
   updateService: (service: string, patch: ServicePatch) =>
     invoke<ServiceView>("update_service", { service, patch }),

@@ -13,10 +13,10 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use runtime_types::{
     AgentSession, HealthCheck, InstanceId, PortLease, PortLeaseStatus, Project, ProjectId, Result,
     RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, SessionId, StartedBy,
-    Workspace, WorkspaceId,
+    Task, TaskId, Workspace, WorkspaceId,
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -57,8 +57,19 @@ CREATE TABLE IF NOT EXISTS services (
     health_check    TEXT,
     auto_start      INTEGER NOT NULL DEFAULT 0,
     conflict_policy TEXT NOT NULL DEFAULT 'allocate-next',
+    depends_on      TEXT NOT NULL DEFAULT '[]',
+    one_shot        INTEGER NOT NULL DEFAULT 0,
     UNIQUE(workspace_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    steps        TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(workspace_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_services_workspace ON services(workspace_id);
 
 CREATE TABLE IF NOT EXISTS instances (
@@ -146,6 +157,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(sqlite_err)?;
         conn.execute_batch(SCHEMA).map_err(sqlite_err)?;
+        Self::add_missing_columns(conn);
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -153,6 +165,27 @@ impl Store {
         )
         .map_err(sqlite_err)?;
         Ok(())
+    }
+
+    /// Bring an existing database up to the current shape.
+    ///
+    /// `CREATE TABLE IF NOT EXISTS` leaves an older table exactly as it was, so
+    /// a column added to the schema never reaches a database that already
+    /// exists — and the failure is at query time, on a machine with real data
+    /// in it. Each of these is additive with a default, so running them on a
+    /// database that already has the column is a no-op and its error is the
+    /// expected outcome rather than a problem.
+    fn add_missing_columns(conn: &Connection) {
+        const ADDITIONS: &[&str] = &[
+            "ALTER TABLE services ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE services ADD COLUMN one_shot INTEGER NOT NULL DEFAULT 0",
+        ];
+        for statement in ADDITIONS {
+            // "duplicate column name" is the ordinary case: the column is
+            // already there because the database was created from the current
+            // schema, or a previous start added it.
+            let _ = conn.execute(statement, []);
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -321,10 +354,57 @@ impl Store {
         Ok((0u16..u16::MAX).find(|n| !used.contains(n)).unwrap_or(0))
     }
 
+    // ---- tasks ---------------------------------------------------------
+
+    pub fn upsert_task(&self, task: &Task) -> Result<()> {
+        let steps = serde_json::to_string(&task.steps).map_err(json_err)?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO tasks(id, workspace_id, name, steps)
+                 VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(workspace_id, name) DO UPDATE SET steps = excluded.steps",
+                params![
+                    task.id.as_str(),
+                    task.workspace_id.as_str(),
+                    task.name,
+                    steps
+                ],
+            )
+            .map_err(sqlite_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Task>> {
+        self.with_conn(|conn| {
+            let mut statement = conn
+                .prepare("SELECT * FROM tasks WHERE workspace_id = ?1 ORDER BY name")
+                .map_err(sqlite_err)?;
+            let rows = statement
+                .query_map(params![workspace_id.as_str()], |row| Ok(row_task(row)))
+                .map_err(sqlite_err)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(sqlite_err)??);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn remove_task(&self, id: &TaskId) -> Result<bool> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute("DELETE FROM tasks WHERE id = ?1", params![id.as_str()])
+                .map_err(sqlite_err)?;
+            Ok(changed > 0)
+        })
+    }
+
     // ---- services ------------------------------------------------------
 
     pub fn upsert_service(&self, service: &Service) -> Result<()> {
         let env = serde_json::to_string(&service.env).map_err(json_err)?;
+        let depends_on = serde_json::to_string(&service.depends_on).map_err(json_err)?;
         let health = service
             .health_check
             .as_ref()
@@ -334,8 +414,9 @@ impl Store {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO services(id, workspace_id, name, service_type, command, cwd, env,
-                                      preferred_port, health_check, auto_start, conflict_policy)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                                      preferred_port, health_check, auto_start, conflict_policy,
+                                      depends_on, one_shot)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(workspace_id, name) DO UPDATE SET
                      service_type = excluded.service_type,
                      command = excluded.command,
@@ -344,7 +425,9 @@ impl Store {
                      preferred_port = excluded.preferred_port,
                      health_check = excluded.health_check,
                      auto_start = excluded.auto_start,
-                     conflict_policy = excluded.conflict_policy",
+                     conflict_policy = excluded.conflict_policy,
+                     depends_on = excluded.depends_on,
+                     one_shot = excluded.one_shot",
                 params![
                     service.id.as_str(),
                     service.workspace_id.as_str(),
@@ -357,6 +440,8 @@ impl Store {
                     health,
                     service.auto_start as i64,
                     json_tag(service.conflict_policy),
+                    depends_on,
+                    service.one_shot as i64,
                 ],
             )
             .map_err(sqlite_err)?;
@@ -729,6 +814,22 @@ fn row_service(row: &Row<'_>) -> Result<Service> {
         health_check,
         auto_start: get_int(row, "auto_start")? != 0,
         conflict_policy: parse_tag(&get_text(row, "conflict_policy")?)?,
+        // Tolerated as absent: a row written before the column existed reads
+        // back through the default, and a database that predates the migration
+        // should open rather than fail.
+        depends_on: get_opt_text(row, "depends_on")?
+            .map(|raw| serde_json::from_str(&raw).unwrap_or_default())
+            .unwrap_or_default(),
+        one_shot: get_opt_int(row, "one_shot")?.unwrap_or(0) != 0,
+    })
+}
+
+fn row_task(row: &Row<'_>) -> Result<Task> {
+    Ok(Task {
+        id: TaskId(get_text(row, "id")?),
+        workspace_id: WorkspaceId(get_text(row, "workspace_id")?),
+        name: get_text(row, "name")?,
+        steps: serde_json::from_str(&get_text(row, "steps")?).map_err(json_err)?,
     })
 }
 

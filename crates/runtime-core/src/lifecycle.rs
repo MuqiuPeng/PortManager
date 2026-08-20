@@ -15,9 +15,7 @@ use std::time::Duration;
 use chrono::Utc;
 use runtime_adapter::{PlatformAdapter, ProcessIdentity, TerminationMode};
 use runtime_types::{
-    ConflictPolicy, HealthCheck, HealthReport, InstanceId, LogStream, PortReservation, Result,
-    RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, SessionId,
-    StartOutcome, StartedBy,
+    ConflictPolicy, HealthCheck, HealthReport, InstanceId, LogStream, PortReservation, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, SessionId, StartOutcome, StartedBy, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -35,6 +33,19 @@ pub const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(8);
 /// taken, a syntax error — and short enough that starting something healthy
 /// does not feel slow.
 pub const START_VERIFY: Duration = Duration::from_millis(1_500);
+
+/// How long a dependency is given to become healthy before giving up.
+///
+/// Generous, because the thing being waited for is a database accepting its
+/// first connection or a compiler finishing a cold build, and the alternative
+/// to waiting is starting the next service against something not ready.
+pub const DEPENDENCY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How long a one-shot step may take before it is treated as hung.
+///
+/// A migration on a large database is minutes; a seed script that has stopped
+/// making progress is forever. This is the line between them.
+pub const ONE_SHOT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// How long after start the runtime keeps probing before calling a service
 /// unhealthy rather than starting.
@@ -54,12 +65,55 @@ pub struct StartOptions {
 
 impl Runtime {
     /// Start a service, or adopt the instance that is already running.
+    /// Bring a service up, and whatever it needs, in order.
+    ///
+    /// A dependency already running is left exactly as it is — under PM2, in a
+    /// terminal, or from an earlier session. Restarting it would take a working
+    /// service down to reach the state it was already in, and on this machine
+    /// would lose a race for the port with whoever is supervising it.
     pub async fn start_service(
         &self,
         service_id: &ServiceId,
         options: StartOptions,
     ) -> Result<StartOutcome> {
         let service = self.require_service(service_id)?;
+
+        if !service.depends_on.is_empty() {
+            let declared = self.store().list_services(&service.workspace_id)?;
+            let owners = self.port_owners()?;
+            let live: Vec<ServiceId> = declared
+                .iter()
+                .filter(|candidate| {
+                    self.service_view_with(candidate, &owners)
+                        .map(|view| view.status.is_live())
+                        .unwrap_or(false)
+                })
+                .map(|candidate| candidate.id.clone())
+                .collect();
+
+            let plan = crate::graph::plan(&[service.clone()], &declared, |candidate| {
+                live.contains(&candidate.id)
+            })?;
+
+            // Everything but the service itself, which the rest of this
+            // function starts in the ordinary way.
+            for step in plan.iter().filter(|step| step.service_id != service.id) {
+                if !step.needs_start {
+                    continue;
+                }
+                if step.one_shot {
+                    self.run_to_completion(&step.service_id).await?;
+                } else {
+                    Box::pin(self.start_service(&step.service_id, StartOptions::default())).await?;
+                    // A dependency that is up but not yet answering is not a
+                    // dependency met: the whole point of the ordering is that
+                    // the next service can talk to it.
+                    self.wait_until_healthy(&step.service_id, DEPENDENCY_TIMEOUT)
+                        .await?;
+                }
+            }
+        }
+
         let workspace = self.require_workspace(&service.workspace_id)?;
         let project = self.require_project(&workspace.project_id)?;
 
@@ -152,6 +206,123 @@ impl Runtime {
             service: self.service_view(&service)?,
             reused: false,
             reservation,
+        })
+    }
+
+    /// Run a named task: each step brought up in order.
+    ///
+    /// Each step resolves its own dependencies, so a step already covered by an
+    /// earlier one does nothing. Failure stops the task where it failed rather
+    /// than carrying on: the later steps are there because the earlier ones
+    /// were supposed to have worked.
+    pub async fn run_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+        let task = self
+            .store()
+            .list_tasks(workspace_id)?
+            .into_iter()
+            .find(|task| task.name == name)
+            .ok_or_else(|| RuntimeError::invalid(format!("no task called '{name}' here")))?;
+
+        let declared = self.store().list_services(workspace_id)?;
+        let mut done = Vec::new();
+
+        for step in &task.steps {
+            let service = declared
+                .iter()
+                .find(|service| &service.name == step)
+                .ok_or_else(|| {
+                    RuntimeError::invalid(format!("'{step}' is no longer a service here"))
+                })?;
+
+            if service.one_shot {
+                self.run_to_completion(&service.id).await?;
+                done.push(format!("{step} (ran)"));
+                continue;
+            }
+
+            let outcome = self.start_service(&service.id, StartOptions::default()).await?;
+            self.wait_until_healthy(&service.id, DEPENDENCY_TIMEOUT).await?;
+            done.push(if outcome.reused {
+                format!("{step} (already up)")
+            } else {
+                step.clone()
+            });
+        }
+        Ok(done)
+    }
+
+    /// Run a step to completion and require that it succeed.
+    ///
+    /// The opposite test from a service: a server that exits has failed, and a
+    /// migration that keeps running has hung. Sharing one notion of "started"
+    /// between the two would make one of them permanently wrong, which is why
+    /// `one_shot` exists rather than a shorter health check.
+    ///
+    /// Nothing is recorded as an instance. There is no process to stop
+    /// afterwards, and a migration that finished is not a service that is down.
+    pub async fn run_to_completion(&self, service_id: &ServiceId) -> Result<()> {
+        let service = self.require_service(service_id)?;
+        let workspace = self.require_workspace(&service.workspace_id)?;
+
+        let mut command = self.adapter().spawn().build(&service.command)?;
+        command.current_dir(&service.cwd);
+        let dotenv = crate::dotenv::load(&workspace.path, &service.cwd);
+        for (key, value) in &dotenv.variables {
+            command.env(key, value);
+        }
+        for (key, value) in &service.env {
+            command.env(key, value);
+        }
+        command.env("LOCAL_RUNTIME_SERVICE", &service.name);
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        let mut command = tokio::process::Command::from(command);
+        command.kill_on_drop(true);
+        let child = command.output();
+
+        let output = match tokio::time::timeout(ONE_SHOT_TIMEOUT, child).await {
+            Ok(result) => result.map_err(|err| {
+                RuntimeError::io(format!("failed to run '{}': {err}", service.command))
+            })?,
+            Err(_) => {
+                return Err(RuntimeError::StartFailed {
+                    service: service.name.clone(),
+                    exit_code: None,
+                    detail: format!(
+                        "still running after {}s",
+                        ONE_SHOT_TIMEOUT.as_secs()
+                    ),
+                })
+            }
+        };
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // The last thing it printed is normally the reason, and a step that
+        // failed silently in the middle of a start sequence is the worst case
+        // to debug.
+        let mut detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if detail.is_empty() {
+            detail = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        let detail = detail
+            .lines()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Err(RuntimeError::StartFailed {
+            service: service.name.clone(),
+            exit_code: output.status.code(),
+            detail,
         })
     }
 

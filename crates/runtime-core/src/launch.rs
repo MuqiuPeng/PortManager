@@ -182,6 +182,30 @@ pub fn explains(entry: &LaunchObservation, process_cwd: Option<&Path>, started: 
     process_cwd.starts_with(&entry.cwd)
 }
 
+/// Variables that decide which *mode* a service runs in.
+///
+/// Deliberately a short list of switches, not an attempt at the environment. A
+/// service's environment holds database URLs and API keys; copying it into a
+/// registry writes those to disk, and printing it puts them in a transcript.
+/// What is actually missing when a service is adopted is narrower than that
+/// and much more dangerous to get wrong: `node server.mjs` is the development
+/// server or the production one depending on `NODE_ENV` alone, and the two
+/// write to the same build directory. Starting the wrong one leaves the
+/// project unable to boot.
+pub const MODE_VARIABLES: &[&str] = &[
+    "NODE_ENV",
+    "RAILS_ENV",
+    "RACK_ENV",
+    "APP_ENV",
+    "FLASK_ENV",
+    "FLASK_DEBUG",
+    "DJANGO_SETTINGS_MODULE",
+    "ASPNETCORE_ENVIRONMENT",
+    "GIN_MODE",
+    "DENO_ENV",
+    "MIX_ENV",
+];
+
 /// Commands not worth remembering.
 ///
 /// Not a judgement about what a service is — that question is settled by

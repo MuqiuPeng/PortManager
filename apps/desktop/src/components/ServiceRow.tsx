@@ -10,6 +10,8 @@ interface Props {
   onRestart: () => void;
   onOpen: () => void;
   onEdit: () => void;
+  onTakeControl: () => void;
+  onSupervisedControl: (action: "start" | "stop" | "restart") => void;
 }
 
 const OWNER_LABELS: Record<StartedBy, string> = {
@@ -32,11 +34,17 @@ export function ServiceRow({
   onRestart,
   onOpen,
   onEdit,
+  onTakeControl,
+  onSupervisedControl,
 }: Props) {
   const live = isLive(service.status);
   const owner = service.instance?.started_by;
   // Found already listening: real, but not ours to stop or restart.
   const external = live && service.managed === false;
+  // Unless somebody else can be asked to. A stop routed through the supervisor
+  // that owns this is a stop that sticks, where one issued here would be undone
+  // the moment that supervisor noticed.
+  const viaSupervisor = external ? service.supervisor_entry : undefined;
 
   return (
     <div
@@ -57,7 +65,13 @@ export function ServiceRow({
           {/* Who started it is the answer to "why is this running?", so it sits
               next to the status rather than hidden in a detail pane. */}
           {external
-            ? " · not started by the runtime"
+            ? // Naming the supervisor is the answer to "why is there no Stop
+              // button?". Without it the row says only that the runtime is not
+              // in charge, which reads as a limitation rather than a fact about
+              // the machine: a stop issued here would be undone in a second.
+              service.supervisor
+              ? ` · kept alive by ${service.supervisor}`
+              : " · not started by the runtime"
             : live && owner && owner !== "unknown"
               ? ` · started by ${OWNER_LABELS[owner]}`
               : ""}
@@ -78,7 +92,39 @@ export function ServiceRow({
             Open
           </button>
         )}
-        {external ? null : live ? (
+        {viaSupervisor ? (
+          /* Not the runtime's process, but the supervisor holding it takes
+             orders — so these do what the buttons say. */
+          <>
+            <button
+              className="ghost"
+              onClick={() => onSupervisedControl("restart")}
+              disabled={busy}
+              title={`Restart via ${service.supervisor}`}
+            >
+              Restart
+            </button>
+            <button
+              className="ghost danger"
+              onClick={() => onSupervisedControl("stop")}
+              disabled={busy}
+              title={`Stop via ${service.supervisor}`}
+            >
+              Stop
+            </button>
+          </>
+        ) : external ? (
+          /* Nobody to ask, so the way out is to declare it — with the command
+             read off the running process, never guessed from the scripts. */
+          <button
+            className="ghost"
+            onClick={onTakeControl}
+            disabled={busy}
+            title="Declare this so the runtime can start it again"
+          >
+            Take control
+          </button>
+        ) : live ? (
           <>
             <button className="ghost" onClick={onRestart} disabled={busy}>
               Restart
