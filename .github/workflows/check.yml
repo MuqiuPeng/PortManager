@@ -1,0 +1,51 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The platform this is developed on, running everything that is normally run
+  # by hand — including the Windows type-check, which is the cheap half of
+  # knowing whether the other platform still compiles.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/desktop/pnpm-lock.yaml
+            packages/runtime-mcp/pnpm-lock.yaml
+      - run: pnpm --dir apps/desktop install --frozen-lockfile
+      - run: pnpm --dir packages/runtime-mcp install --frozen-lockfile
+      - run: ./scripts/check.sh
+
+  # The half a cross-check cannot answer. Nobody working on this can build for
+  # Windows on the machine they have, so "it compiles for the target" has been
+  # standing in for "it works" — and the two have already differed: a `which`
+  # that is not a program there, a `.cmd` shim that is not an executable image,
+  # a PATH lookup that misses every command because of an extension.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
