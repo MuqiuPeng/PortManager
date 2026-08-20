@@ -10,6 +10,14 @@ description = "The runtime daemon: the single authority for local runtime state.
 name = "runtime-daemon"
 path = "src/main.rs"
 
+[features]
+# Forwarded so the whole stack can be type-checked for another platform:
+# the bundled build needs a C toolchain for the target, and turning it off
+# is what lets `cargo check --target x86_64-pc-windows-msvc` get as far as
+# this crate's own code.
+default = ["bundled-sqlite"]
+bundled-sqlite = ["runtime-core/bundled-sqlite", "runtime-ipc/bundled-sqlite"]
+
 [dependencies]
 runtime-types = { workspace = true }
 runtime-core = { workspace = true }

@@ -330,10 +330,15 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 pnpm --dir apps/desktop build          # type-check and bundle the frontend
 pnpm --dir packages/runtime-mcp test   # MCP server
-# type-check the Windows adapter without a Windows machine
-# (the whole workspace cannot cross-build: bundled SQLite needs a C toolchain)
-cargo check -p adapter-windows --target x86_64-pc-windows-msvc
+# type-check the whole stack for Windows, from anywhere
+cargo check --workspace --exclude runtime-desktop --all-targets \
+  --no-default-features --target x86_64-pc-windows-msvc
 ```
+
+`--no-default-features` turns off `bundled-sqlite`, which compiles SQLite from
+source and needs a C toolchain for the target. Everything else still type-checks,
+including tests — which is where the platform assumptions hide. Nothing here is
+built for Windows, so it catches what will not compile, not what will not work.
 
 Point the runtime at a scratch directory to avoid touching real state:
 

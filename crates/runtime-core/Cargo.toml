@@ -6,6 +6,17 @@ rust-version.workspace = true
 license.workspace = true
 description = "Registry, lifecycle, port and health logic for the local runtime."
 
+[features]
+# Compiles SQLite from source, so the daemon does not depend on one being
+# installed. On by default because that is what shipping requires.
+#
+# Off is for `cargo check --target x86_64-pc-windows-msvc`: the bundled build
+# needs a C toolchain for the target, which stops the Windows side of this
+# crate from being type-checked anywhere but Windows — and every
+# platform-sensitive decision in here was written on a Mac.
+default = ["bundled-sqlite"]
+bundled-sqlite = ["rusqlite/bundled"]
+
 [dependencies]
 runtime-types = { workspace = true }
 runtime-adapter = { workspace = true }

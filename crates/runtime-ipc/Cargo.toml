@@ -6,6 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 description = "Local IPC protocol and transport for the runtime daemon."
 
+[features]
+# Forwarded so the whole stack can be type-checked for another platform:
+# the bundled build needs a C toolchain for the target, and turning it off
+# is what lets `cargo check --target x86_64-pc-windows-msvc` get as far as
+# this crate's own code.
+default = ["bundled-sqlite"]
+bundled-sqlite = ["runtime-core/bundled-sqlite"]
+
 [dependencies]
 runtime-types = { workspace = true }
 runtime-core = { workspace = true }

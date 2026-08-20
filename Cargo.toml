@@ -24,8 +24,10 @@ runtime-types = { path = "crates/runtime-types" }
 runtime-adapter = { path = "crates/runtime-adapter" }
 adapter-macos = { path = "crates/adapter-macos" }
 adapter-windows = { path = "crates/adapter-windows" }
-runtime-core = { path = "crates/runtime-core" }
-runtime-ipc = { path = "crates/runtime-ipc" }
+# Default off so a member can be type-checked for another platform; the
+# members that ship turn it back on through their own `bundled-sqlite`.
+runtime-core = { path = "crates/runtime-core", default-features = false }
+runtime-ipc = { path = "crates/runtime-ipc", default-features = false }
 
 anyhow = "1"
 thiserror = "2"
@@ -36,7 +38,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time", "signal", "fs"] }
-rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.32", default-features = false, features = ["chrono"] }
 clap = { version = "4", features = ["derive", "env"] }
 sysinfo = "0.32"
 directories = "5"
