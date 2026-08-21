@@ -116,3 +116,28 @@ still in force.
 Edge detection polls the pointer every 80ms on the main thread. The alternative,
 a global `CGEventTap`, would demand Accessibility permission for something this
 small; polling asks for nothing and is imperceptible.
+
+## Failures
+
+A service that stops working raises a toast in the corner rather than a banner
+in the page. A banner pushes everything down at the moment the layout should be
+holding still — the row somebody was about to click has moved — and the corner
+leaves the page where it was.
+
+They do not fade. A toast that disappears is right for "saved" and wrong for
+"your API is down": what makes an error worth showing is that somebody has to
+act on it, and it should still be there when they look back. Each is dismissed
+on its own, since reading one is not reading the rest, and a dismissal is
+forgotten once that service stops failing — so the same thing breaking again is
+shown again.
+
+Every one can be copied, and so can a service's whole log. The next thing that
+happens to an error message is that it gets pasted somewhere: a search, an
+issue, a message to whoever owns the service. The text stays selectable for
+anyone who wants one line instead of all of them.
+
+Copying goes through the clipboard plugin rather than `navigator.clipboard`.
+The app is served from a custom scheme, which is not a secure context, and the
+browser clipboard API is absent there — the same shape as `prompt`, which this
+app has already learned about once. The capability grants writing only; there is
+no reason for this app to read what somebody else copied.

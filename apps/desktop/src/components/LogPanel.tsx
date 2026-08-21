@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { copyText } from "../api";
 import type { LogLine } from "../types";
 
 interface Props {
@@ -20,6 +21,18 @@ export function LogPanel({ serviceName, lines }: Props) {
     }
   }, [lines]);
 
+  const [copied, setCopied] = useState(false);
+
+  async function copyAll() {
+    try {
+      await copyText(lines.map((line) => line.message).join("\n"));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // The text is still selectable, which is what the button was for.
+    }
+  }
+
   function handleScroll() {
     const element = scroller.current;
     if (!element) return;
@@ -33,6 +46,19 @@ export function LogPanel({ serviceName, lines }: Props) {
       <header className="logs-head">
         <span>Logs</span>
         {serviceName && <span className="logs-service">{serviceName}</span>}
+        <span className="spacer" />
+        {/* The next thing that happens to an error is that it gets pasted
+            somewhere. Selecting it out of a scrolling box by hand is the tax
+            this removes; the text stays selectable for anyone who wants one
+            line rather than all of them. */}
+        <button
+          className="ghost"
+          disabled={lines.length === 0}
+          onClick={() => void copyAll()}
+          title="Copy this output"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
       </header>
 
       <div className="logs-body" ref={scroller} onScroll={handleScroll}>

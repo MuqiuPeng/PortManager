@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import wire from "../__fixtures__/wire.json";
 import { ContainerRow } from "../components/ContainerRow";
 import { ExternalRow } from "../components/ExternalRow";
-import { FailureBanner } from "../components/FailureBanner";
+import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { ServiceRow } from "../components/ServiceRow";
 import { SupervisedRow } from "../components/SupervisedRow";
@@ -82,10 +82,10 @@ describe("a payload with every optional field absent", () => {
     expect("exit_code" in silent).toBe(false);
 
     const html = render(
-      <FailureBanner failures={[silent]} onSelect={noop} onDismiss={noop} />,
+      <FailureToasts failures={[silent]} onOpenLogs={noop} onDismiss={noop} />,
     );
     expect(html).toContain("shop/web");
-    expect(html).toContain("it said nothing");
+    expect(html).toContain("It said nothing before it stopped.");
   });
 
   it("renders a container that publishes nothing", () => {
@@ -147,7 +147,7 @@ describe("a payload with everything set", () => {
   it("shows what a failing service said", () => {
     const failure = wire.failure_full as unknown as Failure;
     const html = render(
-      <FailureBanner failures={[failure]} onSelect={noop} onDismiss={noop} />,
+      <FailureToasts failures={[failure]} onOpenLogs={noop} onDismiss={noop} />,
     );
     expect(html).toContain("Loom/api");
     expect(html).toContain("exit 1");

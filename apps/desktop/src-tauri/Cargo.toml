@@ -27,6 +27,7 @@ runtime-ipc = { workspace = true }
 # squares. It rules out the Mac App Store, which is not a distribution channel
 # for a tool that manages local processes anyway.
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"

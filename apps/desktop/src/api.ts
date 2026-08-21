@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
@@ -152,4 +153,17 @@ export function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/**
+ * Put text on the clipboard.
+ *
+ * Through the plugin rather than `navigator.clipboard`: the webview serves the
+ * app from a custom scheme, which is not a secure context, and the browser
+ * clipboard API is simply absent there. That is the same shape as `prompt`,
+ * which this app already learned about the hard way — the call does not fail,
+ * it is not there at all.
+ */
+export async function copyText(text: string): Promise<void> {
+  await writeText(text);
 }

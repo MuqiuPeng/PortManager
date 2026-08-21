@@ -1141,62 +1141,88 @@ button {
   color: var(--muted);
 }
 
-/* In front of the person, because they are here since something is wrong. */
-.failures {
+
+/* Over the corner, not in the layout: something failing should not move the
+   row somebody was about to click. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  /* The gaps between toasts stay click-through. */
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--surface);
   border: 1px solid var(--danger, #c65b5b);
   border-radius: 8px;
-  margin: 0 0 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
   overflow: hidden;
 }
 
-.failures-head {
+.toast-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px 6px;
   background: color-mix(in srgb, var(--danger, #c65b5b) 14%, transparent);
 }
 
-.failures-count {
+.toast-title {
   font-size: 12px;
   font-weight: 600;
 }
 
-.failure {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  cursor: pointer;
-}
-
-.failure:hover {
-  background: var(--surface-hover, rgba(127, 127, 127, 0.08));
-}
-
-.failure-subject {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.failure-status {
-  font-weight: 400;
+.toast-status {
+  flex: 1;
+  font-size: 11px;
   color: var(--muted);
 }
 
-.failure-detail {
-  margin: 4px 0 0;
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.toast-close:hover {
+  color: var(--text);
+}
+
+.toast-detail {
+  margin: 0;
+  padding: 8px 10px;
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
   line-height: 1.45;
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 8em;
+  max-height: 10em;
   overflow-y: auto;
+  /* Selectable: the button is the fast path, not the only one. */
+  user-select: text;
 }
 
-.failure-detail.quiet {
+.toast-detail.quiet {
   font-style: italic;
+}
+
+.toast-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 8px 8px;
 }

@@ -2,22 +2,36 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions the main window and the panel need.",
-  "windows": ["main", "panel"],
+  "windows": [
+    "main",
+    "panel"
+  ],
   "permissions": [
     "core:default",
     {
       "identifier": "opener:allow-open-url",
       "comment": "Enabling the command is not enough: it ships with no scope, so every URL is rejected until one is granted. Scoped to loopback because the only URLs this app ever opens are the localhost addresses of the services it manages.",
       "allow": [
-        { "url": "http://localhost:*" },
-        { "url": "https://localhost:*" },
-        { "url": "http://127.0.0.1:*" },
-        { "url": "https://127.0.0.1:*" },
-        { "url": "http://[::1]:*" }
+        {
+          "url": "http://localhost:*"
+        },
+        {
+          "url": "https://localhost:*"
+        },
+        {
+          "url": "http://127.0.0.1:*"
+        },
+        {
+          "url": "https://127.0.0.1:*"
+        },
+        {
+          "url": "http://[::1]:*"
+        }
       ]
     },
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered"
+    "global-shortcut:allow-is-registered",
+    "clipboard-manager:allow-write-text"
   ]
 }

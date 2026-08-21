@@ -4,7 +4,7 @@ import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
 import { DiscoveryPanel } from "./components/DiscoveryPanel";
 import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
-import { FailureBanner } from "./components/FailureBanner";
+import { FailureToasts } from "./components/FailureToasts";
 import { FindingsBanner } from "./components/FindingsBanner";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
@@ -185,7 +185,8 @@ export default function App() {
 
   /** Services that are not working, with what each one said. */
   const [failures, setFailures] = useState<Failure[]>([]);
-  const [failuresHidden, setFailuresHidden] = useState(false);
+  /** Dismissed one at a time: reading one is not reading the rest. */
+  const [dismissed, setDismissed] = useState<string[]>([]);
 
   // Re-run after anything that changes the registry, since that is when a
   // problem is introduced — and when the person is looking.
@@ -200,12 +201,13 @@ export default function App() {
       }
       try {
         const broken = await api.listFailures();
-        if (!cancelled) {
-          setFailures(broken);
-          // Something new broke: show it again even if the last lot was
-          // dismissed, since dismissing meant "I have read this one".
-          if (broken.length > 0) setFailuresHidden(false);
-        }
+        if (cancelled) return;
+        setFailures(broken);
+        // Stop remembering a dismissal once the service it referred to is no
+        // longer failing, so the same service breaking again is shown again.
+        setDismissed((seen) =>
+          seen.filter((id) => broken.some((failure) => failure.service_id === id)),
+        );
       } catch {
         if (!cancelled) setFailures([]);
       }
@@ -412,24 +414,24 @@ export default function App() {
         </div>
       )}
 
-      {!failuresHidden && tab !== "settings" && (
-        <FailureBanner
-          failures={failures}
-          onDismiss={() => setFailuresHidden(true)}
-          onSelect={(serviceId) => {
-            setTab("services");
-            setSelectedService(serviceId);
-            // Jump to the project it belongs to, so the log panel below is
-            // showing the service that was just clicked.
-            const owner = projects.find((candidate) =>
-              candidate.workspaces.some((workspace) =>
-                workspace.services.some((service) => service.id === serviceId),
-              ),
-            );
-            if (owner) setSelectedProject(owner.id);
-          }}
-        />
-      )}
+      {/* Over the corner rather than in the layout: something failing should
+          not move the row somebody was about to click. */}
+      <FailureToasts
+        failures={failures.filter((failure) => !dismissed.includes(failure.service_id))}
+        onDismiss={(serviceId) => setDismissed((seen) => [...seen, serviceId])}
+        onOpenLogs={(serviceId) => {
+          setTab("services");
+          setSelectedService(serviceId);
+          // And the project it belongs to, so the log panel below is showing
+          // the service that was just asked about.
+          const owner = projects.find((candidate) =>
+            candidate.workspaces.some((workspace) =>
+              workspace.services.some((service) => service.id === serviceId),
+            ),
+          );
+          if (owner) setSelectedProject(owner.id);
+        }}
+      />
 
       {!findingsHidden && tab !== "settings" && (
         <FindingsBanner findings={findings} onDismiss={() => setFindingsHidden(true)} />
