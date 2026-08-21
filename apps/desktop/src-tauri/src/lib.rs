@@ -79,6 +79,7 @@ pub fn run() {
             commands::control_supervised,
             commands::diagnose,
             commands::register_worktree,
+            commands::list_failures,
             commands::list_tasks,
             commands::set_task,
             commands::remove_task,

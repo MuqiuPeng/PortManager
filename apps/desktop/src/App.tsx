@@ -4,6 +4,7 @@ import { api, errorMessage, onRuntimeEvent, openExternal } from "./api";
 import { DiscoveryPanel } from "./components/DiscoveryPanel";
 import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
+import { FailureBanner } from "./components/FailureBanner";
 import { FindingsBanner } from "./components/FindingsBanner";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
@@ -17,6 +18,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
+  Failure,
   Finding,
   LogLine,
   PortOwner,
@@ -181,6 +183,10 @@ export default function App() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [findingsHidden, setFindingsHidden] = useState(false);
 
+  /** Services that are not working, with what each one said. */
+  const [failures, setFailures] = useState<Failure[]>([]);
+  const [failuresHidden, setFailuresHidden] = useState(false);
+
   // Re-run after anything that changes the registry, since that is when a
   // problem is introduced — and when the person is looking.
   useEffect(() => {
@@ -191,6 +197,17 @@ export default function App() {
         if (!cancelled) setFindings(found);
       } catch {
         if (!cancelled) setFindings([]);
+      }
+      try {
+        const broken = await api.listFailures();
+        if (!cancelled) {
+          setFailures(broken);
+          // Something new broke: show it again even if the last lot was
+          // dismissed, since dismissing meant "I have read this one".
+          if (broken.length > 0) setFailuresHidden(false);
+        }
+      } catch {
+        if (!cancelled) setFailures([]);
       }
     })();
     return () => {
@@ -393,6 +410,25 @@ export default function App() {
             Dismiss
           </button>
         </div>
+      )}
+
+      {!failuresHidden && tab !== "settings" && (
+        <FailureBanner
+          failures={failures}
+          onDismiss={() => setFailuresHidden(true)}
+          onSelect={(serviceId) => {
+            setTab("services");
+            setSelectedService(serviceId);
+            // Jump to the project it belongs to, so the log panel below is
+            // showing the service that was just clicked.
+            const owner = projects.find((candidate) =>
+              candidate.workspaces.some((workspace) =>
+                workspace.services.some((service) => service.id === serviceId),
+              ),
+            );
+            if (owner) setSelectedProject(owner.id);
+          }}
+        />
       )}
 
       {!findingsHidden && tab !== "settings" && (

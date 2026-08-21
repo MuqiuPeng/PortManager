@@ -154,6 +154,18 @@ export interface SupervisedView {
   restart_warning?: string;
 }
 
+/** A service that is not working, with the part of its output that says why. */
+export interface Failure {
+  service_id: string;
+  /** `Loom/api`, as a person would say it. */
+  subject: string;
+  status: string;
+  at: string;
+  exit_code?: number;
+  /** Absent, not empty, when it said nothing. */
+  detail?: string[];
+}
+
 /** Something wrong with what is declared, found without being asked. */
 export interface Finding {
   /** Where it is, as a person would say it: `Loom/api`. */
@@ -262,6 +274,7 @@ export type ResponseBody =
   | { type: "launches"; items: LaunchObservation[] }
   | ({ type: "supervised" } & SupervisedView)
   | { type: "findings"; items: Finding[] }
+  | { type: "failures"; items: Failure[] }
   | { type: "tasks"; items: Task[] }
   | { type: "task_run"; steps: string[] }
   | ({ type: "adopted" } & AdoptOutcome)

@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use runtime_core::discover::Discovery;
 use runtime_core::events::RuntimeEvent;
 use runtime_types::{
-    AdoptOutcome, AgentSession, DaemonInfo, Finding, HealthReport, LaunchObservation,
+    AdoptOutcome, AgentSession, DaemonInfo, Failure, Finding, HealthReport,
+    LaunchObservation,
     LogLine,
     PortOwner, SupervisedView, Task,
     PortReservation, PortStatus,
@@ -119,6 +120,14 @@ pub enum Request {
 
     /// Everything wrong with what is declared, looked for rather than waited on.
     Diagnose,
+
+    /// Services that are not working, each with the part of its output that
+    /// says why — without having to know which service to ask about.
+    ListFailures {
+        /// Lines of explanation to carry per service.
+        #[serde(default)]
+        detail_lines: usize,
+    },
 
     /// Named step sequences declared in a checkout.
     ListTasks { selector: String },
@@ -292,6 +301,7 @@ pub enum ResponseBody {
     Setting { value: Option<String> },
     Launches { items: Vec<LaunchObservation> },
     Findings { items: Vec<Finding> },
+    Failures { items: Vec<Failure> },
     Tasks { items: Vec<Task> },
     TaskRun { steps: Vec<String> },
     Supervised(SupervisedView),

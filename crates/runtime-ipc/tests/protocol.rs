@@ -267,6 +267,16 @@ fn responses() -> Vec<ResponseBody> {
                 certain: true,
             }],
         },
+        ResponseBody::Failures {
+            items: vec![Failure {
+                service_id: ServiceId::from("svc"),
+                subject: "Loom/api".to_string(),
+                status: ServiceStatus::Failed,
+                at: Utc::now(),
+                exit_code: Some(1),
+                detail: vec!["[db] DATABASE_URL is not set".to_string()],
+            }],
+        },
         ResponseBody::Sessions {
             items: vec![AgentSession {
                 id: SessionId::from("sess"),
@@ -356,6 +366,7 @@ fn every_request_survives_a_round_trip() {
         },
         Request::ListLaunches,
         Request::Diagnose,
+        Request::ListFailures { detail_lines: 8 },
         Request::ListTasks { selector: ".".to_string() },
         Request::SetTask {
             selector: ".".to_string(),

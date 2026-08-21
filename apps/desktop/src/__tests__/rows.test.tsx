@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 import wire from "../__fixtures__/wire.json";
 import { ContainerRow } from "../components/ContainerRow";
 import { ExternalRow } from "../components/ExternalRow";
+import { FailureBanner } from "../components/FailureBanner";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { ServiceRow } from "../components/ServiceRow";
 import { SupervisedRow } from "../components/SupervisedRow";
 import type {
   ContainerView,
+  Failure,
   ExternalService,
   Finding,
   ServiceView,
@@ -74,6 +76,18 @@ describe("a payload with every optional field absent", () => {
     expect(html).toContain("5555");
   });
 
+  it("renders a failure that said nothing", () => {
+    const silent = wire.failure_silent as unknown as Failure;
+    expect("detail" in silent).toBe(false);
+    expect("exit_code" in silent).toBe(false);
+
+    const html = render(
+      <FailureBanner failures={[silent]} onSelect={noop} onDismiss={noop} />,
+    );
+    expect(html).toContain("shop/web");
+    expect(html).toContain("it said nothing");
+  });
+
   it("renders a container that publishes nothing", () => {
     const container = wire.container_minimal as unknown as ContainerView;
     const html = render(
@@ -128,6 +142,17 @@ describe("a payload with everything set", () => {
     expect(html).toContain("ran successfully");
     // Nothing to stop: it already finished.
     expect(html).not.toContain(">Stop<");
+  });
+
+  it("shows what a failing service said", () => {
+    const failure = wire.failure_full as unknown as Failure;
+    const html = render(
+      <FailureBanner failures={[failure]} onSelect={noop} onDismiss={noop} />,
+    );
+    expect(html).toContain("Loom/api");
+    expect(html).toContain("exit 1");
+    // The reason, which is the whole point of showing this at all.
+    expect(html).toContain("DATABASE_URL is not set");
   });
 
   it("puts the certain findings first", () => {

@@ -171,6 +171,33 @@ fn main() {
     );
 
     out.insert(
+        "failure_full".to_string(),
+        serde_json::to_value(Failure {
+            service_id: ServiceId::from("svc"),
+            subject: "Loom/api".to_string(),
+            status: ServiceStatus::Failed,
+            at: Utc::now(),
+            exit_code: Some(1),
+            detail: vec!["[db] DATABASE_URL is not set".to_string()],
+        })
+        .unwrap(),
+    );
+
+    // Said nothing and has no exit code: both fields vanish from the wire.
+    out.insert(
+        "failure_silent".to_string(),
+        serde_json::to_value(Failure {
+            service_id: ServiceId::from("svc2"),
+            subject: "shop/web".to_string(),
+            status: ServiceStatus::Unhealthy,
+            at: Utc::now(),
+            exit_code: None,
+            detail: Vec::new(),
+        })
+        .unwrap(),
+    );
+
+    out.insert(
         "finding".to_string(),
         serde_json::to_value(Finding {
             subject: "Loom/api".to_string(),

@@ -160,6 +160,7 @@ runtime restart <service> [--wait]
 runtime logs <service> [-n N] [--follow]   captured output, kept across restarts
 runtime health <service> [--wait S]
 runtime port list|check|reserve|release
+runtime errors [-n N]               what is broken, and what it said
 runtime adopt <port> [--force]      declare what is already on a port
 runtime supervised start|stop|restart <name>   drive PM2, without taking it over
 runtime task list|set|remove|run    named step sequences
@@ -181,6 +182,12 @@ process listing and not the same server.
 
 `supervised` is the other half: PM2 still owns what the service is and whether
 it starts at boot; this owns whether it is running now. There is no `delete`.
+
+`errors` is the starting point when something is wrong and you do not yet know
+which service it was: every service that is failing or unhealthy, newest first,
+each with the last thing it said. Stderr is preferred over stdout, since a busy
+service's access log otherwise buries the reason. The app shows the same list
+above the projects, and an agent can ask for it as `recent_errors`.
 
 `doctor` reports what is wrong with the registry before it costs anything — a
 dependency naming a service that does not exist, services that depend on each

@@ -35,7 +35,7 @@ use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
     AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
     PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance,
-    Finding, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
+    Failure, Finding, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
     Workspace,
     WorkspaceId,
     WorkspaceView,
@@ -1215,6 +1215,87 @@ impl Runtime {
             return Ok(false);
         };
         self.store.remove_task(&task.id)
+    }
+
+    // ---- what went wrong -------------------------------------------------
+
+    /// Services that are not working, newest first, each with why.
+    ///
+    /// Answering "what broke" without being told where to look. The alternative
+    /// is the two steps somebody debugging cannot take yet: name the service,
+    /// then read its whole log for the few lines that matter.
+    ///
+    /// A service that was deliberately stopped is not a failure. One that
+    /// exited on its own, or is up and not answering, is.
+    pub fn failures(&self, per_service: usize) -> Result<Vec<Failure>> {
+        let mut found: Vec<Failure> = Vec::new();
+        let owners = self.port_owners()?;
+
+        for project in self.store.list_projects()? {
+            for workspace in self.store.list_workspaces(&project.id)? {
+                for service in self.store.list_services(&workspace.id)? {
+                    let view = self.service_view_with(&service, &owners)?;
+
+                    // A one-shot that ran and failed counts; one that succeeded
+                    // does not, and neither does anything simply not running.
+                    if !matches!(
+                        view.status,
+                        ServiceStatus::Failed | ServiceStatus::Unhealthy
+                    ) {
+                        continue;
+                    }
+
+                    let instance = view.instance.as_ref();
+                    found.push(Failure {
+                        subject: format!("{}/{}", project.name, service.name),
+                        status: view.status,
+                        at: instance
+                            .and_then(|i| i.stopped_at)
+                            .or_else(|| instance.map(|i| i.started_at))
+                            .unwrap_or_else(Utc::now),
+                        exit_code: instance.and_then(|i| i.exit_code),
+                        detail: self.last_words(&service.id, per_service),
+                        service_id: service.id,
+                    });
+                }
+            }
+        }
+
+        // Newest first: the thing that just broke is the thing being looked for.
+        found.sort_by_key(|failure| std::cmp::Reverse(failure.at));
+        Ok(found)
+    }
+
+    /// The last thing a service said, preferring what it said on stderr.
+    ///
+    /// A failure normally explains itself and then stops, so the tail is the
+    /// message. Stderr first because a busy service's access log will otherwise
+    /// fill the tail with lines that were never about the problem.
+    fn last_words(&self, service_id: &ServiceId, lines: usize) -> Vec<String> {
+        let Ok(all) = self.read_logs(service_id, 400, None) else {
+            return Vec::new();
+        };
+
+        let complaints: Vec<&LogLine> = all
+            .iter()
+            .filter(|line| line.stream == runtime_types::LogStream::Stderr)
+            .collect();
+        let chosen: Vec<&LogLine> = if complaints.is_empty() {
+            all.iter().collect()
+        } else {
+            complaints
+        };
+
+        chosen
+            .into_iter()
+            .rev()
+            .take(lines)
+            .map(|line| line.message.trim_end().to_string())
+            .filter(|message| !message.is_empty())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 
     // ---- diagnosis -------------------------------------------------------

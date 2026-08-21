@@ -355,3 +355,28 @@ pub struct Finding {
     /// True when it will fail rather than merely might.
     pub certain: bool,
 }
+
+/// A service that is not working, with the part of its output that says why.
+///
+/// The unit a person debugging actually wants. Finding this out otherwise means
+/// knowing which service broke, then reading its whole log to find the few
+/// lines that matter — two steps that both assume you already know something
+/// about a failure you have not seen yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Failure {
+    pub service_id: ServiceId,
+    /// `Loom/api`, as a person would say it.
+    pub subject: String,
+    pub status: ServiceStatus,
+    /// When it stopped, or when it was last seen trying.
+    pub at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// The last thing it said, preferring what it said on stderr.
+    ///
+    /// A service that fails on startup usually explains itself in its final
+    /// lines and then says nothing else, so the tail is the message — but only
+    /// if the quieter stream is not drowned out by an ordinary access log.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detail: Vec<String>,
+}

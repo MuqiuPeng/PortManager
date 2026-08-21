@@ -8,6 +8,7 @@ import type {
   AdoptOutcome,
   ContainerView,
   Discovery,
+  Failure,
   Finding,
   HealthReport,
   LaunchObservation,
@@ -324,4 +325,18 @@ export function formatFindings(findings: Finding[]): string {
     .sort((a, b) => Number(b.certain) - Number(a.certain))
     .map((finding) => `${finding.certain ? "!" : "?"} ${finding.subject}: ${finding.message}`)
     .join("\n");
+}
+
+export function formatFailures(failures: Failure[]): string {
+  if (failures.length === 0) return "Nothing is failing.";
+  return failures
+    .map((failure) => {
+      const code = failure.exit_code === undefined ? "" : ` (exit ${failure.exit_code})`;
+      const detail = failure.detail ?? [];
+      const said = detail.length > 0
+        ? detail.map((line) => `    ${truncate(line, 200)}`).join("\n")
+        : "    (it said nothing)";
+      return `${failure.subject} — ${failure.status}${code}\n${said}`;
+    })
+    .join("\n\n");
 }

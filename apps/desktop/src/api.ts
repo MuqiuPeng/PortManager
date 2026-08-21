@@ -7,6 +7,7 @@ import type {
   ContainerView,
   DaemonInfo,
   Discovery,
+  Failure,
   Finding,
   LogLine,
   PanelSettings,
@@ -50,6 +51,8 @@ export const api = {
     invoke<SupervisedView>("control_supervised", { name, action }),
 
   diagnose: () => invoke<Finding[]>("diagnose"),
+
+  listFailures: (lines = 8) => invoke<Failure[]>("list_failures", { lines }),
 
   registerWorktree: (selector: string, path: string) =>
     invoke<Workspace>("register_worktree", { selector, path }),

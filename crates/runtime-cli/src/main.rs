@@ -170,6 +170,16 @@ enum Command {
         force: bool,
     },
 
+    /// Show what is broken right now, and what each one said.
+    ///
+    /// The starting point when something is wrong and you do not yet know
+    /// which service it was.
+    Errors {
+        /// Lines of output to show per service.
+        #[arg(long, short = 'n', default_value_t = 8)]
+        lines: usize,
+    },
+
     /// Check that the runtime can see processes and ports on this machine.
     Doctor,
 }
@@ -412,6 +422,10 @@ async fn run(cli: Cli) -> Result<String> {
         // `--project` narrows this like it narrows everything else. Accepting
         // the flag and ignoring it is worse than rejecting it: the output looks
         // like an answer to the question that was asked.
+        Command::Errors { lines } => {
+            client.call(Request::ListFailures { detail_lines: lines }).await?
+        }
+
         Command::List => match project.clone() {
             Some(selector) => client.call(Request::GetProject { selector }).await?,
             None => client.call(Request::ListProjects).await?,
@@ -925,6 +939,31 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
                 ));
             }
             out.trim_end().to_string()
+        }
+        ResponseBody::Failures { items } => {
+            if items.is_empty() {
+                "Nothing is failing.".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|failure| {
+                        let code = failure
+                            .exit_code
+                            .map(|code| format!(" (exit {code})"))
+                            .unwrap_or_default();
+                        let mut out =
+                            format!("✕ {} — {}{code}", failure.subject, render::status_label(failure.status));
+                        for line in &failure.detail {
+                            out.push_str(&format!("\n    {line}"));
+                        }
+                        if failure.detail.is_empty() {
+                            out.push_str("\n    (it said nothing)");
+                        }
+                        out
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
         }
         ResponseBody::Findings { items } => {
             if items.is_empty() {

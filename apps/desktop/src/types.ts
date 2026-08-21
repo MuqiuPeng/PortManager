@@ -310,3 +310,15 @@ export interface Finding {
   /** True when it will fail rather than merely might. */
   certain: boolean;
 }
+
+/** A service that is not working, with the part of its output that says why. */
+export interface Failure {
+  service_id: string;
+  /** `Loom/api`, as a person would say it. */
+  subject: string;
+  status: ServiceStatus;
+  at: string;
+  exit_code?: number;
+  /** Absent, not empty, when it said nothing. */
+  detail?: string[];
+}

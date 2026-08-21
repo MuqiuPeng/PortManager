@@ -230,6 +230,12 @@ impl Dispatcher {
 
             Request::Diagnose => Ok(ResponseBody::Findings { items: runtime.diagnose()? }),
 
+            Request::ListFailures { detail_lines } => Ok(ResponseBody::Failures {
+                // Enough to carry a stack's last frames without turning the
+                // answer into the log it exists to save you reading.
+                items: runtime.failures(if detail_lines == 0 { 8 } else { detail_lines })?,
+            }),
+
             Request::AdoptPort { port, force } => {
                 Ok(ResponseBody::Adopted(runtime.adopt_port(port, force)?))
             }

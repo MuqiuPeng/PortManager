@@ -22,6 +22,7 @@ import {
   formatAdopted,
   formatContainer,
   formatDiscoveries,
+  formatFailures,
   formatFindings,
   formatHealth,
   formatLaunches,
@@ -551,6 +552,28 @@ function registerTools(
     async () =>
       run("list_ports", undefined, (body) =>
         body.type === "ports" ? formatPorts(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "recent_errors",
+    {
+      title: "What is broken right now",
+      description:
+        "List every service that is failing or unhealthy, newest first, each with the last thing it said — preferring stderr, since a busy service's access log will otherwise bury the reason. Start here when something is wrong and you do not know which service it was: the alternative is guessing a service name and then reading its whole log. Use get_logs afterwards for the full output of one of them.",
+      inputSchema: {
+        lines: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe("Lines of explanation per service. Defaults to 8."),
+      },
+    },
+    async ({ lines }) =>
+      run("list_failures", { detail_lines: lines ?? 8 }, (body) =>
+        body.type === "failures" ? formatFailures(body.items) : unexpected(body),
       ),
   );
 

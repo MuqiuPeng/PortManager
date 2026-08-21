@@ -8,6 +8,22 @@
     "pid": 1,
     "port": 5555
   },
+  "failure_full": {
+    "at": "2026-08-21T09:44:48.489186Z",
+    "detail": [
+      "[db] DATABASE_URL is not set"
+    ],
+    "exit_code": 1,
+    "service_id": "svc",
+    "status": "failed",
+    "subject": "Loom/api"
+  },
+  "failure_silent": {
+    "at": "2026-08-21T09:44:48.489190Z",
+    "service_id": "svc2",
+    "status": "unhealthy",
+    "subject": "shop/web"
+  },
   "finding": {
     "certain": true,
     "message": "depends on 'db', which this checkout does not declare",
@@ -30,7 +46,7 @@
       "port": 3000,
       "process_start_time": 0,
       "service_id": "svc",
-      "started_at": "2026-08-20T16:05:13.405234Z",
+      "started_at": "2026-08-21T09:44:48.489145Z",
       "started_by": "claude-code",
       "status": "healthy"
     },
@@ -73,10 +89,10 @@
       "pid": 0,
       "process_start_time": 0,
       "service_id": "svc",
-      "started_at": "2026-08-20T16:05:13.405286Z",
+      "started_at": "2026-08-21T09:44:48.489172Z",
       "started_by": "unknown",
       "status": "stopped",
-      "stopped_at": "2026-08-20T16:05:13.405286Z"
+      "stopped_at": "2026-08-21T09:44:48.489172Z"
     },
     "managed": false,
     "name": "web",

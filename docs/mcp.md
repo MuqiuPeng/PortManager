@@ -115,6 +115,14 @@ if the attribution matters to you.
   reports a supervisor: the runtime did not start it, and a stop issued any
   other way is undone the moment that supervisor notices. There is no delete.
 
+### Debugging
+
+* `recent_errors` — every service that is failing or unhealthy, newest first,
+  each with the last thing it said. The starting point when something is wrong
+  and the service is not known yet; `get_logs` afterwards for one of them in
+  full. Preferring stderr matters: a service that is serving traffic and failing
+  at something else will otherwise show a page of access log.
+
 ### Checking
 
 * `diagnose` — everything wrong with the declared services that has not caused

@@ -1140,3 +1140,63 @@ button {
 .finding-message {
   color: var(--muted);
 }
+
+/* In front of the person, because they are here since something is wrong. */
+.failures {
+  border: 1px solid var(--danger, #c65b5b);
+  border-radius: 8px;
+  margin: 0 0 12px;
+  overflow: hidden;
+}
+
+.failures-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger, #c65b5b) 14%, transparent);
+}
+
+.failures-count {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.failure {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.failure:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.08));
+}
+
+.failure-subject {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.failure-status {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.failure-detail {
+  margin: 4px 0 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 8em;
+  overflow-y: auto;
+}
+
+.failure-detail.quiet {
+  font-style: italic;
+}
