@@ -16,15 +16,38 @@ pub struct RunningProcess {
     pub instance_id: InstanceId,
     pub identity: ProcessIdentity,
     pub port: Option<u16>,
-    /// Log pumps and the exit waiter.
+    /// Readers that end by themselves when the process does.
+    ///
+    /// A pipe reader stops at end of file, which happens exactly when the
+    /// process closes it. Waiting for one is precise where a timer is a guess,
+    /// and cutting one off early loses the last thing the service said — which
+    /// on a machine under load is most of what it said.
+    pub pipes: Vec<JoinHandle<()>>,
+    /// Tells the file readers the process has gone, so they can finish.
+    ///
+    /// Dropping it says the same thing, which is what a supervisor being torn
+    /// down should mean.
+    pub ending: Option<tokio::sync::watch::Sender<()>>,
+    /// Watchers that never end on their own.
+    ///
+    /// Health polling and the exit waiter run until something stops them.
     pub tasks: Vec<JoinHandle<()>>,
 }
 
 impl RunningProcess {
     fn abort(&self) {
-        for task in &self.tasks {
+        for task in self.tasks.iter().chain(&self.pipes) {
             task.abort();
         }
+    }
+
+    /// Tell the readers the process has gone, and hand them over.
+    ///
+    /// They end by themselves once told, so the caller waits for them rather
+    /// than guessing how long they need.
+    pub fn take_pipes(&mut self) -> Vec<JoinHandle<()>> {
+        self.ending.take();
+        std::mem::take(&mut self.pipes)
     }
 }
 

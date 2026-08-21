@@ -34,12 +34,13 @@ pub const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(8);
 /// does not feel slow.
 pub const START_VERIFY: Duration = Duration::from_millis(1_500);
 
-/// How long the log pumps keep reading after the process they follow has gone.
+/// A bound on waiting for a reader that should already have ended.
 ///
-/// Longer than their poll interval, so a final line written just before the
-/// exit is still picked up, and short enough that a service restarted promptly
-/// does not overlap with its own predecessor.
-const CAPTURE_DRAIN: Duration = Duration::from_millis(600);
+/// Reaching it means end of file never came — a grandchild holding the write
+/// end open, usually. Long enough that a loaded machine is never mistaken for
+/// one, and bounded so the runtime cannot be held open by a process that will
+/// not let go.
+const PIPE_DRAIN: Duration = Duration::from_secs(10);
 
 /// How long a dependency is given to become healthy before giving up.
 ///
@@ -561,6 +562,16 @@ impl Runtime {
         // thing the service prints kills it with SIGPIPE. Capturing output must
         // not put the daemon in the service's critical path.
         let capture = self.logs_arc().capture_paths(&service.id);
+        // Measured before the process can write a byte, and used as the point
+        // the readers start from.
+        //
+        // They used to measure it themselves, after being spawned — which is
+        // after the process was. A service that printed and exited in that
+        // gap had already appended its output, so "start at the end" put the
+        // readers past it and it was never logged at all. The gap is widest on
+        // a loaded machine, and the services that lose the race are the ones
+        // that die immediately: exactly the output somebody needs.
+        let already = capture.as_ref().map(|(out, err)| (file_len(out), file_len(err)));
         match &capture {
             Some((out, err)) => {
                 command.stdout(Stdio::from(open_capture(out)?));
@@ -632,20 +643,37 @@ impl Runtime {
         }
 
         let mut tasks = Vec::new();
-        match &capture {
-            Some((out, err)) => {
-                // Tail from where the file already ends: a restarted service
-                // appends to the same file, and its predecessor's output has
-                // been ingested already.
-                tasks.push(self.tail_capture(service.id.clone(), out.clone(), LogStream::Stdout));
-                tasks.push(self.tail_capture(service.id.clone(), err.clone(), LogStream::Stderr));
+        let mut pipes = Vec::new();
+        // Told when the process has gone, so the file readers can finish
+        // rather than be cut off. Held in the supervisor entry: dropping it
+        // ends them too, which is what shutdown wants.
+        let (ending, told) = tokio::sync::watch::channel(());
+        match (&capture, already) {
+            (Some((out, err)), Some((from_out, from_err))) => {
+                // From where the file ended before this run began: a restarted
+                // service appends to the same file, and its predecessor's
+                // output has been ingested already.
+                pipes.push(self.tail_capture(
+                    service.id.clone(),
+                    out.clone(),
+                    LogStream::Stdout,
+                    from_out,
+                    told.clone(),
+                ));
+                pipes.push(self.tail_capture(
+                    service.id.clone(),
+                    err.clone(),
+                    LogStream::Stderr,
+                    from_err,
+                    told,
+                ));
             }
-            None => {
+            _ => {
                 if let Some(stdout) = child.stdout.take() {
-                    tasks.push(self.pump_logs(service.id.clone(), stdout, LogStream::Stdout));
+                    pipes.push(self.pump_logs(service.id.clone(), stdout, LogStream::Stdout));
                 }
                 if let Some(stderr) = child.stderr.take() {
-                    tasks.push(self.pump_logs(service.id.clone(), stderr, LogStream::Stderr));
+                    pipes.push(self.pump_logs(service.id.clone(), stderr, LogStream::Stderr));
                 }
             }
         }
@@ -658,6 +686,8 @@ impl Runtime {
                 instance_id: instance.id.clone(),
                 identity: ProcessIdentity::new(pid, process_start_time),
                 port,
+                pipes,
+                ending: Some(ending),
                 tasks,
             },
         )?;
@@ -719,11 +749,21 @@ impl Runtime {
     /// Polling rather than watching: the file is local, appended by one writer,
     /// and a filesystem watcher would be a dependency and a permission for
     /// something a 150ms read already does.
+    ///
+    /// Nothing in a file says the process that was writing it has gone, so this
+    /// is told. Once told it makes one more pass and returns — the process has
+    /// already exited by then, so everything it wrote is in the file and one
+    /// read to the end is all of it. Ending on the fact rather than on a timer
+    /// is what keeps a loaded machine from looking like a finished one: the
+    /// timer version dropped the last lines whenever a poll did not land inside
+    /// the window, which is exactly when a service dies with something to say.
     fn tail_capture(
         &self,
         service_id: ServiceId,
         path: std::path::PathBuf,
         stream: LogStream,
+        from: u64,
+        mut ending: tokio::sync::watch::Receiver<()>,
     ) -> tokio::task::JoinHandle<()> {
         use std::io::{Read, Seek, SeekFrom};
 
@@ -731,54 +771,60 @@ impl Runtime {
         let events = self.events().clone();
 
         tokio::spawn(async move {
-            // Start at the end: whatever is already in the file belongs to an
-            // earlier run and has been ingested.
-            let mut offset = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            // Given rather than measured — see where it is taken from.
+            let mut offset = from;
             let mut partial = String::new();
+            let mut last = false;
 
             loop {
-                tokio::time::sleep(Duration::from_millis(150)).await;
+                let mut read_once = || {
+                    let mut file = std::fs::File::open(&path).ok()?;
+                    let length = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+                    if length < offset {
+                        // Truncated or rotated underneath us; start over.
+                        offset = 0;
+                        partial.clear();
+                    }
+                    if length == offset {
+                        return None;
+                    }
+                    file.seek(SeekFrom::Start(offset)).ok()?;
+                    let mut buffer = Vec::new();
+                    file.read_to_end(&mut buffer).ok()?;
+                    offset += buffer.len() as u64;
+                    partial.push_str(&String::from_utf8_lossy(&buffer));
 
-                let Ok(mut file) = std::fs::File::open(&path) else {
-                    continue;
+                    // Whatever follows the last newline is an unfinished line;
+                    // keep it until the rest arrives rather than splitting a
+                    // message — unless there is no rest coming.
+                    let tail = match partial.rfind('\n') {
+                        Some(index) => partial.split_off(index + 1),
+                        None if last => String::new(),
+                        None => return None,
+                    };
+                    Some(std::mem::replace(&mut partial, tail))
                 };
-                let length = file.metadata().map(|meta| meta.len()).unwrap_or(0);
-                if length < offset {
-                    // Truncated or rotated underneath us; start over.
-                    offset = 0;
-                    partial.clear();
-                }
-                if length == offset {
-                    continue;
-                }
-                if file.seek(SeekFrom::Start(offset)).is_err() {
-                    continue;
-                }
 
-                let mut buffer = Vec::new();
-                if file.read_to_end(&mut buffer).is_err() {
-                    continue;
-                }
-                offset += buffer.len() as u64;
-                partial.push_str(&String::from_utf8_lossy(&buffer));
-
-                // Whatever follows the last newline is an unfinished line; keep
-                // it until the rest arrives rather than splitting a message.
-                let tail = match partial.rfind('\n') {
-                    Some(index) => partial.split_off(index + 1),
-                    None => continue,
-                };
-                let complete = std::mem::replace(&mut partial, tail);
-
-                for line in complete.lines() {
-                    match logs.append(&service_id, stream, line.to_string()) {
-                        Ok(entry) => events.publish(RuntimeEvent::Log(entry)),
-                        Err(err) => {
-                            tracing::warn!(%err, "dropping log line");
-                            return;
+                if let Some(complete) = read_once() {
+                    for line in complete.lines() {
+                        match logs.append(&service_id, stream, line.to_string()) {
+                            Ok(entry) => events.publish(RuntimeEvent::Log(entry)),
+                            Err(err) => {
+                                tracing::warn!(%err, "dropping log line");
+                                return;
+                            }
                         }
                     }
                 }
+
+                if last {
+                    return;
+                }
+                last = tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(150)) => false,
+                    // Told the process is gone, or nobody is left to tell us.
+                    _ = ending.changed() => true,
+                };
             }
         })
     }
@@ -1261,14 +1307,32 @@ fn transition(
 /// stopped — and the first version of this fixed only the first. The duplicate
 /// lines came straight back through the other door.
 async fn drain_and_stop(supervisor: &crate::supervisor::Supervisor, service_id: &ServiceId) {
-    let Ok(Some(process)) = supervisor.finish(service_id) else {
+    let Ok(Some(mut process)) = supervisor.finish(service_id) else {
         return;
     };
-    // Parked rather than held here, so that a start arriving inside the drain
-    // window can find these readers and end them before writing.
+    // Taken out first, and never aborted. A pipe reader ends at end of file
+    // and a capture reader ends on being told, so both end on the fact that
+    // the process has gone rather than on an estimate of when it went. The
+    // timer this replaces dropped the last lines whenever a loaded machine
+    // made the estimate wrong — which is when a service dying has most to
+    // say — and left the readers alive when it was generous, which logged
+    // the next run's output twice.
+    let pipes = process.take_pipes();
+
+    // The watchers never end by themselves, so they are parked where a start
+    // can find them: one arriving while this is still winding down must be
+    // able to stop them rather than wait on them.
     if supervisor.park(service_id.clone(), process).is_err() {
         return;
     }
-    tokio::time::sleep(CAPTURE_DRAIN).await;
+
+    for handle in pipes {
+        let _ = tokio::time::timeout(PIPE_DRAIN, handle).await;
+    }
     let _ = supervisor.stop_parked(service_id);
+}
+
+/// How much is in a file already, treating one that is not there as empty.
+fn file_len(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
