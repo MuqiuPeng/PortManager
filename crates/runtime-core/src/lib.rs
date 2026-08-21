@@ -784,12 +784,17 @@ impl Runtime {
                 .into_iter()
                 .filter(|entry| !claimed.contains(&entry.name))
                 .collect();
+            // Read from the same producer that answers `task list`, so a
+            // group is one fact with one source rather than something each
+            // surface assembles for itself.
+            let tasks = self.task_views(&workspace.id).unwrap_or_default();
             workspaces.push(WorkspaceView {
                 workspace,
                 services,
                 external,
                 containers,
                 supervised,
+                tasks,
             });
         }
 

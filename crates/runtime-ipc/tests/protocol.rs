@@ -81,6 +81,7 @@ fn project_view() -> ProjectView {
                 supervisor: Some("pm2".to_string()),
             }],
             supervised: vec![],
+            tasks: vec![],
             containers: vec![ContainerView {
                 name: "db".to_string(),
                 service: Some("db".to_string()),

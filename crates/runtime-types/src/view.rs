@@ -118,6 +118,11 @@ pub struct WorkspaceView {
     /// Entries another supervisor keeps in this checkout.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supervised: Vec<SupervisedView>,
+    /// Groups declared over these services. A member listed here is still
+    /// present in `services`; a surface that shows groups is expected to show
+    /// each service once, under its group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<TaskView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

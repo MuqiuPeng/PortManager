@@ -872,40 +872,7 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         }
         ResponseBody::Logs { items } => render::logs(items),
         ResponseBody::Setting { value } => value.clone().unwrap_or_else(|| "(unset)".to_string()),
-        ResponseBody::Tasks { items } => {
-            if items.is_empty() {
-                "No tasks declared.".to_string()
-            } else {
-                items
-                    .iter()
-                    .map(|view| {
-                        // The group's own state first: it is the unit somebody
-                        // declared, and its members are how it is made.
-                        let total = view.task.steps.len();
-                        let mark = if view.running == total && total > 0 {
-                            "\u{25cf}"
-                        } else if view.running > 0 {
-                            "\u{25d0}"
-                        } else {
-                            "\u{25cb}"
-                        };
-                        let missing = if view.missing.is_empty() {
-                            String::new()
-                        } else {
-                            format!("  ! missing {}", view.missing.join(", "))
-                        };
-                        format!(
-                            "{mark} {}  {}/{} up{missing}\n    {}",
-                            view.task.name,
-                            view.running,
-                            total,
-                            view.task.steps.join(" -> ")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-        }
+        ResponseBody::Tasks { items } => render::tasks(items),
         ResponseBody::TaskRun { steps } => {
             if steps.is_empty() {
                 "Nothing to do.".to_string()

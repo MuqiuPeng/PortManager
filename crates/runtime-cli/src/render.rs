@@ -6,7 +6,7 @@
 use runtime_core::discover::Discovery;
 use runtime_types::{
     ContainerView, DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
-    ServiceView, StartOutcome, SupervisedView, Workspace,
+    ServiceView, StartOutcome, SupervisedView, TaskView, Workspace,
 };
 
 /// A filled dot for live services, hollow for stopped — readable at a glance
@@ -71,7 +71,24 @@ pub fn projects(views: &[ProjectView]) -> String {
                 ""
             };
             out.push_str(&format!("  {branch}{marker}\n"));
+            // A declared group is one thing. Its members are shown under it,
+            // and not again in the loose list — the same rule the window
+            // follows, so the two do not disagree about what exists.
+            for task in &workspace.tasks {
+                out.push_str(&format!("    {}\n", task_header(task)));
+                for member in &task.services {
+                    out.push_str(&format!("      {}\n", service_line(member)));
+                }
+            }
+            let grouped: Vec<&str> = workspace
+                .tasks
+                .iter()
+                .flat_map(|task| task.task.steps.iter().map(String::as_str))
+                .collect();
             for service in &workspace.services {
+                if grouped.contains(&service.service.name.as_str()) {
+                    continue;
+                }
                 out.push_str(&format!("    {}\n", service_line(service)));
             }
             for entry in &workspace.supervised {
@@ -86,6 +103,38 @@ pub fn projects(views: &[ProjectView]) -> String {
         }
     }
     out
+}
+
+/// A group's own header: the unit somebody declared, and how it is made.
+pub fn task_header(view: &TaskView) -> String {
+    let total = view.task.steps.len();
+    let mark = if view.running == total && total > 0 {
+        "\u{25cf}"
+    } else if view.running > 0 {
+        "\u{25d0}"
+    } else {
+        "\u{25cb}"
+    };
+    let missing = if view.missing.is_empty() {
+        String::new()
+    } else {
+        format!("  ! missing {}", view.missing.join(", "))
+    };
+    format!(
+        "{mark} {}  {}/{} up{missing}",
+        view.task.name, view.running, total
+    )
+}
+
+pub fn tasks(items: &[TaskView]) -> String {
+    if items.is_empty() {
+        return "No tasks declared.".to_string();
+    }
+    items
+        .iter()
+        .map(|view| format!("{}\n    {}", task_header(view), view.task.steps.join(" -> ")))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn service_line(view: &ServiceView) -> String {
