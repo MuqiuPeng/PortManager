@@ -838,8 +838,13 @@ button {
   width: 140px;
 }
 
-.field input[type="number"],
-.field input[type="text"],
+/* Everything that takes typing, however it is spelled.
+ *
+ * These were matched on `[type="text"]`, which an input without a `type`
+ * attribute does not have — the attribute selector reads the attribute, not
+ * the default. Those inputs got no styling at all and rendered as a white
+ * system box in a dark window. */
+.field input:not([type="checkbox"]):not([type="radio"]),
 .field select {
   padding: 4px 7px;
   border: 1px solid var(--border);
@@ -853,9 +858,15 @@ button {
   width: 84px;
 }
 
-.field input[type="text"] {
+.field input[type="text"],
+.field input:not([type]) {
   width: 220px;
   font-family: var(--mono);
+}
+
+/* A field that owns its row gives the box the row. */
+.field.wide input:not([type="checkbox"]):not([type="radio"]) {
+  width: 100%;
 }
 
 .field .unit {
@@ -1264,45 +1275,47 @@ button {
   color: var(--text-dim);
 }
 
-.group-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.group-column h3 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  margin: 0 0 8px;
-}
-
-.group-steps,
-.group-available {
+/* One list: chosen on top and numbered, the rest below. */
+.field.wide > span:first-child + .group-list,
+.group-list {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: 6px 0 0;
+  padding: 4px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-
-.group-steps li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: 2px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--surface);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.group-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+/* A member of the group reads as one; the rest are still on offer. */
+.group-list li.chosen {
   background: var(--surface-alt);
+  color: var(--text);
+}
+
+.group-list input[type="checkbox"] {
+  margin: 0;
 }
 
 .step-order {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-dim);
-  min-width: 14px;
+  min-width: 12px;
+  text-align: right;
 }
 
 .step-name {
@@ -1314,9 +1327,9 @@ button {
 }
 
 button.ghost.tiny {
-  padding: 1px 6px;
+  padding: 0 6px;
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.6;
 }
 
 .hint.problem {

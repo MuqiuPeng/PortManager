@@ -201,8 +201,10 @@ describe("declaring a group", () => {
     for (const service of services) {
       expect(html).toContain(service.name);
     }
-    // One box, for the name. The members are not typed.
-    expect(html.match(/<input/g)?.length).toBe(1);
+    // One box you can type in, for the name. Members are ticked, not typed.
+    const typeable = html.match(/<input(?![^>]*type="checkbox")/g) ?? [];
+    expect(typeable.length).toBe(1);
+    expect(html).toContain('type="checkbox"');
   });
 
   it("cannot be created with no members", () => {
