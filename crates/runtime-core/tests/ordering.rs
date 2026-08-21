@@ -496,3 +496,56 @@ async fn a_healthy_checkout_reports_nothing() {
 
     assert!(runtime.diagnose().unwrap().is_empty(), "quiet is the point");
 }
+
+#[tokio::test]
+async fn a_failure_reports_only_the_run_that_failed() {
+    // Output is kept across restarts on purpose, so a service failing a second
+    // time has both failures in its log. Reading the tail of all of it produces
+    // an error message assembled from two different attempts, which is worse
+    // than no message: it looks like one.
+    let dir = repo();
+    let logs = tempfile::tempdir().unwrap();
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let say = dir.path().join("say.py");
+    std::fs::write(&say, "import sys\nprint(sys.argv[1], file=sys.stderr)\nsys.exit(1)\n").unwrap();
+
+    let mut service = declare(
+        &runtime,
+        &workspace.id,
+        dir.path(),
+        "flaky",
+        &format!("{} {} FIRST_FAILURE", python(), say.display()),
+        &[],
+        true,
+    );
+
+    let _ = runtime.start_service(&service.id, Default::default()).await;
+
+    // Long enough that the second run's lines are stamped after the second
+    // instance began, which is the boundary being relied on.
+    tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+    service.command = format!("{} {} SECOND_FAILURE", python(), say.display());
+    runtime.store().upsert_service(&service).unwrap();
+    let _ = runtime.start_service(&service.id, Default::default()).await;
+
+    let failures = runtime.failures(20).unwrap();
+    let flaky = failures
+        .iter()
+        .find(|failure| failure.subject.ends_with("/flaky"))
+        .expect("a failing service should be reported");
+
+    let said = flaky.detail.join("\n");
+    assert!(said.contains("SECOND_FAILURE"), "{said}");
+    assert!(
+        !said.contains("FIRST_FAILURE"),
+        "the previous run's output leaked into this one: {said}"
+    );
+}

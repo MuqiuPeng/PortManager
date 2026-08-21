@@ -34,6 +34,13 @@ pub const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(8);
 /// does not feel slow.
 pub const START_VERIFY: Duration = Duration::from_millis(1_500);
 
+/// How long the log pumps keep reading after the process they follow has gone.
+///
+/// Longer than their poll interval, so a final line written just before the
+/// exit is still picked up, and short enough that a service restarted promptly
+/// does not overlap with its own predecessor.
+const CAPTURE_DRAIN: Duration = Duration::from_millis(600);
+
 /// How long a dependency is given to become healthy before giving up.
 ///
 /// Generous, because the thing being waited for is a database accepting its
@@ -399,6 +406,23 @@ impl Runtime {
         };
 
         let started_at = Utc::now();
+
+        // Kept, not just returned. A step that runs to completion produces its
+        // whole account of itself in one go and then is gone; without this the
+        // only place it ever existed was the error of the call that ran it, so
+        // asking afterwards what a migration said had no answer at all.
+        for (stream, raw) in [
+            (LogStream::Stdout, &output.stdout),
+            (LogStream::Stderr, &output.stderr),
+        ] {
+            for line in String::from_utf8_lossy(raw).lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let _ = self.logs_arc().append(&service.id, stream, line.to_string());
+            }
+        }
+
         if output.status.success() {
             self.record_run(&service, started_at, Some(0), ServiceStatus::Stopped)?;
             return Ok(());
@@ -775,9 +799,20 @@ impl Runtime {
                     None => "process terminated by signal".to_string(),
                 },
             );
-            // `finish`, not `remove`: aborting the log pumps here would throw
-            // away the output that explains the exit.
-            let _ = supervisor.finish(&service.id);
+            // Not aborted immediately: the last thing a service prints is
+            // usually the reason it stopped, and the pumps poll, so cutting
+            // them off here throws that away.
+            //
+            // But not left running either. `finish` takes the entry out of the
+            // supervisor, so anything still tailing afterwards is unreachable —
+            // and it is still reading the capture file the *next* run appends
+            // to. Two runs, two readers, every line logged twice; three runs,
+            // three times. Drained, then stopped.
+            let finished = supervisor.finish(&service.id);
+            tokio::time::sleep(CAPTURE_DRAIN).await;
+            if let Ok(Some(process)) = finished {
+                crate::supervisor::Supervisor::stop(process);
+            }
 
             events.publish(RuntimeEvent::ServiceExited {
                 service_id: service.id.clone(),

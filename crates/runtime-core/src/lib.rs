@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
     AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
@@ -1254,7 +1254,11 @@ impl Runtime {
                             .or_else(|| instance.map(|i| i.started_at))
                             .unwrap_or_else(Utc::now),
                         exit_code: instance.and_then(|i| i.exit_code),
-                        detail: self.last_words(&service.id, per_service),
+                        detail: self.last_words(
+                            &service.id,
+                            per_service,
+                            instance.map(|i| i.started_at),
+                        ),
                         service_id: service.id,
                     });
                 }
@@ -1266,14 +1270,32 @@ impl Runtime {
         Ok(found)
     }
 
-    /// The last thing a service said, preferring what it said on stderr.
+    /// The last thing a service said during one run, preferring stderr.
     ///
     /// A failure normally explains itself and then stops, so the tail is the
     /// message. Stderr first because a busy service's access log will otherwise
     /// fill the tail with lines that were never about the problem.
-    fn last_words(&self, service_id: &ServiceId, lines: usize) -> Vec<String> {
-        let Ok(all) = self.read_logs(service_id, 400, None) else {
+    ///
+    /// Bounded to the run that failed. Output is kept across restarts on
+    /// purpose — losing it at the moment a service dies is exactly wrong — but
+    /// that means a service failing for the third time has three failures in
+    /// its log, and reading the tail of all of them produces an error message
+    /// assembled from different attempts.
+    fn last_words(
+        &self,
+        service_id: &ServiceId,
+        lines: usize,
+        since: Option<DateTime<Utc>>,
+    ) -> Vec<String> {
+        let Ok(everything) = self.read_logs(service_id, 400, None) else {
             return Vec::new();
+        };
+        let all: Vec<LogLine> = match since {
+            Some(started_at) => everything
+                .into_iter()
+                .filter(|line| line.timestamp >= started_at)
+                .collect(),
+            None => everything,
         };
 
         let complaints: Vec<&LogLine> = all

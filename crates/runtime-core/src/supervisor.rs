@@ -71,6 +71,17 @@ impl Supervisor {
         Ok(self.lock()?.remove(service_id))
     }
 
+    /// Stop what `finish` handed back, once it has had time to drain.
+    ///
+    /// `finish` takes an entry out without stopping it, so the last lines a
+    /// service printed still arrive. That leaves the tasks unreachable through
+    /// the map, and they are still reading the capture file the next run will
+    /// append to — so the caller has to be able to stop them afterwards, and
+    /// this is where that lives rather than in a private field of the caller's.
+    pub fn stop(process: RunningProcess) {
+        process.abort();
+    }
+
     /// Stop tracking a service and abandon its tasks.
     ///
     /// For shutdown, where waiting on pipes that may never close is worse than

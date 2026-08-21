@@ -949,3 +949,40 @@ async fn registering_a_worktree_tops_up_its_services() {
     assert_eq!(after.len(), 1, "registering again duplicated a service");
     assert_eq!(after[0].command, "sleep 2", "an edited copy was overwritten");
 }
+
+
+/// Restarting a service must not log its output twice.
+///
+/// The pumps that follow a capture file are deliberately left running when a
+/// service exits, so the last thing it printed — usually the reason — still
+/// arrives. `finish` took them out of the supervisor without stopping them,
+/// which made them unreachable while they went on reading the same file the
+/// next run appends to. Two runs, two readers, every line twice; three runs,
+/// three times. It reads as a service repeating itself.
+#[tokio::test]
+async fn restarting_does_not_log_the_same_line_twice() {
+    let logs = tempfile::tempdir().unwrap();
+    let config = r#"{ "name": "chatty", "services": {
+        "once": { "command": "PY once.py" } } }"#
+        .replace("PY", if cfg!(windows) { "python" } else { "python3" });
+    let script = "import sys\nprint('LINE', file=sys.stderr)\nsys.exit(1)\n";
+    let dir = repo(&[(".runtime.json", config.as_str()), ("once.py", script)]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    for run in 1..=3 {
+        let _ = runtime.start_service(&service.id, Default::default()).await;
+        // Past the drain window, so the previous run's readers have stopped.
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+        let seen = runtime
+            .read_logs(&service.id, 200, None)
+            .unwrap()
+            .iter()
+            .filter(|line| line.message == "LINE")
+            .count();
+        assert_eq!(seen, run, "after {run} runs the line was logged {seen} times");
+    }
+}

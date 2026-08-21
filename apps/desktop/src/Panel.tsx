@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, errorMessage, onPanelState, onRuntimeEvent, openExternal } from "./api";
-import { isLive, type PanelState, type ProjectView, type ServiceView } from "./types";
+import { api, copyText, errorMessage, onPanelState, onRuntimeEvent, openExternal } from "./api";
+import {
+  isLive,
+  type Failure,
+  type PanelState,
+  type ProjectView,
+  type ServiceView,
+} from "./types";
 
 /**
  * The edge panel, in both of its sizes.
@@ -75,6 +81,42 @@ export default function Panel() {
 
   const running = rows.filter((row) => isLive(row.service.status));
 
+  // Fetched but not displayed. The panel is a glance, and an error message is
+  // not glanceable — what it is good for here is being carried somewhere else,
+  // so the row offers to copy it and says nothing more.
+  const [failures, setFailures] = useState<Failure[]>([]);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const broken = await api.listFailures(40);
+        if (!cancelled) setFailures(broken);
+      } catch {
+        if (!cancelled) setFailures([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projects]);
+
+  async function copyFailure(failure: Failure) {
+    const code = failure.exit_code === undefined ? "" : ` (exit ${failure.exit_code})`;
+    const text = [
+      `${failure.subject} — ${failure.status}${code}`,
+      ...(failure.detail ?? []),
+    ].join("\n");
+    try {
+      await copyText(text);
+      setCopied(failure.service_id);
+      window.setTimeout(() => setCopied(null), 1500);
+    } catch {
+      // Nothing worth saying in a panel this size, and nowhere to say it.
+    }
+  }
+
   async function act(id: string, action: () => Promise<unknown>) {
     setBusy(id);
     setError(null);
@@ -124,6 +166,7 @@ export default function Panel() {
           rows.map(({ project, branch, service }) => {
             const live = isLive(service.status);
             const id = service.id;
+            const failed = failures.find((failure) => failure.service_id === id);
             return (
               <div className="panel-row" key={id}>
                 <span className={`dot status-${service.status}`} aria-hidden />
@@ -140,6 +183,19 @@ export default function Panel() {
                 </div>
 
                 <div className="panel-row-actions">
+                  {failed && (
+                    <button
+                      className="icon-button"
+                      title={
+                        copied === id
+                          ? "Copied"
+                          : "Copy why this failed"
+                      }
+                      onClick={() => void copyFailure(failed)}
+                    >
+                      {copied === id ? "✓" : "⧉"}
+                    </button>
+                  )}
                   {live && service.url && (
                     <button
                       className="icon-button"
