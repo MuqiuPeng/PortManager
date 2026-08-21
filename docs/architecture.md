@@ -56,7 +56,10 @@ Ports are not part of that tree. A `PortLease` points at a service and moves
 through `reserved -> active -> released`, with reservations expiring so a
 crashed agent cannot hold a port forever.
 
-## Three properties the design rests on
+## The properties this design rests on
+
+The first three were decided before there was much to decide them about.
+The last two were learned, each from something that broke.
 
 ### A port is leased before the process starts
 
@@ -87,6 +90,46 @@ is running is answered by the process table. On start the daemon reconciles the
 two, closing out instances whose process is gone and releasing their leases.
 Without that step the state drifts a little further from reality after every
 crash.
+
+### One fact, one source
+
+An operation that reads the runtime's own instance record cannot see a service
+somebody else started, and on a working machine that is most of them.
+
+This was one bug, found five times. `stop` reported "not running" for something
+the view showed serving. `health` said the same. `start` launched a second copy
+beside the one already up. `restart` skipped the stop and did the same again.
+Registering a worktree copied the primary checkout's services when discovery did
+it and not when a person asked for it. Every one was a second code path for a
+question that already had an answer somewhere else.
+
+The failures are not symmetrical, which is why this is worth a rule rather than
+vigilance. The first two merely said something false about a running service.
+`start` broke one: a duplicate arrives with different arguments than the process
+already serving, and for a project whose two servers share a build directory,
+the second overwrites what the first is running from.
+
+So when a fix lands, the question is not whether it is correct but where else
+that fact is read. Four of the five above were found by asking it.
+
+### A check that cannot tell must not answer
+
+The liveness test in one of these tests ran `ps -p` and treated a failure to run
+it as "the process is gone" — which is that test's failure condition. On a
+platform without `ps` it reported the exact bug it exists to catch. It would
+have passed for the wrong reason just as readily.
+
+The same shape, three more times in one week. `dir.join("PM2").is_file()` says
+yes on a case-insensitive filesystem because of an unrelated `pm2`. A frontend
+type said a field was always present; the daemon omits it when empty; reading
+`.length` off the gap took the window down. `runtime list` accepted `--project`
+and ignored it, which is worse than rejecting it, because the output looks like
+an answer to the question that was asked.
+
+An answer given without the information to give it is indistinguishable from a
+real one, which is precisely what makes it expensive. `ProcessProvider::environment`
+returns `Option` for this reason: the default is "cannot tell", and a caller
+that reads it as "empty" is wrong in a way the type will not let it be.
 
 ## Environment
 

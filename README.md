@@ -264,7 +264,8 @@ service *as* that service, rather than listing it as an unexplained port.
 
 ## Design notes
 
-Three properties are worth knowing before reading the code:
+Worth knowing before reading the code — the first few were decided up
+front, the last two were learned from something breaking:
 
 **Projects are found, not declared.** Every listening socket resolves to a pid,
 a working directory and from there a repository root, so the runtime can list
@@ -321,6 +322,21 @@ automatically — not even under `--on-conflict kill-existing`.
 agents are clients. Closing one does not change what is running, and on start
 the daemon reconciles its database against the live process table rather than
 trusting either alone.
+
+**One fact, one source.** An operation that reads the runtime's own instance
+record cannot see a service somebody else started, and on a working machine that
+is most of them. That was one bug found five times — in `stop`, `health`,
+`start`, `restart` and worktree registration — and the failures are not
+symmetrical: two of them merely said something false, and `start` launched a
+duplicate that overwrote the build the original was serving from. When a fix
+lands the question is not whether it is correct but where else that fact is read.
+
+**A check that cannot tell must not answer.** A liveness test that ran `ps` and
+read a missing `ps` as "the process is gone" reported the exact bug it existed
+to catch. A `PATH` lookup said yes to `PM2` because a case-insensitive
+filesystem found `pm2`. A frontend type promised a field the daemon omits, and
+reading it took the window down. An answer given without the information to give
+it is indistinguishable from a real one, which is what makes it expensive.
 
 ## Repository layout
 
