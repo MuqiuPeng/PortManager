@@ -31,6 +31,14 @@ impl RunningProcess {
 #[derive(Debug, Default)]
 pub struct Supervisor {
     running: Mutex<HashMap<ServiceId, RunningProcess>>,
+    /// Runs that have ended but whose readers are still being drained.
+    ///
+    /// Kept here rather than handed to the caller so that starting the same
+    /// service again can find them. A drain deliberately outlives the process
+    /// by a moment; a second run beginning inside that moment would otherwise
+    /// share its capture file with a reader from the run before, and every
+    /// line would be logged twice.
+    draining: Mutex<HashMap<ServiceId, RunningProcess>>,
 }
 
 impl Supervisor {
@@ -71,15 +79,25 @@ impl Supervisor {
         Ok(self.lock()?.remove(service_id))
     }
 
-    /// Stop what `finish` handed back, once it has had time to drain.
+    /// Hold a finished run's readers while they drain.
+    pub fn park(&self, service_id: ServiceId, process: RunningProcess) -> Result<()> {
+        if let Some(previous) = self.draining()?.insert(service_id, process) {
+            previous.abort();
+        }
+        Ok(())
+    }
+
+    /// Stop a parked run's readers, whether or not it has finished draining.
     ///
-    /// `finish` takes an entry out without stopping it, so the last lines a
-    /// service printed still arrive. That leaves the tasks unreachable through
-    /// the map, and they are still reading the capture file the next run will
-    /// append to — so the caller has to be able to stop them afterwards, and
-    /// this is where that lives rather than in a private field of the caller's.
-    pub fn stop(process: RunningProcess) {
-        process.abort();
+    /// Called when the drain window is up, and again before the same service
+    /// starts again: whatever the old run still had to say, it has had until
+    /// the moment its replacement begins to say it, and it must not be reading
+    /// when the new run starts writing.
+    pub fn stop_parked(&self, service_id: &ServiceId) -> Result<()> {
+        if let Some(process) = self.draining()?.remove(service_id) {
+            process.abort();
+        }
+        Ok(())
     }
 
     /// Stop tracking a service and abandon its tasks.
@@ -87,6 +105,7 @@ impl Supervisor {
     /// For shutdown, where waiting on pipes that may never close is worse than
     /// losing the tail of a log.
     pub fn remove(&self, service_id: &ServiceId) -> Result<Option<RunningProcess>> {
+        self.stop_parked(service_id)?;
         let removed = self.lock()?.remove(service_id);
         if let Some(process) = &removed {
             process.abort();
@@ -100,6 +119,12 @@ impl Supervisor {
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<ServiceId, RunningProcess>>> {
         self.running
+            .lock()
+            .map_err(|_| RuntimeError::internal("supervisor lock poisoned"))
+    }
+
+    fn draining(&self) -> Result<std::sync::MutexGuard<'_, HashMap<ServiceId, RunningProcess>>> {
+        self.draining
             .lock()
             .map_err(|_| RuntimeError::internal("supervisor lock poisoned"))
     }

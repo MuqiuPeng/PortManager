@@ -5,6 +5,7 @@ interface Props {
   busy: boolean;
   onRun: () => void;
   onStop: () => void;
+  onEdit: () => void;
   onRemove: () => void;
   /** Rendered by the caller, so a member looks like any other service row. */
   renderService: (service: ServiceView) => React.ReactNode;
@@ -22,7 +23,7 @@ interface Props {
  * what it is made of rather than as alternatives to it. Nothing here is
  * inferred: a group exists because somebody said so.
  */
-export function TaskGroup({ task, busy, onRun, onStop, onRemove, renderService }: Props) {
+export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderService }: Props) {
   const total = task.steps.length;
   const missing = task.missing ?? [];
   const allUp = total > 0 && task.running === total;
@@ -56,6 +57,12 @@ export function TaskGroup({ task, busy, onRun, onStop, onRemove, renderService }
             Start
           </button>
         )}
+        {/* Somewhere to see what this group was set to. Without it the only
+            way back to the order somebody chose is to delete the group and
+            declare it again from memory. */}
+        <button className="ghost" onClick={onEdit} disabled={busy} title="Change its members or their order">
+          Edit
+        </button>
         <button className="ghost" onClick={onRemove} disabled={busy} title="Ungroup">
           −
         </button>

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use runtime_core::Runtime;
-use runtime_types::{ConflictPolicy, RuntimeError, ServiceType};
+use runtime_types::{ConflictPolicy, RuntimeError, ServiceId, ServiceType};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -951,6 +951,29 @@ async fn registering_a_worktree_tops_up_its_services() {
 }
 
 
+/// Wait until a line has been logged at least `want` times, or give up.
+///
+/// These tests are about a line appearing *twice*, and a fixed sleep cannot
+/// tell "not logged twice" from "not logged yet" — on a loaded machine the
+/// second reading is the common one, and the test then reports duplication
+/// that did not happen. Polling to the point where the count could be right
+/// removes that reading: slowness costs time here, never a verdict.
+async fn logged_at_least(runtime: &Runtime, id: &ServiceId, line: &str, want: usize) -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let seen = runtime
+            .read_logs(id, 200, None)
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.message == line)
+            .count();
+        if seen >= want || std::time::Instant::now() > deadline {
+            return seen;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 /// Restarting a service must not log its output twice.
 ///
 /// The pumps that follow a capture file are deliberately left running when a
@@ -974,15 +997,7 @@ async fn restarting_does_not_log_the_same_line_twice() {
 
     for run in 1..=3 {
         let _ = runtime.start_service(&service.id, Default::default()).await;
-        // Past the drain window, so the previous run's readers have stopped.
-        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
-
-        let seen = runtime
-            .read_logs(&service.id, 200, None)
-            .unwrap()
-            .iter()
-            .filter(|line| line.message == "LINE")
-            .count();
+        let seen = logged_at_least(&runtime, &service.id, "LINE", run).await;
         assert_eq!(seen, run, "after {run} runs the line was logged {seen} times");
     }
 }
@@ -1014,20 +1029,17 @@ async fn stopping_does_not_log_the_same_line_twice() {
             .start_service(&service.id, Default::default())
             .await
             .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        // Its one line has to have been captured before stopping proves
+        // anything about what stopping does to the readers.
+        logged_at_least(&runtime, &service.id, "LINE", run).await;
         runtime
             .stop_service(&service.id, std::time::Duration::from_secs(5))
             .await
             .unwrap();
-        // Past the drain window, so this run's readers have stopped.
-        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
 
-        let seen = runtime
-            .read_logs(&service.id, 200, None)
-            .unwrap()
-            .iter()
-            .filter(|line| line.message == "LINE")
-            .count();
+        // `stop_service` drains before it returns, so by here this run's
+        // readers are gone and a duplicate would already have been written.
+        let seen = logged_at_least(&runtime, &service.id, "LINE", run).await;
         assert_eq!(seen, run, "after {run} stopped runs the line was logged {seen} times");
     }
 }

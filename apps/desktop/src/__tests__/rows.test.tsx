@@ -10,6 +10,7 @@ import { FindingsBanner } from "../components/FindingsBanner";
 import { ServiceRow } from "../components/ServiceRow";
 import { GroupEditor } from "../components/GroupEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
+import { TaskGroup } from "../components/TaskGroup";
 import { affectsFailures } from "../types";
 import type {
   ContainerView,
@@ -230,5 +231,70 @@ describe("declaring a group", () => {
     );
     // Nothing typed yet, so nothing to complain about.
     expect(html).not.toContain("already has a group");
+  });
+});
+
+describe("an existing group", () => {
+  // The fixtures are both called `web`, which is fine for a shape but cannot
+  // show an order. Two names, over the shape the daemon actually sends.
+  const services = [
+    { ...wire.service_minimal, id: "a", name: "db" },
+    { ...wire.service_full, id: "b", name: "api" },
+  ] as ServiceView[];
+  const group = {
+    id: "t",
+    workspace_id: "w",
+    name: "dev",
+    steps: ["db", "api"],
+    services: [],
+    running: 0,
+  } as unknown as TaskView;
+
+  it("opens showing what it was set to, in the order it was set in", () => {
+    const html = renderToString(
+      <GroupEditor
+        services={services}
+        existing={[group]}
+        editing={group}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(html).toContain("Edit dev");
+    expect(html).toContain('value="dev"');
+    // Both members ticked, and the first-declared one numbered 1.
+    const first = html.indexOf(group.steps[0]);
+    const second = html.indexOf(group.steps[1]);
+    expect(first).toBeGreaterThan(-1);
+    expect(second).toBeGreaterThan(first);
+    expect(html).toContain("Save</button>");
+  });
+
+  it("does not call its own name a clash with itself", () => {
+    const html = renderToString(
+      <GroupEditor
+        services={services}
+        existing={[group]}
+        editing={group}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(html).not.toContain("already has a group");
+  });
+
+  it("offers a way in from the row itself", () => {
+    const html = renderToString(
+      <TaskGroup
+        task={{ ...group, services: [] }}
+        busy={false}
+        onRun={() => {}}
+        onStop={() => {}}
+        onEdit={() => {}}
+        onRemove={() => {}}
+        renderService={() => null}
+      />,
+    );
+    expect(html).toContain("Edit");
   });
 });

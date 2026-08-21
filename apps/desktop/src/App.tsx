@@ -402,10 +402,14 @@ export default function App() {
             setEditingTask(null);
           }}
           onConfirm={(name, steps) => {
+            const renamed = editingTask && editingTask !== name ? editingTask : null;
             setPrompt(null);
             setEditingTask(null);
             void act(async () => {
               await api.setTask(project.id, name, steps);
+              // A group is keyed by its name, so saving under a new one
+              // declares a second group rather than renaming the first.
+              if (renamed) await api.removeTask(project.id, renamed);
               await reloadTasks();
             });
           }}
@@ -581,7 +585,13 @@ export default function App() {
                         <button
                           className="ghost"
                           disabled={busy}
-                          onClick={() => setPrompt("add-task")}
+                          onClick={() => {
+                            // New means new: the sheet is the same one Edit
+                            // opens, so it would otherwise arrive filled in
+                            // with whichever group was edited last.
+                            setEditingTask(null);
+                            setPrompt("add-task");
+                          }}
                           title="Start several services together, in order"
                         >
                           + Group
@@ -608,6 +618,10 @@ export default function App() {
                           key={task.id}
                           onRun={() => project && act(() => api.runTask(project.id, task.name))}
                           onStop={() => project && act(() => api.stopTask(project.id, task.name))}
+                          onEdit={() => {
+                            setEditingTask(task.name);
+                            setPrompt("add-task");
+                          }}
                           onRemove={() =>
                             project &&
                             act(async () => {

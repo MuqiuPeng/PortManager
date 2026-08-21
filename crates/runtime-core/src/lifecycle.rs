@@ -607,6 +607,13 @@ impl Runtime {
         };
         self.store().insert_instance(&instance)?;
 
+        // A previous run's readers are drained rather than cut off, which
+        // leaves them alive for a moment after it ends. This run appends to
+        // the same capture file, so a start landing inside that moment would
+        // be read by both — every line twice. Whatever the last run still had
+        // to say, it has had until now to say it.
+        self.supervisor().stop_parked(&service.id)?;
+
         self.logs_arc().append(
             &service.id,
             LogStream::System,
@@ -1254,9 +1261,14 @@ fn transition(
 /// stopped — and the first version of this fixed only the first. The duplicate
 /// lines came straight back through the other door.
 async fn drain_and_stop(supervisor: &crate::supervisor::Supervisor, service_id: &ServiceId) {
-    let finished = supervisor.finish(service_id);
-    tokio::time::sleep(CAPTURE_DRAIN).await;
-    if let Ok(Some(process)) = finished {
-        crate::supervisor::Supervisor::stop(process);
+    let Ok(Some(process)) = supervisor.finish(service_id) else {
+        return;
+    };
+    // Parked rather than held here, so that a start arriving inside the drain
+    // window can find these readers and end them before writing.
+    if supervisor.park(service_id.clone(), process).is_err() {
+        return;
     }
+    tokio::time::sleep(CAPTURE_DRAIN).await;
+    let _ = supervisor.stop_parked(service_id);
 }
