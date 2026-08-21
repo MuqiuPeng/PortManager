@@ -245,6 +245,13 @@ export interface DaemonInfo {
 export type RuntimeEvent =
   | { event: "project_added"; project_id: string; name: string }
   | { event: "project_removed"; project_id: string }
+  | { event: "workspace_changed"; project_id: string; workspace_id: string }
+  | {
+      event: "service_changed";
+      project_id: string;
+      service_id: string;
+      removed: boolean;
+    }
   | {
       event: "service_status_changed";
       service_id: string;
@@ -254,6 +261,32 @@ export type RuntimeEvent =
   | { event: "service_exited"; service_id: string; exit_code?: number }
   | { event: "port_lease_changed"; port: number; service_id: string }
   | { event: "log"; seq: number; service_id: string; message: string };
+
+/**
+ * Whether an event means the window should re-ask what is broken.
+ *
+ * Everything but a log line. A failure that clears — or a service that is
+ * removed — has to reach a window showing a failure toast, or the toast stays
+ * up pointing at an id the daemon no longer knows. Log lines arrive per line
+ * and would mean re-diagnosing the machine while a service is merely talking.
+ *
+ * Written as a function over the whole union so that adding an event forces a
+ * decision here rather than silently defaulting to "ignore".
+ */
+export function affectsFailures(event: RuntimeEvent): boolean {
+  switch (event.event) {
+    case "log":
+      return false;
+    case "project_added":
+    case "project_removed":
+    case "workspace_changed":
+    case "service_changed":
+    case "service_status_changed":
+    case "service_exited":
+    case "port_lease_changed":
+      return true;
+  }
+}
 
 /** True while the runtime believes a process should exist. */
 export function isLive(status: ServiceStatus): boolean {

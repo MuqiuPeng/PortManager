@@ -26,6 +26,7 @@ import type {
   ServiceView,
   TaskView,
 } from "./types";
+import { affectsFailures } from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -102,8 +103,14 @@ export default function App() {
   // Live updates: anything the daemon does — from this window, the CLI or an
   // agent — lands here without polling.
   useEffect(() => {
-    const unlisten = onRuntimeEvent(() => {
+    const unlisten = onRuntimeEvent((event) => {
       void refreshProjects();
+      // What is broken is as live as what is running. Refreshing only the
+      // service list left a toast on screen for a service that had since
+      // been fixed, or removed — and its Logs and Copy buttons then asked
+      // the daemon about an id it no longer knew.
+      //
+      if (affectsFailures(event)) setRevision((n) => n + 1);
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -190,6 +197,8 @@ export default function App() {
 
   /** Services that are not working, with what each one said. */
   const [failures, setFailures] = useState<Failure[]>([]);
+  /// Bumped when the daemon reports a change worth re-checking for.
+  const [revision, setRevision] = useState(0);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
 
@@ -220,7 +229,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [busy, projects.length]);
+  }, [busy, projects.length, revision]);
 
   /** The port a Take control click is asking about, with its supervisor. */
   const [takingOver, setTakingOver] = useState<{

@@ -549,3 +549,37 @@ async fn a_failure_reports_only_the_run_that_failed() {
         "the previous run's output leaked into this one: {said}"
     );
 }
+
+/// Declaring or dropping a group has to reach a window that shows groups.
+///
+/// The checkout view carries its groups, so a group made from the terminal is
+/// invisible in an open window until something unrelated happens to it. The
+/// registry edits that concern services already announce themselves; this is
+/// the same obligation, and it was missed when groups joined the view.
+#[tokio::test]
+async fn declaring_and_dropping_a_group_is_announced() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+    declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
+
+    let mut events = runtime.events().subscribe();
+    runtime
+        .set_task(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+    assert!(
+        matches!(events.try_recv(), Ok(runtime_core::events::RuntimeEvent::WorkspaceChanged { .. })),
+        "declaring a group said nothing"
+    );
+
+    assert!(runtime.remove_task(&workspace.id, "dev").unwrap());
+    assert!(
+        matches!(events.try_recv(), Ok(runtime_core::events::RuntimeEvent::WorkspaceChanged { .. })),
+        "dropping a group said nothing"
+    );
+}

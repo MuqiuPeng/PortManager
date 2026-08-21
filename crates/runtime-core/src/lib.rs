@@ -595,6 +595,22 @@ impl Runtime {
         });
     }
 
+    /// Tell everyone watching that a checkout's contents changed.
+    ///
+    /// Groups are part of the checkout view, so declaring or dropping one has
+    /// to reach a window that is showing them — otherwise the group somebody
+    /// just made from the terminal is invisible until something unrelated
+    /// happens. Best effort, like `announce_service`.
+    fn announce_workspace(&self, workspace_id: &WorkspaceId) {
+        let Ok(Some(workspace)) = self.store.get_workspace(workspace_id) else {
+            return;
+        };
+        self.events.publish(RuntimeEvent::WorkspaceChanged {
+            project_id: workspace.project_id,
+            workspace_id: workspace.id,
+        });
+    }
+
     /// The project's services as a committable `.runtime.json`.
     ///
     /// Inference is a starting point; this is how a corrected registry becomes
@@ -1243,6 +1259,7 @@ impl Runtime {
             steps,
         };
         self.store.upsert_task(&task)?;
+        self.announce_workspace(workspace_id);
         Ok(task)
     }
 
@@ -1255,7 +1272,11 @@ impl Runtime {
         else {
             return Ok(false);
         };
-        self.store.remove_task(&task.id)
+        let removed = self.store.remove_task(&task.id)?;
+        if removed {
+            self.announce_workspace(workspace_id);
+        }
+        Ok(removed)
     }
 
     // ---- what went wrong -------------------------------------------------

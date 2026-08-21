@@ -9,6 +9,7 @@ import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { ServiceRow } from "../components/ServiceRow";
 import { SupervisedRow } from "../components/SupervisedRow";
+import { affectsFailures } from "../types";
 import type {
   ContainerView,
   Failure,
@@ -162,5 +163,28 @@ describe("a payload with everything set", () => {
       <FindingsBanner findings={[maybe, certain]} onDismiss={noop} />,
     );
     expect(html.indexOf("Loom/api")).toBeLessThan(html.indexOf("other/web"));
+  });
+});
+
+describe("what makes the window re-ask", () => {
+  it("re-asks after a service is removed, so a toast for it goes away", () => {
+    expect(
+      affectsFailures({
+        event: "service_changed",
+        project_id: "p",
+        service_id: "s",
+        removed: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("re-asks after a service exits, which is when it has just failed", () => {
+    expect(affectsFailures({ event: "service_exited", service_id: "s" })).toBe(true);
+  });
+
+  it("does not re-ask for a log line", () => {
+    expect(
+      affectsFailures({ event: "log", seq: 1, service_id: "s", message: "hi" }),
+    ).toBe(false);
   });
 });
