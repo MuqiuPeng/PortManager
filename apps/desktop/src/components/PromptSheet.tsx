@@ -5,6 +5,14 @@ export interface PromptField {
   placeholder?: string;
   value?: string;
   mono?: boolean;
+  /**
+   * Why this value cannot be used, or null when it can.
+   *
+   * Checked as it is typed and shown under the field, rather than letting the
+   * sheet close on a value the daemon will refuse — by then the sheet is gone
+   * and the words arrive detached from the box that caused them.
+   */
+  problem?: (value: string) => string | null;
 }
 
 interface Props {
@@ -33,7 +41,12 @@ export function PromptSheet({
 }: Props) {
   const [values, setValues] = useState(() => fields.map((field) => field.value ?? ""));
 
-  const ready = values.every((value, index) => !required(fields[index]) || value.trim() !== "");
+  const problems = fields.map((field, index) =>
+    values[index].trim() === "" ? null : (field.problem?.(values[index].trim()) ?? null),
+  );
+  const ready =
+    values.every((value, index) => !required(fields[index]) || value.trim() !== "") &&
+    problems.every((problem) => problem === null);
 
   function submit() {
     if (ready) onConfirm(values.map((value) => value.trim()));
@@ -65,6 +78,7 @@ export function PromptSheet({
                   if (event.key === "Escape") onCancel();
                 }}
               />
+              {problems[index] && <span className="hint problem">{problems[index]}</span>}
             </label>
           ))}
           {hint && <p className="hint">{hint}</p>}

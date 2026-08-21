@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { api, errorMessage } from "../api";
+import { FolderField } from "./FolderField";
 import type { ServicePatch, ServiceType, ServiceView } from "../types";
 
 interface Props {
@@ -132,10 +133,12 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
             />
           </label>
 
-          <label className="field wide">
-            <span>Working directory</span>
-            <input value={cwd} onChange={(event) => setCwd(event.target.value)} spellCheck={false} />
-          </label>
+          <FolderField
+            label="Working directory"
+            value={cwd}
+            onChange={setCwd}
+            startingAt={service.cwd}
+          />
 
           <label className="field wide">
             <span>Port</span>

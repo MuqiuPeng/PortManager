@@ -6,6 +6,8 @@ import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
 import { FailureToasts } from "./components/FailureToasts";
 import { FindingsBanner } from "./components/FindingsBanner";
+import { FolderSheet } from "./components/FolderSheet";
+import { GroupEditor } from "./components/GroupEditor";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
@@ -199,6 +201,8 @@ export default function App() {
   const [failures, setFailures] = useState<Failure[]>([]);
   /// Bumped when the daemon reports a change worth re-checking for.
   const [revision, setRevision] = useState(0);
+  /** The group the editor is open on, or null when it is making a new one. */
+  const [editingTask, setEditingTask] = useState<string | null>(null);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
 
@@ -350,7 +354,18 @@ export default function App() {
         <PromptSheet
           title={`New service in ${promptProject}`}
           fields={[
-            { label: "Name", placeholder: "worker" },
+            {
+              label: "Name",
+              placeholder: "worker",
+              problem: (value) =>
+                projects
+                  .find((candidate) => candidate.name === promptProject)
+                  ?.workspaces.some((workspace) =>
+                    workspace.services.some((service) => service.name === value),
+                  )
+                  ? `${promptProject} already has a service called ${value}.`
+                  : null,
+            },
             { label: "Command", placeholder: "pnpm run worker", mono: true },
           ]}
           hint="Port, environment and the rest can be set afterwards with Edit."
@@ -363,13 +378,14 @@ export default function App() {
       )}
 
       {prompt === "add-worktree" && project && (
-        <PromptSheet
+        <FolderSheet
           title={`Add a worktree of ${project.name}`}
           confirmLabel="Add"
-          fields={[{ label: "Folder", placeholder: "/Users/you/code/app-feature", mono: true }]}
+          label="Folder"
+          startingAt={project.root_path}
           hint="A git worktree of this repository. It arrives with this project's services on its own port range, so a second branch can be served without redeclaring anything."
           onCancel={() => setPrompt(null)}
-          onConfirm={([path]) => {
+          onConfirm={(path) => {
             setPrompt(null);
             void act(() => api.registerWorktree(project.id, path));
           }}
@@ -377,18 +393,19 @@ export default function App() {
       )}
 
       {prompt === "add-task" && project && (
-        <PromptSheet
-          title={`Group services in ${project.name}`}
-          fields={[
-            { label: "Name", placeholder: "dev" },
-            { label: "Services, in order", placeholder: "db api web", mono: true },
-          ]}
-          hint="Started in the order given and stopped in reverse, as one thing. Names of services in this project; each brings up its own dependencies first, so one already covered by an earlier step does nothing."
-          onCancel={() => setPrompt(null)}
-          onConfirm={([name, steps]) => {
+        <GroupEditor
+          services={project.workspaces.flatMap((workspace) => workspace.services)}
+          existing={tasks}
+          editing={tasks.find((task) => task.name === editingTask) ?? undefined}
+          onCancel={() => {
             setPrompt(null);
+            setEditingTask(null);
+          }}
+          onConfirm={(name, steps) => {
+            setPrompt(null);
+            setEditingTask(null);
             void act(async () => {
-              await api.setTask(project.id, name, steps.split(/\s+/).filter(Boolean));
+              await api.setTask(project.id, name, steps);
               await reloadTasks();
             });
           }}
@@ -396,13 +413,13 @@ export default function App() {
       )}
 
       {prompt === "scan-folder" && (
-        <PromptSheet
+        <FolderSheet
           title="Scan a folder"
           confirmLabel="Scan"
-          fields={[{ label: "Folder", placeholder: "/Users/you/code", mono: true }]}
+          label="Folder"
           hint="Projects that are running are found without this; a folder scan also finds stopped ones."
           onCancel={() => setPrompt(null)}
-          onConfirm={([path]) => {
+          onConfirm={(path) => {
             setPrompt(null);
             void handleScanFolder(path);
           }}

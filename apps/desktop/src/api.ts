@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
@@ -149,6 +150,18 @@ export function onPanelState(handler: (state: PanelState) => void) {
  */
 export function openExternal(url: string) {
   return openUrl(url);
+}
+
+/**
+ * Ask for a folder through the system picker.
+ *
+ * Null when the person closed it without choosing. A path typed by hand is a
+ * path nobody has checked: this way the folder is known to exist, and its
+ * owner could see where they were while picking it.
+ */
+export async function chooseFolder(startingAt?: string): Promise<string | null> {
+  const chosen = await openDialog({ directory: true, multiple: false, defaultPath: startingAt });
+  return typeof chosen === "string" ? chosen : null;
 }
 
 /** Tauri surfaces command errors as unknown; normalise them for display. */

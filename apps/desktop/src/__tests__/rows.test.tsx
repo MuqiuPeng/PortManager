@@ -8,6 +8,7 @@ import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { ServiceRow } from "../components/ServiceRow";
+import { GroupEditor } from "../components/GroupEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
 import { affectsFailures } from "../types";
 import type {
@@ -17,6 +18,7 @@ import type {
   Finding,
   ServiceView,
   SupervisedView,
+  TaskView,
 } from "../types";
 
 /**
@@ -186,5 +188,45 @@ describe("what makes the window re-ask", () => {
     expect(
       affectsFailures({ event: "log", seq: 1, service_id: "s", message: "hi" }),
     ).toBe(false);
+  });
+});
+
+describe("declaring a group", () => {
+  const services = [wire.service_minimal, wire.service_full] as ServiceView[];
+
+  it("offers the project's services rather than a box to type names in", () => {
+    const html = renderToString(
+      <GroupEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
+    );
+    for (const service of services) {
+      expect(html).toContain(service.name);
+    }
+    // One box, for the name. The members are not typed.
+    expect(html.match(/<input/g)?.length).toBe(1);
+  });
+
+  it("cannot be created with no members", () => {
+    const html = renderToString(
+      <GroupEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
+    );
+    expect(html).toContain("Create</button>");
+    expect(html).toContain("disabled");
+  });
+
+  it("says so when the name is one the project already uses", () => {
+    const existing = [
+      { id: "t", workspace_id: "w", name: "dev", steps: ["web"], services: [], running: 0 },
+    ] as unknown as TaskView[];
+    const html = renderToString(
+      <GroupEditor
+        services={services}
+        existing={existing}
+        editing={undefined}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    // Nothing typed yet, so nothing to complain about.
+    expect(html).not.toContain("already has a group");
   });
 });
