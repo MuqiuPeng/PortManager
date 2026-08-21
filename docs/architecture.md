@@ -265,10 +265,22 @@ migration work?" is the only question this kind of step raises, and without a
 record the answer is whatever the last attempt left behind — which is how a run
 that succeeded goes on reporting the failure before it.
 
-A **task** is a named sequence over both. Dependencies say what one service
-needs; a task says what *you* want up, which is often not one service's chain.
-Each step brings up its own dependencies, so a step already covered by an
-earlier one does nothing.
+A **group** — a task — is a named sequence over both, and it is a unit rather
+than a shortcut. A database, an API and a front end that have to start in that
+order are one thing to the person using them; three peers with three buttons
+makes the reader reassemble that every time they look, and leaves the order to
+memory, which is the part that gets it wrong at the wrong moment. So the group
+carries the state and the controls, and its members are shown as what it is made
+of. They do not also appear beside it.
+
+Started in the order given, stopped in the reverse of it: a front end talking to
+an API that has already gone spends its last moments logging failures nobody
+asked for, and a database pulled out from under both is worse. A member the
+runtime did not start is left alone, as everywhere else.
+
+Nothing about the grouping is inferred. Dependencies could be read as a grouping
+and it would be wrong as often as right — two services sharing a database are
+not one thing. A group exists because somebody said so.
 
 ## Checking what is declared
 

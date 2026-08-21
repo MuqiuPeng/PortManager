@@ -22,7 +22,7 @@ import type {
   StartOutcome,
   Workspace,
   SupervisedView,
-  Task,
+  TaskView,
 } from "./types";
 
 /** The channel `lib.rs` re-emits daemon events on. */
@@ -58,16 +58,19 @@ export const api = {
   registerWorktree: (selector: string, path: string) =>
     invoke<Workspace>("register_worktree", { selector, path }),
 
-  listTasks: (project: string) => invoke<Task[]>("list_tasks", { project }),
+  listTasks: (project: string) => invoke<TaskView[]>("list_tasks", { project }),
 
   setTask: (project: string, name: string, steps: string[]) =>
-    invoke<Task[]>("set_task", { project, name, steps }),
+    invoke<TaskView[]>("set_task", { project, name, steps }),
 
   removeTask: (project: string, name: string) =>
     invoke<boolean>("remove_task", { project, name }),
 
   runTask: (project: string, name: string) =>
     invoke<string[]>("run_task", { project, name }),
+
+  stopTask: (project: string, name: string) =>
+    invoke<string[]>("stop_task", { project, name }),
 
   updateService: (service: string, patch: ServicePatch) =>
     invoke<ServiceView>("update_service", { service, patch }),

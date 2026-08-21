@@ -9,7 +9,7 @@ use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     AdoptOutcome, DaemonInfo, Failure, Finding, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
-    ServiceView, StartOutcome, SupervisedView, Task, Workspace,
+    ServiceView, StartOutcome, SupervisedView, TaskView, Workspace,
 };
 use tauri::State;
 
@@ -273,7 +273,7 @@ pub async fn list_failures(
 pub async fn list_tasks(
     state: State<'_, DaemonHandle>,
     project: String,
-) -> CmdResult<Vec<Task>> {
+) -> CmdResult<Vec<TaskView>> {
     match call(&state, Request::ListTasks { selector: project }).await? {
         ResponseBody::Tasks { items } => Ok(items),
         other => Err(unexpected(&other)),
@@ -286,10 +286,23 @@ pub async fn set_task(
     project: String,
     name: String,
     steps: Vec<String>,
-) -> CmdResult<Vec<Task>> {
+) -> CmdResult<Vec<TaskView>> {
     let request = Request::SetTask { selector: project, name, steps };
     match call(&state, request).await? {
         ResponseBody::Tasks { items } => Ok(items),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Stop everything a task started, in the reverse of the order it started.
+#[tauri::command]
+pub async fn stop_task(
+    state: State<'_, DaemonHandle>,
+    project: String,
+    name: String,
+) -> CmdResult<Vec<String>> {
+    match call(&state, Request::StopTask { selector: project, name }).await? {
+        ResponseBody::TaskRun { steps } => Ok(steps),
         other => Err(unexpected(&other)),
     }
 }

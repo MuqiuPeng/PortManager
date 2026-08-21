@@ -322,3 +322,13 @@ export interface Failure {
   /** Absent, not empty, when it said nothing. */
   detail?: string[];
 }
+
+/** A task with what its members are actually doing. */
+export interface TaskView extends Task {
+  /** Its members, in the order they start. */
+  services: ServiceView[];
+  /** How many of them are up. */
+  running: number;
+  /** Steps naming a service that no longer exists. */
+  missing?: string[];
+}

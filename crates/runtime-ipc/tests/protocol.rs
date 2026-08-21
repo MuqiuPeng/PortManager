@@ -250,11 +250,16 @@ fn responses() -> Vec<ResponseBody> {
             restart_warning: Some("holds a development build".to_string()),
         }),
         ResponseBody::Tasks {
-            items: vec![Task {
-                id: TaskId::from("task"),
-                workspace_id: WorkspaceId::from("ws"),
-                name: "dev".to_string(),
-                steps: vec!["migrate".to_string(), "api".to_string()],
+            items: vec![TaskView {
+                task: Task {
+                    id: TaskId::from("task"),
+                    workspace_id: WorkspaceId::from("ws"),
+                    name: "dev".to_string(),
+                    steps: vec!["migrate".to_string(), "api".to_string()],
+                },
+                services: vec![service_view()],
+                running: 1,
+                missing: vec!["gone".to_string()],
             }],
         },
         ResponseBody::TaskRun {
@@ -375,6 +380,7 @@ fn every_request_survives_a_round_trip() {
         },
         Request::RemoveTask { selector: ".".to_string(), name: "dev".to_string() },
         Request::RunTask { selector: ".".to_string(), name: "dev".to_string() },
+        Request::StopTask { selector: ".".to_string(), name: "dev".to_string() },
         Request::ControlSupervised {
             name: "flip7".to_string(),
             action: "restart".to_string(),

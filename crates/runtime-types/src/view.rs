@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::id::{ProjectId, ServiceId, WorkspaceId};
 use crate::model::{
+    Task,
     ConflictPolicy, PortLeaseStatus, Project, RuntimeInstance, Service, ServiceStatus, StartedBy,
     Workspace,
 };
@@ -379,4 +380,24 @@ pub struct Failure {
     /// if the quieter stream is not drowned out by an ordinary access log.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub detail: Vec<String>,
+}
+
+/// A task with what its members are actually doing.
+///
+/// The point of declaring one is that a database, an API and a front end are
+/// one thing to the person using them. Listing the three as peers, each with
+/// its own button, makes the reader reassemble that every time they look — and
+/// leaves them to remember the order. This is the group as a unit: one state,
+/// one thing to start, one thing to stop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskView {
+    #[serde(flatten)]
+    pub task: Task,
+    /// Its members, in the order they start.
+    pub services: Vec<ServiceView>,
+    /// How many of them are up.
+    pub running: usize,
+    /// Steps naming a service that no longer exists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
 }

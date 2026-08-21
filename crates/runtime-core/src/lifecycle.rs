@@ -302,6 +302,44 @@ impl Runtime {
         })
     }
 
+    /// Stop everything a task started, in the reverse of the order it started.
+    ///
+    /// Reverse because the order was there for a reason: a front end talking to
+    /// an API that has already gone spends its last moments logging failures
+    /// nobody asked for, and a database pulled out from under both is worse.
+    ///
+    /// A member the runtime did not start is left alone, as everywhere else,
+    /// and a member already stopped is not an error — stopping a group is a
+    /// statement about where things should end up, not about each step.
+    pub async fn stop_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+        let task = self
+            .store()
+            .list_tasks(workspace_id)?
+            .into_iter()
+            .find(|task| task.name == name)
+            .ok_or_else(|| RuntimeError::invalid(format!("no task called '{name}' here")))?;
+
+        let declared = self.store().list_services(workspace_id)?;
+        let mut stopped = Vec::new();
+
+        for step in task.steps.iter().rev() {
+            let Some(service) = declared.iter().find(|service| &service.name == step) else {
+                continue;
+            };
+            let view = self.service_view(service)?;
+            if !view.status.is_live() {
+                continue;
+            }
+            if !view.managed {
+                stopped.push(format!("{step} (not ours to stop)"));
+                continue;
+            }
+            self.stop_service(&service.id, GRACEFUL_TIMEOUT).await?;
+            stopped.push(step.clone());
+        }
+        Ok(stopped)
+    }
+
     /// Run a named task: each step brought up in order.
     ///
     /// Each step resolves its own dependencies, so a step already covered by an

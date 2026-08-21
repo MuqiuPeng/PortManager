@@ -666,6 +666,25 @@ function registerTools(
   );
 
   server.registerTool(
+    "stop_task",
+    {
+      title: "Stop a group",
+      description:
+        "Stop everything a task started, in the reverse of the order it started — a front end before the API it talks to, and that before the database under both. A member the runtime did not start is left alone, and one already stopped is not an error.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        name: z.string(),
+      },
+    },
+    async ({ project, name }) =>
+      run("stop_task", { selector: project, name }, (body) =>
+        body.type === "task_run"
+          ? body.steps.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+          : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
     "adopt_port",
     {
       title: "Take control of a port",

@@ -14,7 +14,7 @@ import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
-import { TaskPanel } from "./components/TaskPanel";
+import { TaskGroup } from "./components/TaskGroup";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
@@ -24,7 +24,7 @@ import type {
   PortOwner,
   ProjectView,
   ServiceView,
-  Task,
+  TaskView,
 } from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
@@ -177,7 +177,7 @@ export default function App() {
   }, [project, selectedService]);
 
   /** Tasks for the selected project, reloaded whenever it changes. */
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<TaskView[]>([]);
 
   /** Problems with what is declared, across every project. */
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -252,6 +252,50 @@ export default function App() {
     setTasks(await api.listTasks(project.id));
   }
 
+  /** One service row, wherever it appears — loose, or inside a group. */
+  function serviceRow(service: ServiceView) {
+    return (
+                          <ServiceRow
+        key={service.id}
+        service={service}
+        selected={service.id === selectedService}
+        busy={busy}
+        onSelect={() => setSelectedService(service.id)}
+        onStart={() =>
+          act(async () => {
+            const outcome = await api.startService(service.id);
+            // Surfaced where errors are, because it is the
+            // half of the outcome that will not announce
+            // itself later.
+            if (outcome.warning) setError(outcome.warning);
+          })
+        }
+        onStop={() => act(() => api.stopService(service.id))}
+        onRestart={() => act(() => api.restartService(service.id))}
+        onOpen={() =>
+          act(() => openExternal(service.url as string))
+        }
+        onEdit={() => setEditing(service)}
+        onSupervisedControl={(action) =>
+          service.supervisor_entry !== undefined &&
+          act(() =>
+            api.controlSupervised(
+              service.supervisor_entry as string,
+              action,
+            ),
+          )
+        }
+        onTakeControl={() =>
+          service.actual_port !== undefined &&
+          setTakingOver({
+            port: service.actual_port,
+            supervisor: service.supervisor,
+          })
+        }
+      />
+    );
+  }
+
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -320,12 +364,12 @@ export default function App() {
 
       {prompt === "add-task" && project && (
         <PromptSheet
-          title={`New task in ${project.name}`}
+          title={`Group services in ${project.name}`}
           fields={[
             { label: "Name", placeholder: "dev" },
-            { label: "Steps", placeholder: "migrate api web", mono: true },
+            { label: "Services, in order", placeholder: "db api web", mono: true },
           ]}
-          hint="Service names, in the order they should run. Each brings up its own dependencies first, so a step already covered by an earlier one does nothing."
+          hint="Started in the order given and stopped in reverse, as one thing. Names of services in this project; each brings up its own dependencies first, so one already covered by an earlier step does nothing."
           onCancel={() => setPrompt(null)}
           onConfirm={([name, steps]) => {
             setPrompt(null);
@@ -506,6 +550,14 @@ export default function App() {
                         <button
                           className="ghost"
                           disabled={busy}
+                          onClick={() => setPrompt("add-task")}
+                          title="Start several services together, in order"
+                        >
+                          + Group
+                        </button>
+                        <button
+                          className="ghost"
+                          disabled={busy}
                           onClick={() => {
                             setPromptProject(project.name);
                             setPrompt("add-service");
@@ -515,51 +567,39 @@ export default function App() {
                         </button>
                       </header>
 
+                      {/* Members are shown inside their group; listing them
+                          above as peers too would be the same service twice,
+                          with the grouping saying nothing. */}
+                      {tasks.map((task) => (
+                        <TaskGroup
+                          task={task}
+                          busy={busy}
+                          key={task.id}
+                          onRun={() => project && act(() => api.runTask(project.id, task.name))}
+                          onStop={() => project && act(() => api.stopTask(project.id, task.name))}
+                          onRemove={() =>
+                            project &&
+                            act(async () => {
+                              await api.removeTask(project.id, task.name);
+                              await reloadTasks();
+                            })
+                          }
+                          renderService={(service) => serviceRow(service)}
+                        />
+                      ))}
+
                       {workspace.services.length === 0 &&
                       (workspace.external ?? []).length === 0 &&
                       (workspace.containers ?? []).length === 0 ? (
                         <p className="empty">No services detected.</p>
                       ) : (
-                        workspace.services.map((service: ServiceView) => (
-                          <ServiceRow
-                            key={service.id}
-                            service={service}
-                            selected={service.id === selectedService}
-                            busy={busy}
-                            onSelect={() => setSelectedService(service.id)}
-                            onStart={() =>
-                              act(async () => {
-                                const outcome = await api.startService(service.id);
-                                // Surfaced where errors are, because it is the
-                                // half of the outcome that will not announce
-                                // itself later.
-                                if (outcome.warning) setError(outcome.warning);
-                              })
-                            }
-                            onStop={() => act(() => api.stopService(service.id))}
-                            onRestart={() => act(() => api.restartService(service.id))}
-                            onOpen={() =>
-                              act(() => openExternal(service.url as string))
-                            }
-                            onEdit={() => setEditing(service)}
-                            onSupervisedControl={(action) =>
-                              service.supervisor_entry !== undefined &&
-                              act(() =>
-                                api.controlSupervised(
-                                  service.supervisor_entry as string,
-                                  action,
-                                ),
-                              )
-                            }
-                            onTakeControl={() =>
-                              service.actual_port !== undefined &&
-                              setTakingOver({
-                                port: service.actual_port,
-                                supervisor: service.supervisor,
-                              })
-                            }
-                          />
-                        ))
+                        // Anything not already shown inside a group.
+                        workspace.services
+                          .filter(
+                            (service: ServiceView) =>
+                              !tasks.some((task) => task.steps.includes(service.name)),
+                          )
+                          .map((service: ServiceView) => serviceRow(service))
                       )}
 
                       {(workspace.supervised ?? []).map((entry) => (
@@ -602,21 +642,6 @@ export default function App() {
                   ))}
                 </div>
 
-                <TaskPanel
-                  tasks={tasks}
-                  busy={busy}
-                  onAdd={() => setPrompt("add-task")}
-                  onRun={(name) =>
-                    project && act(() => api.runTask(project.id, name))
-                  }
-                  onRemove={(name) =>
-                    project &&
-                    act(async () => {
-                      await api.removeTask(project.id, name);
-                      await reloadTasks();
-                    })
-                  }
-                />
 
                 <LogPanel
                   serviceName={selectedServiceView?.name ?? null}

@@ -85,6 +85,7 @@ pub fn run() {
             commands::set_task,
             commands::remove_task,
             commands::run_task,
+            commands::stop_task,
             commands::stop_service,
             commands::restart_service,
             commands::get_logs,

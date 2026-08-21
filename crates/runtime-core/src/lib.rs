@@ -33,12 +33,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, LaunchObservation, LogLine,
-    PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance,
-    Failure, Finding, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId,
-    Workspace,
-    WorkspaceId,
-    WorkspaceView,
+    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId, TaskView, Workspace, WorkspaceId, WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -1172,6 +1167,47 @@ impl Runtime {
 
     pub fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Task>> {
         self.store.list_tasks(workspace_id)
+    }
+
+    /// Tasks with what their members are actually doing.
+    ///
+    /// The group as a unit, because that is what it was declared to be. A
+    /// database, an API and a front end shown as three peers with three buttons
+    /// makes the reader reassemble the thing every time they look, and leaves
+    /// the order to memory.
+    pub fn task_views(&self, workspace_id: &WorkspaceId) -> Result<Vec<TaskView>> {
+        let declared = self.store.list_services(workspace_id)?;
+        let owners = self.port_owners()?;
+        let mut out = Vec::new();
+
+        for task in self.store.list_tasks(workspace_id)? {
+            let mut services = Vec::new();
+            let mut missing = Vec::new();
+
+            for step in &task.steps {
+                match declared.iter().find(|service| &service.name == step) {
+                    // In the order the task names them, not the order they were
+                    // declared: the order is the point.
+                    Some(service) => services.push(self.service_view_with(service, &owners)?),
+                    None => missing.push(step.clone()),
+                }
+            }
+
+            // A one-shot is not "running" and never will be, so counting it as
+            // missing would leave a working group permanently short.
+            let running = services
+                .iter()
+                .filter(|view| view.status.is_live() || view.service.one_shot)
+                .count();
+
+            out.push(TaskView {
+                task,
+                services,
+                running,
+                missing,
+            });
+        }
+        Ok(out)
     }
 
     /// Declare a named sequence of steps.

@@ -211,17 +211,22 @@ impl Dispatcher {
 
             Request::ListTasks { selector } => {
                 let workspace = self.primary_workspace(&selector)?;
-                Ok(ResponseBody::Tasks { items: runtime.list_tasks(&workspace.id)? })
+                Ok(ResponseBody::Tasks { items: runtime.task_views(&workspace.id)? })
             }
             Request::SetTask { selector, name, steps } => {
                 let workspace = self.primary_workspace(&selector)?;
                 runtime.set_task(&workspace.id, &name, steps)?;
-                Ok(ResponseBody::Tasks { items: runtime.list_tasks(&workspace.id)? })
+                Ok(ResponseBody::Tasks { items: runtime.task_views(&workspace.id)? })
             }
             Request::RemoveTask { selector, name } => {
                 let workspace = self.primary_workspace(&selector)?;
                 Ok(ResponseBody::Done { ok: runtime.remove_task(&workspace.id, &name)? })
             }
+            Request::StopTask { selector, name } => {
+                let workspace = self.workspace_to_run_in(&selector)?;
+                Ok(ResponseBody::TaskRun { steps: runtime.stop_task(&workspace.id, &name).await? })
+            }
+
             Request::RunTask { selector, name } => {
                 // Where it runs, not where it is declared.
                 let workspace = self.workspace_to_run_in(&selector)?;

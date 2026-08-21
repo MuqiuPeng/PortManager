@@ -17,7 +17,7 @@ use runtime_types::{
     AdoptOutcome, AgentSession, DaemonInfo, Failure, Finding, HealthReport,
     LaunchObservation,
     LogLine,
-    PortOwner, SupervisedView, Task,
+    PortOwner, SupervisedView, TaskView,
     PortReservation, PortStatus,
     ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
     ServiceView, StartOutcome, Workspace,
@@ -140,6 +140,8 @@ pub enum Request {
     RemoveTask { selector: String, name: String },
     /// Bring up every step in order, each with its own dependencies.
     RunTask { selector: String, name: String },
+    /// Stop everything it started, in the reverse of the order it started.
+    StopTask { selector: String, name: String },
 
     /// Switch an entry another supervisor keeps.
     ///
@@ -302,7 +304,7 @@ pub enum ResponseBody {
     Launches { items: Vec<LaunchObservation> },
     Findings { items: Vec<Finding> },
     Failures { items: Vec<Failure> },
-    Tasks { items: Vec<Task> },
+    Tasks { items: Vec<TaskView> },
     TaskRun { steps: Vec<String> },
     Supervised(SupervisedView),
     Adopted(AdoptOutcome),

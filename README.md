@@ -163,7 +163,7 @@ runtime port list|check|reserve|release
 runtime errors [-n N]               what is broken, and what it said
 runtime adopt <port> [--force]      declare what is already on a port
 runtime supervised start|stop|restart <name>   drive PM2, without taking it over
-runtime task list|set|remove|run    named step sequences
+runtime task list|set|remove|run|stop   start a set of services as one
 runtime container start|stop|restart|logs
 runtime worktree list|add
 runtime hook install|uninstall|status|mcp|log

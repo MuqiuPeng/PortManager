@@ -183,6 +183,14 @@ export interface Task {
   steps: string[];
 }
 
+/** A task with what its members are actually doing. */
+export interface TaskView extends Task {
+  services: ServiceView[];
+  running: number;
+  /** Steps naming a service that no longer exists. */
+  missing?: string[];
+}
+
 export interface AdoptOutcome {
   service: ServiceView;
   /** Where the command came from. Never the project's scripts. */
@@ -275,7 +283,7 @@ export type ResponseBody =
   | ({ type: "supervised" } & SupervisedView)
   | { type: "findings"; items: Finding[] }
   | { type: "failures"; items: Failure[] }
-  | { type: "tasks"; items: Task[] }
+  | { type: "tasks"; items: TaskView[] }
   | { type: "task_run"; steps: string[] }
   | ({ type: "adopted" } & AdoptOutcome)
   | { type: "sessions"; items: AgentSession[] }

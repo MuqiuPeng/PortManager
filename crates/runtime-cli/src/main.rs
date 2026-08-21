@@ -199,6 +199,8 @@ enum TaskCommand {
     Remove { name: String },
     /// Bring up every step in order.
     Run { name: String },
+    /// Stop everything it started, in the reverse order.
+    Stop { name: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -443,6 +445,9 @@ async fn run(cli: Cli) -> Result<String> {
                 }
                 TaskCommand::Run { name } => {
                     client.call(Request::RunTask { selector, name }).await?
+                }
+                TaskCommand::Stop { name } => {
+                    client.call(Request::StopTask { selector, name }).await?
                 }
             }
         }
@@ -873,7 +878,30 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
             } else {
                 items
                     .iter()
-                    .map(|task| format!("{}\n    {}", task.name, task.steps.join(" -> ")))
+                    .map(|view| {
+                        // The group's own state first: it is the unit somebody
+                        // declared, and its members are how it is made.
+                        let total = view.task.steps.len();
+                        let mark = if view.running == total && total > 0 {
+                            "\u{25cf}"
+                        } else if view.running > 0 {
+                            "\u{25d0}"
+                        } else {
+                            "\u{25cb}"
+                        };
+                        let missing = if view.missing.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  ! missing {}", view.missing.join(", "))
+                        };
+                        format!(
+                            "{mark} {}  {}/{} up{missing}\n    {}",
+                            view.task.name,
+                            view.running,
+                            total,
+                            view.task.steps.join(" -> ")
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             }
