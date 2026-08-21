@@ -986,3 +986,51 @@ async fn restarting_does_not_log_the_same_line_twice() {
         assert_eq!(seen, run, "after {run} runs the line was logged {seen} times");
     }
 }
+
+
+/// Polling with a cursor must not be answered with a line that has no place in
+/// the sequence.
+///
+/// A service the runtime did not start has no captured output, and saying so is
+/// useful — once, to a reader starting from the beginning. Returning it to a
+/// cursored read means "nothing new" is answered with a line whose `seq` is 0,
+/// so a caller that advances its cursor from the reply is sent backwards and
+/// asks again for everything it has already seen. The log repeats, and it reads
+/// as the service repeating itself.
+#[tokio::test]
+async fn a_cursored_read_is_not_answered_with_a_synthesised_line() {
+    let dir = repo(&[("package.json", "{}")]);
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let service = runtime_types::Service {
+        id: runtime_types::ServiceId::new(),
+        workspace_id: workspace.id.clone(),
+        name: "quiet".to_string(),
+        service_type: ServiceType::Web,
+        command: "sleep 1".to_string(),
+        cwd: dir.path().to_path_buf(),
+        env: Default::default(),
+        preferred_port: None,
+        health_check: None,
+        auto_start: false,
+        conflict_policy: ConflictPolicy::Fail,
+        depends_on: Vec::new(),
+        one_shot: false,
+    };
+    let service = runtime.add_service(&workspace.id, service).unwrap();
+
+    // Whatever a reader starting from the beginning is told, a cursored read
+    // that finds nothing new must be told nothing at all.
+    let _ = runtime.read_logs(&service.id, 100, None).unwrap();
+    let following = runtime.read_logs(&service.id, 100, Some(0)).unwrap();
+    assert!(
+        following.is_empty(),
+        "a cursored read was answered with {following:?}"
+    );
+}

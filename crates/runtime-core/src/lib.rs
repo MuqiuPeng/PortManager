@@ -2086,9 +2086,20 @@ impl Runtime {
             return Ok(lines);
         }
 
-        // A service running but not started here has no captured output, and
-        // "(no output)" reads as "it printed nothing" — which is a different
-        // and misleading claim.
+        // Only for a reader starting from the beginning. With a cursor, empty
+        // means "nothing new", which is the ordinary state of a quiet service —
+        // and answering it with a line would be worse than noise: the line has
+        // no place in the sequence, so a caller that takes its `seq` as the new
+        // cursor is sent backwards, and asks again for everything it has
+        // already seen. The result is the whole log repeating, which reads as
+        // the service repeating itself.
+        if since_seq.is_some() {
+            return Ok(lines);
+        }
+
+        // Reaching here means there is genuinely nothing. "(no output)" would
+        // read as "it printed nothing", which is a different and misleading
+        // claim about a service whose output simply goes somewhere else.
         let service = self.require_service(service_id)?;
         let view = self.service_view(&service)?;
         if view.status.is_live() && !view.managed {

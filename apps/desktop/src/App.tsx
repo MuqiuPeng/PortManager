@@ -147,7 +147,12 @@ export default function App() {
       try {
         const incoming = await api.getLogs(selectedService, 300, logCursor.current);
         if (cancelled || incoming.length === 0) return;
-        logCursor.current = incoming[incoming.length - 1].seq;
+        // Never backwards. A line the daemon synthesises rather than stores has
+        // no place in the sequence, and taking its seq as the cursor means
+        // asking again for everything already shown — the whole log repeating,
+        // which reads as the service repeating itself.
+        const furthest = incoming.reduce((seq, line) => Math.max(seq, line.seq), 0);
+        logCursor.current = Math.max(logCursor.current ?? 0, furthest);
         setLogs((current) => [...current, ...incoming].slice(-500));
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
