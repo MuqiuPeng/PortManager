@@ -988,6 +988,51 @@ async fn restarting_does_not_log_the_same_line_twice() {
 }
 
 
+/// The same must hold for a service that is stopped rather than one that exits.
+///
+/// A run has two endings, and the first fix for the doubled lines only covered
+/// one of them. `stop` still took the readers out of the supervisor and left
+/// them reading, on the belief that closing the pipes would end them by itself.
+/// It does not, and a service that is restarted rather than left to fall over
+/// is the common case — so the duplicate lines came straight back.
+#[tokio::test]
+async fn stopping_does_not_log_the_same_line_twice() {
+    let logs = tempfile::tempdir().unwrap();
+    let config = r#"{ "name": "chatty", "services": {
+        "stays": { "command": "PY stays.py" } } }"#
+        .replace("PY", if cfg!(windows) { "python" } else { "python3" });
+    // Prints once, then stays up until it is stopped.
+    let script = "import sys, time\nprint('LINE', flush=True)\ntime.sleep(600)\n";
+    let dir = repo(&[(".runtime.json", config.as_str()), ("stays.py", script)]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    for run in 1..=3 {
+        runtime
+            .start_service(&service.id, Default::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        runtime
+            .stop_service(&service.id, std::time::Duration::from_secs(5))
+            .await
+            .unwrap();
+        // Past the drain window, so this run's readers have stopped.
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+        let seen = runtime
+            .read_logs(&service.id, 200, None)
+            .unwrap()
+            .iter()
+            .filter(|line| line.message == "LINE")
+            .count();
+        assert_eq!(seen, run, "after {run} stopped runs the line was logged {seen} times");
+    }
+}
+
+
 /// Polling with a cursor must not be answered with a line that has no place in
 /// the sequence.
 ///

@@ -837,20 +837,7 @@ impl Runtime {
                     None => "process terminated by signal".to_string(),
                 },
             );
-            // Not aborted immediately: the last thing a service prints is
-            // usually the reason it stopped, and the pumps poll, so cutting
-            // them off here throws that away.
-            //
-            // But not left running either. `finish` takes the entry out of the
-            // supervisor, so anything still tailing afterwards is unreachable —
-            // and it is still reading the capture file the *next* run appends
-            // to. Two runs, two readers, every line logged twice; three runs,
-            // three times. Drained, then stopped.
-            let finished = supervisor.finish(&service.id);
-            tokio::time::sleep(CAPTURE_DRAIN).await;
-            if let Ok(Some(process)) = finished {
-                crate::supervisor::Supervisor::stop(process);
-            }
+            drain_and_stop(&supervisor, &service.id).await;
 
             events.publish(RuntimeEvent::ServiceExited {
                 service_id: service.id.clone(),
@@ -988,9 +975,7 @@ impl Runtime {
         if let Some(port) = instance.port {
             self.store().release_lease(port)?;
         }
-        // The pipes close when the process does, so the pumps drain the last
-        // lines and end by themselves.
-        self.supervisor().finish(&service.id)?;
+        drain_and_stop(self.supervisor(), &service.id).await;
         self.invalidate_port_owners();
         self.events().publish(RuntimeEvent::ServiceStatusChanged {
             service_id: service.id.clone(),
@@ -1254,4 +1239,24 @@ fn transition(
         status,
         port: instance.port,
     });
+}
+
+/// Wind down the readers following a run's output.
+///
+/// Not stopped at once: the last thing a service prints is usually the reason
+/// it went, and the readers poll — cutting them off immediately throws that
+/// away. Not left running either: `finish` takes them out of the supervisor, so
+/// anything still tailing afterwards is unreachable, and it is still reading the
+/// capture file the *next* run appends to. Two runs, two readers, every line
+/// logged twice.
+///
+/// One function because a run has two endings — it exits on its own, or it is
+/// stopped — and the first version of this fixed only the first. The duplicate
+/// lines came straight back through the other door.
+async fn drain_and_stop(supervisor: &crate::supervisor::Supervisor, service_id: &ServiceId) {
+    let finished = supervisor.finish(service_id);
+    tokio::time::sleep(CAPTURE_DRAIN).await;
+    if let Ok(Some(process)) = finished {
+        crate::supervisor::Supervisor::stop(process);
+    }
 }
