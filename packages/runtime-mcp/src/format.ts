@@ -311,14 +311,26 @@ export function formatSupervised(view: SupervisedView): string {
   return lines.join("\n");
 }
 
-export function formatTasks(stacks: StackView[]): string {
+export function formatStacks(stacks: StackView[]): string {
   if (stacks.length === 0) return "No stacks declared.";
   return stacks
     .map((stack) => {
       const missing = (stack.missing ?? []).length
         ? `  (missing ${(stack.missing ?? []).join(", ")})`
         : "";
-      return `${stack.name} — ${stack.running}/${stack.members.length} up${missing}\n    ${stack.members.join(" -> ")}`;
+      const head = `${stack.name} — ${stack.running}/${stack.members.length} up${missing}`;
+      const flow = stack.flow ?? [];
+      // `a -> b -> c` could only ever describe a line, and a stack is a graph:
+      // two services waiting on the same database and on nothing else start at
+      // the same time, which is most of what an agent needs to know about it.
+      if (flow.length === 0) return `${head}\n    ${stack.members.join(", ")}`;
+      const depth = Math.max(...flow.map((node) => node.level));
+      const levels: string[] = [];
+      for (let level = 0; level <= depth; level += 1) {
+        const here = flow.filter((node) => node.level === level).map((node) => node.name);
+        levels.push(`    ${level === 0 ? "" : "then "}${here.join(", ")}`);
+      }
+      return `${head}\n${levels.join("\n")}`;
     })
     .join("\n");
 }

@@ -35,9 +35,10 @@ import {
   formatServiceDetail,
   formatServices,
   formatSupervised,
-  formatTasks,
+  formatStacks,
   formatStart,
   formatWorktrees,
+  formatService,
 } from "./format.js";
 import type { ResponseBody } from "./protocol.js";
 import { detectAgent, registerSession, type AgentIdentity } from "./session.js";
@@ -392,6 +393,32 @@ function registerTools(
   );
 
   server.registerTool(
+    "take_over_service",
+    {
+      title: "Take over service",
+      description:
+        "Stop a service that something else started, and start it here instead, so it can be managed from now on. The runtime never terminates what it did not start; this is the one exception, and it needs a declared service that is holding its port right now. Refused when another supervisor keeps the service alive — that supervisor would start it again a second later, so switch it off there or drive it through control_supervised.",
+      inputSchema: {
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(120)
+          .optional()
+          .describe("How long to wait before forcing termination. Defaults to 8."),
+      },
+    },
+    async ({ service, project, timeout_seconds }) =>
+      run(
+        "take_over_service",
+        { service, project: project ?? null, timeout_seconds: timeout_seconds ?? null },
+        (body) => (body.type === "service" ? formatService(body) : unexpected(body)),
+      ),
+  );
+
+  server.registerTool(
     "stop_service",
     {
       title: "Stop service",
@@ -617,14 +644,14 @@ function registerTools(
     {
       title: "List stacks",
       description:
-        "List the named step sequences declared in a project. A stack brings up several services in order — a migration, then an API, then a front end.",
+        "List the stacks declared in a project. A stack is a named set of services brought up together; what waits for what comes from the members' own dependencies, so the answer shows which of them start at the same time.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
       },
     },
     async ({ project }) =>
       run("list_stacks", { selector: project }, (body) =>
-        body.type === "stacks" ? formatTasks(body.items) : unexpected(body),
+        body.type === "stacks" ? formatStacks(body.items) : unexpected(body),
       ),
   );
 
@@ -633,7 +660,7 @@ function registerTools(
     {
       title: "Declare a stack",
       description:
-        "Declare or replace a named sequence of members. Steps are service names, run in the order given; each brings up its own dependencies first, so a step already covered by an earlier one does nothing. Every step is checked now rather than when it runs.",
+        "Declare or replace a stack: a named set of services brought up together. Members are service names. Order is not given here — it comes from the members' own dependencies, and members that wait for nothing start at the same time. Every member is checked now rather than when it runs.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
         name: z.string(),
@@ -642,7 +669,7 @@ function registerTools(
     },
     async ({ project, name, members }) =>
       run("set_stack", { selector: project, name, members }, (body) =>
-        body.type === "stacks" ? formatTasks(body.items) : unexpected(body),
+        body.type === "stacks" ? formatStacks(body.items) : unexpected(body),
       ),
   );
 

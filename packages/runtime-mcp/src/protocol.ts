@@ -176,7 +176,7 @@ export interface Finding {
 }
 
 /** A named sequence of members in a checkout. */
-export interface Task {
+export interface Stack {
   id: string;
   workspace_id: string;
   name: string;
@@ -184,11 +184,24 @@ export interface Task {
 }
 
 /** A stack with what its members are actually doing. */
-export interface StackView extends Task {
+export interface FlowNode {
+  name: string;
+  service_id?: string;
+  after?: string[];
+  /** How many waits deep it is. Everything on one level starts at once. */
+  level: number;
+  status: ServiceStatus;
+  one_shot?: boolean;
+}
+
+export interface StackView extends Stack {
   services: ServiceView[];
   running: number;
-  /** Steps naming a service that no longer exists. */
+  /** Members naming a service that no longer exists. */
   missing?: string[];
+  /** The stack as a graph, worked out by the daemon from the members' own
+   *  dependencies so every surface reads one shape. */
+  flow?: FlowNode[];
 }
 
 export interface AdoptOutcome {

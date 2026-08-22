@@ -23,6 +23,16 @@ echo "==> frontend"
 pnpm --dir apps/desktop test
 
 echo "==> mcp server"
-pnpm --dir packages/runtime-mcp exec tsc --noEmit
+# Built, not merely type-checked. What is registered with an agent is
+# `dist/`, and `tsc --noEmit` never writes it — so a rename that landed in
+# the source and not in the build passed every check here while every MCP
+# call failed against the daemon. The build is the thing that ships.
+pnpm --dir packages/runtime-mcp build
+
+echo "==> mcp server speaks to this daemon"
+# The names the tools send have to be names the daemon accepts. Nothing else
+# in this file would notice them drifting apart: the Rust side type-checks
+# its own protocol, and the TypeScript side type-checks its own strings.
+scripts/mcp-handshake.sh
 
 echo "all clear"
