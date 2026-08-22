@@ -140,6 +140,13 @@ export interface WorkspaceView extends Workspace {
   external?: ExternalService[];
   containers?: ContainerView[];
   supervised?: SupervisedView[];
+  /**
+   * Groups declared over these services.
+   *
+   * A member listed here is still present in `services`; a surface showing
+   * groups is expected to show each service once, under its group.
+   */
+  tasks?: TaskView[];
 }
 
 export interface ProjectView extends Project {

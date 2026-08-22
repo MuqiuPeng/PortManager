@@ -8,6 +8,7 @@ import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { FlowChart } from "../components/FlowChart";
+import { partition } from "../Panel";
 import { ServiceRow } from "../components/ServiceRow";
 import { GroupEditor } from "../components/GroupEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
@@ -22,6 +23,7 @@ import type {
   SupervisedView,
   TaskView,
   FlowNode,
+  ProjectView,
 } from "../types";
 
 /**
@@ -330,5 +332,63 @@ describe("a group drawn as a graph", () => {
   it("marks a step whose service is gone", () => {
     const gone = [{ name: "ghost", after: [], level: 0, status: "stopped" }] as FlowNode[];
     expect(renderToString(<FlowChart flow={gone} />)).toContain("flow-node missing");
+  });
+});
+
+describe("what the panel shows", () => {
+  const service = (name: string, status = "stopped") =>
+    ({ ...wire.service_minimal, id: name, name, status }) as ServiceView;
+
+  const project = (workspaces: unknown[]) =>
+    ({ id: "p", name: "shop", workspaces }) as unknown as ProjectView;
+
+  it("shows a group as one thing, not as its members", () => {
+    const { groups, loose } = partition([
+      project([
+        {
+          id: "w",
+          git_branch: "main",
+          services: [service("db"), service("api"), service("docs")],
+          tasks: [{ id: "t", name: "stack", steps: ["db", "api"], services: [], running: 0 }],
+        },
+      ]),
+    ]);
+    expect(groups.map((one) => one.task.name)).toEqual(["stack"]);
+    // db and api are inside it, so only docs is left over.
+    expect(loose.map((one) => one.service.name)).toEqual(["docs"]);
+  });
+
+  it("does not file one checkout's service under another's group", () => {
+    // Both branches have a service called `api`; only main declares the group.
+    const { loose } = partition([
+      project([
+        {
+          id: "w1",
+          git_branch: "main",
+          services: [service("api")],
+          tasks: [{ id: "t", name: "stack", steps: ["api"], services: [], running: 0 }],
+        },
+        { id: "w2", git_branch: "feature", services: [service("api")], tasks: [] },
+      ]),
+    ]);
+    expect(loose).toHaveLength(1);
+    expect(loose[0].branch).toBe("feature");
+  });
+
+  it("puts what is running first", () => {
+    const { groups } = partition([
+      project([
+        {
+          id: "w",
+          git_branch: "main",
+          services: [],
+          tasks: [
+            { id: "a", name: "aaa", steps: ["x"], services: [], running: 0 },
+            { id: "b", name: "zzz", steps: ["y"], services: [], running: 1 },
+          ],
+        },
+      ]),
+    ]);
+    expect(groups.map((one) => one.task.name)).toEqual(["zzz", "aaa"]);
   });
 });

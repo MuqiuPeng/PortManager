@@ -7,6 +7,7 @@ import {
   type PanelState,
   type ProjectView,
   type ServiceView,
+  type TaskView,
 } from "./types";
 
 /**
@@ -17,6 +18,63 @@ import {
  * start / stop / open. Logs, ports and project management stay in the main
  * window; a panel that grew a second screen would just be a small main window.
  */
+export interface PanelGroup {
+  project: ProjectView;
+  branch: string;
+  task: TaskView;
+}
+
+export interface PanelService {
+  project: ProjectView;
+  branch: string;
+  service: ServiceView;
+}
+
+/**
+ * Split what the panel shows into groups and everything else.
+ *
+ * Membership is per checkout: a group belongs to the checkout it was declared
+ * in, and a service is only inside it if it is named there. Two checkouts of
+ * the same project have services of the same name, so asking the question
+ * across a project would file one branch's service under the other's group.
+ *
+ * Running first, because the panel is opened to check on something that is up
+ * or to bring something up, and by name after that so it does not shuffle
+ * under the pointer while things start.
+ */
+export function partition(projects: ProjectView[]): {
+  groups: PanelGroup[];
+  loose: PanelService[];
+} {
+  const groups: PanelGroup[] = [];
+  const loose: PanelService[] = [];
+
+  for (const project of projects) {
+    for (const workspace of project.workspaces) {
+      const branch = workspace.git_branch ?? "";
+      const tasks = workspace.tasks ?? [];
+      for (const task of tasks) {
+        groups.push({ project, branch, task });
+      }
+      const grouped = new Set(tasks.flatMap((task) => task.steps));
+      for (const service of workspace.services) {
+        if (grouped.has(service.name)) continue;
+        loose.push({ project, branch, service });
+      }
+    }
+  }
+
+  groups.sort((a, b) => {
+    const live = Number(b.task.running > 0) - Number(a.task.running > 0);
+    return live !== 0 ? live : a.task.name.localeCompare(b.task.name);
+  });
+  loose.sort((a, b) => {
+    const live = Number(isLive(b.service.status)) - Number(isLive(a.service.status));
+    return live !== 0 ? live : a.service.name.localeCompare(b.service.name);
+  });
+  return { groups, loose };
+}
+
 export default function Panel() {
   const [state, setState] = useState<PanelState>("island");
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -61,25 +119,36 @@ export default function Panel() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** Flattened, because the panel shows services rather than a project tree. */
-  const rows = useMemo(() => {
-    const out: { project: ProjectView; branch: string; service: ServiceView }[] = [];
-    for (const project of projects) {
-      for (const workspace of project.workspaces) {
-        for (const service of workspace.services) {
-          out.push({ project, branch: workspace.git_branch ?? "", service });
-        }
-      }
-    }
-    // Running first: the panel is opened to check on something that is up, or
-    // to bring something up.
-    return out.sort((a, b) => {
-      const live = Number(isLive(b.service.status)) - Number(isLive(a.service.status));
-      return live !== 0 ? live : a.project.name.localeCompare(b.project.name);
-    });
-  }, [projects]);
+  /**
+   * Groups first, then whatever belongs to none of them.
+   *
+   * Flattened across projects, because the panel is a glance at the machine
+   * rather than a project tree — but a declared group is one thing on it, the
+   * same as everywhere else. Five services somebody grouped into one stack
+   * were five rows and five clicks here, which is the arithmetic the group was
+   * declared to stop having to do.
+   */
+  const { groups, loose } = useMemo(() => partition(projects), [projects]);
+
+  /** Every service, whichever way it is filed — for the resting dots. */
+  const rows = useMemo(
+    () =>
+      projects.flatMap((project) =>
+        project.workspaces.flatMap((workspace) =>
+          workspace.services.map((service) => ({
+            project,
+            branch: workspace.git_branch ?? "",
+            service,
+          })),
+        ),
+      ),
+    [projects],
+  );
 
   const running = rows.filter((row) => isLive(row.service.status));
+
+  /** Groups whose members are showing. */
+  const [opened, setOpened] = useState<string[]>([]);
 
   // Fetched but not displayed. The panel is a glance, and an error message is
   // not glanceable — what it is good for here is being carried somewhere else,
@@ -137,6 +206,58 @@ export default function Panel() {
     await api.setPanelSettings({ ...settings, pinned: next });
   }
 
+  /** One service, the same row whether it is loose or inside a group. */
+  function serviceRow(project: ProjectView, branch: string, service: ServiceView) {
+    const live = isLive(service.status);
+    const id = service.id;
+    const failed = failures.find((failure) => failure.service_id === id);
+    return (
+      <div className="panel-row" key={id}>
+        <span className={`dot status-${service.status}`} aria-hidden />
+
+        <div className="panel-row-body">
+          <div className="panel-row-title">
+            <span className="panel-service">{service.name}</span>
+            <span className="panel-project">{project.name}</span>
+          </div>
+          <div className="panel-row-meta">
+            {service.actual_port ? `:${service.actual_port}` : service.status}
+            {branch && ` · ${branch}`}
+          </div>
+        </div>
+
+        <div className="panel-row-actions">
+          {failed && (
+            <button
+              className="icon-button"
+              title={copied === id ? "Copied" : "Copy why this failed"}
+              onClick={() => void copyFailure(failed)}
+            >
+              {copied === id ? "✓" : "⧉"}
+            </button>
+          )}
+          {live && service.url && (
+            <button
+              className="icon-button"
+              title={`Open ${service.url}`}
+              onClick={() => act(id, () => openExternal(service.url as string))}
+            >
+              ↗
+            </button>
+          )}
+          <button
+            className="icon-button"
+            disabled={busy === id}
+            title={live ? "Stop" : "Start"}
+            onClick={() => act(id, () => (live ? api.stopService(id) : api.startService(id)))}
+          >
+            {live ? "■" : "▶"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (state === "island") {
     return <Island running={running.length} total={rows.length} edge={edge} />;
   }
@@ -163,64 +284,86 @@ export default function Panel() {
             Nothing registered yet. Open the main window to find your projects.
           </p>
         ) : (
-          rows.map(({ project, branch, service }) => {
-            const live = isLive(service.status);
-            const id = service.id;
-            const failed = failures.find((failure) => failure.service_id === id);
-            return (
-              <div className="panel-row" key={id}>
-                <span className={`dot status-${service.status}`} aria-hidden />
+          <>
+            {groups.map(({ project, branch, task }) => {
+              const key = `${project.id}/${task.name}`;
+              const total = task.steps.length;
+              const allUp = total > 0 && task.running === total;
+              const someUp = task.running > 0;
+              const open = opened.includes(key);
+              // Whichever member broke. What somebody wants to carry away is
+              // the reason, not which of five names it came from.
+              const broken = task.services
+                .map((member) => failures.find((one) => one.service_id === member.id))
+                .find(Boolean);
+              return (
+                <div className="panel-group" key={key}>
+                  <div className="panel-row">
+                    <span
+                      className={allUp ? "dot status-healthy" : someUp ? "dot partial" : "dot"}
+                      aria-hidden
+                    />
 
-                <div className="panel-row-body">
-                  <div className="panel-row-title">
-                    <span className="panel-service">{service.name}</span>
-                    <span className="panel-project">{project.name}</span>
-                  </div>
-                  <div className="panel-row-meta">
-                    {service.actual_port ? `:${service.actual_port}` : service.status}
-                    {branch && ` · ${branch}`}
-                  </div>
-                </div>
-
-                <div className="panel-row-actions">
-                  {failed && (
                     <button
-                      className="icon-button"
-                      title={
-                        copied === id
-                          ? "Copied"
-                          : "Copy why this failed"
-                      }
-                      onClick={() => void copyFailure(failed)}
-                    >
-                      {copied === id ? "✓" : "⧉"}
-                    </button>
-                  )}
-                  {live && service.url && (
-                    <button
-                      className="icon-button"
-                      title={`Open ${service.url}`}
+                      className="panel-row-body as-button"
                       onClick={() =>
-                        act(id, () => openExternal(service.url as string))
+                        setOpened(open ? opened.filter((one) => one !== key) : [...opened, key])
                       }
+                      aria-expanded={open}
+                      title={open ? "Hide its services" : "Show its services"}
                     >
-                      ↗
+                      <div className="panel-row-title">
+                        <span className="panel-caret">{open ? "▾" : "▸"}</span>
+                        <span className="panel-service">{task.name}</span>
+                        <span className="panel-project">{project.name}</span>
+                      </div>
+                      <div className="panel-row-meta">
+                        {task.running}/{total} up{branch && ` · ${branch}`}
+                      </div>
                     </button>
+
+                    <div className="panel-row-actions">
+                      {broken && (
+                        <button
+                          className="icon-button"
+                          title={copied === broken.service_id ? "Copied" : "Copy why this failed"}
+                          onClick={() => void copyFailure(broken)}
+                        >
+                          {copied === broken.service_id ? "✓" : "⧉"}
+                        </button>
+                      )}
+                      <button
+                        className="icon-button"
+                        disabled={busy === key}
+                        title={someUp ? "Stop the group" : "Start the group"}
+                        onClick={() =>
+                          act(key, () =>
+                            someUp
+                              ? api.stopTask(project.id, task.name)
+                              : api.runTask(project.id, task.name),
+                          )
+                        }
+                      >
+                        {someUp ? "■" : "▶"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {open && (
+                    <div className="panel-members">
+                      {task.services.map((member) => serviceRow(project, branch, member))}
+                    </div>
                   )}
-                  <button
-                    className="icon-button"
-                    disabled={busy === id}
-                    title={live ? "Stop" : "Start"}
-                    onClick={() =>
-                      act(id, () => (live ? api.stopService(id) : api.startService(id)))
-                    }
-                  >
-                    {live ? "■" : "▶"}
-                  </button>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+
+            {groups.length > 0 && loose.length > 0 && (
+              <div className="panel-divider">Ungrouped</div>
+            )}
+
+            {loose.map(({ project, branch, service }) => serviceRow(project, branch, service))}
+          </>
         )}
       </div>
 
