@@ -405,4 +405,30 @@ pub struct TaskView {
     /// Steps naming a service that no longer exists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing: Vec<String>,
+    /// The group as a graph: what waits for what, and what can go at once.
+    ///
+    /// Derived from the members' own `depends_on` rather than stored beside
+    /// it. A service needing a database is a fact about the service, true in
+    /// every group it appears in; keeping a second copy per group is how the
+    /// two come to disagree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flow: Vec<FlowNode>,
+}
+
+/// One service in a group, placed by what it waits for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowNode {
+    pub name: String,
+    /// Absent for a step naming a service that is no longer declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<ServiceId>,
+    /// Members it waits for. Dependencies outside the group are not shown:
+    /// they are brought up too, but they are not part of what was declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
+    /// How many waits deep it is. Everything on one level can start at once.
+    pub level: usize,
+    pub status: ServiceStatus,
+    #[serde(default)]
+    pub one_shot: bool,
 }

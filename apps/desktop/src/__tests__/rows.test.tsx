@@ -7,6 +7,7 @@ import { ContainerRow } from "../components/ContainerRow";
 import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
+import { FlowChart } from "../components/FlowChart";
 import { ServiceRow } from "../components/ServiceRow";
 import { GroupEditor } from "../components/GroupEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
@@ -20,6 +21,7 @@ import type {
   ServiceView,
   SupervisedView,
   TaskView,
+  FlowNode,
 } from "../types";
 
 /**
@@ -296,5 +298,37 @@ describe("an existing group", () => {
       />,
     );
     expect(html).toContain("Edit");
+  });
+});
+
+describe("a group drawn as a graph", () => {
+  // db first; api and jobs both wait only for db, so they are one level.
+  const flow = [
+    { name: "db", service_id: "a", after: [], level: 0, status: "healthy" },
+    { name: "api", service_id: "b", after: ["db"], level: 1, status: "healthy" },
+    { name: "jobs", service_id: "c", after: ["db"], level: 1, status: "stopped" },
+    { name: "web", service_id: "d", after: ["api"], level: 2, status: "stopped" },
+  ] as FlowNode[];
+
+  it("puts what waits for the same thing side by side, not in a queue", () => {
+    const html = renderToString(<FlowChart flow={flow} />);
+    const y = (name: string) => {
+      const at = html.indexOf(`>${name}<`);
+      const g = html.lastIndexOf("translate(", at);
+      return Number(html.slice(g + 10, html.indexOf(")", g)).split(" ")[1]);
+    };
+    expect(y("api")).toBe(y("jobs"));
+    expect(y("db")).toBeLessThan(y("api"));
+    expect(y("web")).toBeGreaterThan(y("api"));
+  });
+
+  it("draws a line for every wait", () => {
+    const html = renderToString(<FlowChart flow={flow} />);
+    expect(html.match(/class="flow-edge"/g)?.length).toBe(3);
+  });
+
+  it("marks a step whose service is gone", () => {
+    const gone = [{ name: "ghost", after: [], level: 0, status: "stopped" }] as FlowNode[];
+    expect(renderToString(<FlowChart flow={gone} />)).toContain("flow-node missing");
   });
 });

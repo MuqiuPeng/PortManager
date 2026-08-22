@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId, TaskView, Workspace, WorkspaceId, WorkspaceView,
+    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId, FlowNode, TaskView, Workspace, WorkspaceId, WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -1221,11 +1221,13 @@ impl Runtime {
                 .filter(|view| view.status.is_live() || view.service.one_shot)
                 .count();
 
+            let flow = flow_of(&task, &services, &missing);
             out.push(TaskView {
                 task,
                 services,
                 running,
                 missing,
+                flow,
             });
         }
         Ok(out)
@@ -2296,6 +2298,84 @@ fn looks_runnable(command: &str) -> bool {
             found == first || is_first_with_an_extension(&found, first)
         })
     })
+}
+
+/// Place a group's members by what they wait for.
+///
+/// Edges come from the members' own `depends_on`, narrowed to the group: a
+/// dependency outside it is still brought up, but it is not part of what
+/// somebody declared and drawing it would make the group look bigger than it
+/// is. Levels are waiting depth, so everything on one level can start at once
+/// — which is the thing a list of steps could never say.
+///
+/// A cycle cannot survive here: `graph::plan` refuses one, so a group holding
+/// it fails to run and says so. This only has to not spin, which it does by
+/// giving up once a pass places nothing new and putting the rest on the last
+/// level, where the reader can see them sitting on each other.
+fn flow_of(task: &Task, services: &[ServiceView], missing: &[String]) -> Vec<FlowNode> {
+    use std::collections::BTreeMap;
+
+    let members: Vec<&str> = task.steps.iter().map(String::as_str).collect();
+    let after: BTreeMap<&str, Vec<String>> = services
+        .iter()
+        .map(|view| {
+            let waits = view
+                .service
+                .depends_on
+                .iter()
+                .filter(|name| members.contains(&name.as_str()))
+                .cloned()
+                .collect();
+            (view.service.name.as_str(), waits)
+        })
+        .collect();
+
+    let mut level: BTreeMap<&str, usize> = BTreeMap::new();
+    loop {
+        let mut placed = false;
+        for name in &members {
+            if level.contains_key(name) {
+                continue;
+            }
+            let waits = after.get(name).map(Vec::as_slice).unwrap_or(&[]);
+            if let Some(deepest) = waits
+                .iter()
+                .map(|dep| level.get(dep.as_str()).copied())
+                .collect::<Option<Vec<_>>>()
+            {
+                let here = deepest.into_iter().max().map(|n| n + 1).unwrap_or(0);
+                level.insert(name, here);
+                placed = true;
+            }
+        }
+        if !placed {
+            break;
+        }
+    }
+    // Anything left is in a cycle; show it after everything that is placed.
+    let floor = level.values().copied().max().map(|n| n + 1).unwrap_or(0);
+
+    let mut nodes: Vec<FlowNode> = task
+        .steps
+        .iter()
+        .map(|name| {
+            let view = services.iter().find(|view| &view.service.name == name);
+            FlowNode {
+                name: name.clone(),
+                service_id: view.map(|view| view.service.id.clone()),
+                after: after.get(name.as_str()).cloned().unwrap_or_default(),
+                level: level.get(name.as_str()).copied().unwrap_or(floor),
+                status: view.map(|view| view.status).unwrap_or(ServiceStatus::Stopped),
+                one_shot: view.map(|view| view.service.one_shot).unwrap_or(false),
+            }
+        })
+        .collect();
+
+    // A step naming nothing still belongs on the diagram: a group with a hole
+    // in it should look wrong rather than look smaller.
+    let _ = missing;
+    nodes.sort_by_key(|node| node.level);
+    nodes
 }
 
 #[cfg(test)]

@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import type { ServiceView, TaskView } from "../types";
+import { FlowChart } from "./FlowChart";
 
 interface Props {
   task: TaskView;
@@ -24,6 +27,8 @@ interface Props {
  * inferred: a group exists because somebody said so.
  */
 export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderService }: Props) {
+  /** A node clicked on the diagram, whose row is then the one shown. */
+  const [picked, setPicked] = useState<string | undefined>(undefined);
   const total = task.steps.length;
   const missing = task.missing ?? [];
   const allUp = total > 0 && task.running === total;
@@ -68,7 +73,24 @@ export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderS
         </button>
       </header>
 
-      <div className="group-members">{task.services.map(renderService)}</div>
+      {(task.flow ?? []).length > 0 && (
+        <div className="group-flow">
+          <FlowChart
+            flow={task.flow ?? []}
+            selected={picked}
+            onSelect={(node) => setPicked(picked === node.name ? undefined : node.name)}
+          />
+        </div>
+      )}
+
+      {/* The diagram says the shape; the rows say the state, and only for what
+          was clicked unless nothing was — a group of eight is a diagram worth
+          reading, not eight rows to scroll past. */}
+      <div className="group-members">
+        {task.services
+          .filter((service) => !picked || service.name === picked)
+          .map(renderService)}
+      </div>
     </section>
   );
 }

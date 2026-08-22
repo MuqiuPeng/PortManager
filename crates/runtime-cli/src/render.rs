@@ -76,8 +76,20 @@ pub fn projects(views: &[ProjectView]) -> String {
             // follows, so the two do not disagree about what exists.
             for task in &workspace.tasks {
                 out.push_str(&format!("    {}\n", task_header(task)));
-                for member in &task.services {
-                    out.push_str(&format!("      {}\n", service_line(member)));
+                // Members in the order the group actually starts them, and
+                // indented by how deep they wait — the list is the diagram.
+                for node in &task.flow {
+                    let member = task
+                        .services
+                        .iter()
+                        .find(|view| view.service.name == node.name);
+                    let indent = "  ".repeat(node.level);
+                    match member {
+                        Some(view) => {
+                            out.push_str(&format!("      {indent}{}\n", service_line(view)))
+                        }
+                        None => out.push_str(&format!("      {indent}✕ {} (missing)\n", node.name)),
+                    }
                 }
             }
             let grouped: Vec<&str> = workspace
@@ -126,13 +138,38 @@ pub fn task_header(view: &TaskView) -> String {
     )
 }
 
+/// A group's shape: one line per level, members that can start together on it.
+///
+/// `a -> b -> c` could only ever describe a line, and a group is a graph — two
+/// services that wait for the same thing and for nothing else start at the
+/// same time, and saying so is most of what the shape is for.
+pub fn task_flow(view: &TaskView) -> String {
+    if view.flow.is_empty() {
+        return format!("    {}", view.task.steps.join(", "));
+    }
+    let depth = view.flow.iter().map(|node| node.level).max().unwrap_or(0);
+    (0..=depth)
+        .map(|level| {
+            let here: Vec<&str> = view
+                .flow
+                .iter()
+                .filter(|node| node.level == level)
+                .map(|node| node.name.as_str())
+                .collect();
+            let lead = if level == 0 { "    " } else { "    ↳ " };
+            format!("{lead}{}", here.join("  "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn tasks(items: &[TaskView]) -> String {
     if items.is_empty() {
         return "No tasks declared.".to_string();
     }
     items
         .iter()
-        .map(|view| format!("{}\n    {}", task_header(view), view.task.steps.join(" -> ")))
+        .map(|view| format!("{}\n{}", task_header(view), task_flow(view)))
         .collect::<Vec<_>>()
         .join("\n")
 }

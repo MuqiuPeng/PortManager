@@ -203,6 +203,8 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   /** The group the editor is open on, or null when it is making a new one. */
   const [editingTask, setEditingTask] = useState<string | null>(null);
+  /** Whether the ungrouped drawer is open; null means "whatever suits". */
+  const [ungrouped, setUngrouped] = useState<boolean | null>(null);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
 
@@ -401,11 +403,25 @@ export default function App() {
             setPrompt(null);
             setEditingTask(null);
           }}
-          onConfirm={(name, steps) => {
+          onConfirm={(name, steps, after) => {
             const renamed = editingTask && editingTask !== name ? editingTask : null;
+            const members = project.workspaces.flatMap((workspace) => workspace.services);
             setPrompt(null);
             setEditingTask(null);
             void act(async () => {
+              // The edges are the members' own dependencies, so saving the
+              // group writes them back where they live rather than keeping a
+              // copy beside it. Only what changed: an untouched service is not
+              // rewritten just because a group it belongs to was saved.
+              for (const [step, waits] of Object.entries(after)) {
+                const service = members.find((candidate) => candidate.name === step);
+                if (!service) continue;
+                const before = service.depends_on ?? [];
+                const same =
+                  before.length === waits.length &&
+                  before.every((one) => waits.includes(one));
+                if (!same) await api.updateService(service.id, { depends_on: waits });
+              }
               await api.setTask(project.id, name, steps);
               // A group is keyed by its name, so saving under a new one
               // declares a second group rather than renaming the first.
@@ -638,13 +654,36 @@ export default function App() {
                       (workspace.containers ?? []).length === 0 ? (
                         <p className="empty">No services detected.</p>
                       ) : (
-                        // Anything not already shown inside a group.
-                        workspace.services
-                          .filter(
+                        (() => {
+                          const loose = workspace.services.filter(
                             (service: ServiceView) =>
                               !tasks.some((task) => task.steps.includes(service.name)),
-                          )
-                          .map((service: ServiceView) => serviceRow(service))
+                          );
+                          if (loose.length === 0) return null;
+                          // Groups are what somebody declared; the rest is a
+                          // drawer under them rather than a list of peers. Open
+                          // when there is no group yet, so a new service is not
+                          // filed away before there is anywhere to file it.
+                          const open = ungrouped ?? tasks.length === 0;
+                          return (
+                            <section className="loose">
+                              <button
+                                className="loose-head"
+                                onClick={() => setUngrouped(!open)}
+                                aria-expanded={open}
+                              >
+                                <span className="loose-caret">{open ? "▾" : "▸"}</span>
+                                Ungrouped
+                                <span className="loose-count">{loose.length}</span>
+                              </button>
+                              {open && (
+                                <div className="loose-body">
+                                  {loose.map((service: ServiceView) => serviceRow(service))}
+                                </div>
+                              )}
+                            </section>
+                          );
+                        })()
                       )}
 
                       {(workspace.supervised ?? []).map((entry) => (

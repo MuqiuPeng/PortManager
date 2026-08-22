@@ -16,5 +16,6 @@ pub use model::{
     AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy, Task, Workspace,
 };
 pub use view::{
+    FlowNode,
     AdoptOutcome, CommandSource, ContainerView, DaemonInfo, ExternalService, Failure, Finding, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, SupervisedView, TaskView, WorkspaceView,
 };

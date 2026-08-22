@@ -261,6 +261,14 @@ fn responses() -> Vec<ResponseBody> {
                 services: vec![service_view()],
                 running: 1,
                 missing: vec!["gone".to_string()],
+                flow: vec![runtime_types::FlowNode {
+                    name: "api".to_string(),
+                    service_id: Some(ServiceId::from("svc")),
+                    after: vec!["migrate".to_string()],
+                    level: 1,
+                    status: ServiceStatus::Healthy,
+                    one_shot: false,
+                }],
             }],
         },
         ResponseBody::TaskRun {

@@ -288,6 +288,16 @@ export function affectsFailures(event: RuntimeEvent): boolean {
   }
 }
 
+/** One service in a group, placed by what it waits for. */
+export interface FlowNode {
+  name: string;
+  service_id?: string;
+  after?: string[];
+  level: number;
+  status: ServiceStatus;
+  one_shot?: boolean;
+}
+
 /** True while the runtime believes a process should exist. */
 export function isLive(status: ServiceStatus): boolean {
   return (
@@ -364,4 +374,11 @@ export interface TaskView extends Task {
   running: number;
   /** Steps naming a service that no longer exists. */
   missing?: string[];
+  /**
+   * The group as a graph: what waits for what, and what can go at once.
+   *
+   * Derived by the daemon from the members' own dependencies, so the diagram
+   * and the order it actually starts in cannot drift apart.
+   */
+  flow?: FlowNode[];
 }

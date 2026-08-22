@@ -10,7 +10,7 @@ interface Props {
   /** The group being edited, if this is an edit rather than a new one. */
   editing?: TaskView;
   onCancel: () => void;
-  onConfirm: (name: string, steps: string[]) => void;
+  onConfirm: (name: string, steps: string[], after: Record<string, string[]>) => void;
 }
 
 /**
@@ -30,6 +30,13 @@ interface Props {
 export function GroupEditor({ services, existing, editing, onCancel, onConfirm }: Props) {
   const [name, setName] = useState(editing?.name ?? "");
   const [steps, setSteps] = useState<string[]>(editing?.steps ?? []);
+  // What each member waits for, seeded from the services' own dependencies —
+  // which is where it is stored, and where saving puts it back.
+  const [after, setAfter] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(
+      services.map((view) => [view.name, [...(view.depends_on ?? [])]]),
+    ),
+  );
 
   const chosen = steps.filter((step) => services.some((view) => view.name === step));
   const rest = services.filter((view) => !steps.includes(view.name)).map((view) => view.name);
@@ -45,6 +52,26 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
     const next = [...chosen];
     [next[index], next[to]] = [next[to], next[index]];
     setSteps(next);
+  }
+
+  /** Would making `step` wait for `dep` close a loop? */
+  function loops(step: string, dep: string): boolean {
+    const seen = new Set<string>();
+    const walk = (from: string): boolean => {
+      if (from === step) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      return (after[from] ?? []).some(walk);
+    };
+    return walk(dep);
+  }
+
+  function toggleAfter(step: string, dep: string) {
+    const waits = after[step] ?? [];
+    setAfter({
+      ...after,
+      [step]: waits.includes(dep) ? waits.filter((one) => one !== dep) : [...waits, dep],
+    });
   }
 
   return (
@@ -107,6 +134,38 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
                     >
                       ↓
                     </button>
+                    {/* What it waits for. Stored on the service, so it holds
+                        wherever else the service is used — and the diagram is
+                        read from the same place rather than kept alongside. */}
+                    <div className="step-after">
+                      <span className="step-after-label">after</span>
+                      {chosen.filter((other) => other !== step).length === 0 ? (
+                        <span className="step-after-none">nothing</span>
+                      ) : (
+                        chosen
+                          .filter((other) => other !== step)
+                          .map((other) => {
+                            const on = (after[step] ?? []).includes(other);
+                            const cyclic = !on && loops(step, other);
+                            return (
+                              <button
+                                type="button"
+                                key={other}
+                                className={on ? "chip on" : "chip"}
+                                disabled={cyclic}
+                                title={
+                                  cyclic
+                                    ? `${other} already waits for ${step}`
+                                    : `Wait for ${other}`
+                                }
+                                onClick={() => toggleAfter(step, other)}
+                              >
+                                {other}
+                              </button>
+                            );
+                          })
+                      )}
+                    </div>
                   </li>
                 ))}
                 {rest.map((service) => (
@@ -128,7 +187,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
           <p className="hint">
             {chosen.length === 0
               ? "Tick the services this group starts."
-              : `Starts ${chosen.join(" → ")}, and stops in reverse — as one thing. A service already up when its turn comes is left alone.`}
+              : "Anything waiting for nothing starts at once; the rest follow what they wait for, and the group stops in reverse. A service already up when its turn comes is left alone. What a member waits for is its own dependency, so it holds outside this group too."}
           </p>
         </div>
 
@@ -140,7 +199,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
           <button
             className="ghost primary"
             disabled={!ready}
-            onClick={() => ready && onConfirm(name.trim(), chosen)}
+            onClick={() => ready && onConfirm(name.trim(), chosen, after)}
           >
             {editing ? "Save" : "Create"}
           </button>

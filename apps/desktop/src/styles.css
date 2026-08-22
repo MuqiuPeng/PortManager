@@ -1335,3 +1335,138 @@ button.ghost.tiny {
 .hint.problem {
   color: var(--danger);
 }
+
+/* A group is a graph; this is it drawn. */
+.group-flow {
+  padding: 10px 12px 4px;
+  overflow-x: auto;
+}
+
+.flow {
+  display: block;
+  max-width: 100%;
+}
+
+.flow-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.flow-node rect {
+  fill: var(--surface-alt);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.flow-node text {
+  font-size: 11px;
+  fill: var(--text);
+  font-family: var(--mono);
+}
+
+.flow-node .flow-tag {
+  font-size: 9px;
+  fill: var(--text-dim);
+}
+
+.flow-node[role="button"] {
+  cursor: pointer;
+}
+
+.flow-node.selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+/* Live services carry the colour they carry everywhere else. */
+.flow-node.status-healthy rect {
+  stroke: var(--live);
+}
+
+.flow-node.status-starting rect,
+.flow-node.status-unhealthy rect {
+  stroke: var(--warn);
+}
+
+.flow-node.status-failed rect,
+.flow-node.missing rect {
+  stroke: var(--danger);
+  stroke-dasharray: 3 3;
+}
+
+/* Not a peer of the groups: a drawer under them. */
+.loose {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.loose-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.loose-caret {
+  font-size: 9px;
+}
+
+.loose-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.group-list li.chosen {
+  flex-wrap: wrap;
+}
+
+.step-after {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 2px 0 2px 20px;
+}
+
+.step-after-label,
+.step-after-none {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+button.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+button.chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button.chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

@@ -369,7 +369,45 @@ impl Runtime {
         let declared = self.store().list_services(workspace_id)?;
         let mut done = Vec::new();
 
-        for step in &task.steps {
+        // Ordered by the graph the group is drawn as, not by the order its
+        // members happen to be stored in. What somebody sees on the diagram is
+        // what runs; the stored order only decides between members that wait
+        // for nothing and so could go in any order at all.
+        let members: Vec<Service> = task
+            .steps
+            .iter()
+            .map(|step| {
+                declared
+                    .iter()
+                    .find(|service| &service.name == step)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RuntimeError::invalid(format!("'{step}' is no longer a service here"))
+                    })
+            })
+            .collect::<Result<_>>()?;
+        let owners = self.port_owners()?;
+        let live: Vec<ServiceId> = declared
+            .iter()
+            .filter(|candidate| {
+                self.service_view_with(candidate, &owners)
+                    .map(|view| view.status.is_live())
+                    .unwrap_or(false)
+            })
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        let plan = crate::graph::plan(&members, &declared, |candidate| {
+            live.contains(&candidate.id)
+        })?;
+
+        for planned in &plan {
+            // Dependencies outside the group are brought up, as they always
+            // were, but they are not reported as steps of it: the group is
+            // what somebody declared, not everything that had to happen.
+            let step = &planned.name;
+            if !task.steps.contains(step) {
+                continue;
+            }
             let service = declared
                 .iter()
                 .find(|service| &service.name == step)
