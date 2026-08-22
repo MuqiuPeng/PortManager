@@ -30,6 +30,8 @@ export interface PanelService {
   project: ProjectView;
   branch: string;
   service: ServiceView;
+  /** Whether a stack names it, which is what decides if it can be started. */
+  inAStack: boolean;
 }
 
 /**
@@ -46,10 +48,10 @@ export interface PanelService {
  */
 export function partition(projects: ProjectView[]): {
   groups: PanelGroup[];
-  loose: PanelService[];
+  services: PanelService[];
 } {
   const groups: PanelGroup[] = [];
-  const loose: PanelService[] = [];
+  const services: PanelService[] = [];
 
   for (const project of projects) {
     for (const workspace of project.workspaces) {
@@ -60,8 +62,7 @@ export function partition(projects: ProjectView[]): {
       }
       const grouped = new Set(stacks.flatMap((stack) => stack.members));
       for (const service of workspace.services) {
-        if (grouped.has(service.name)) continue;
-        loose.push({ project, branch, service });
+        services.push({ project, branch, service, inAStack: grouped.has(service.name) });
       }
     }
   }
@@ -70,11 +71,11 @@ export function partition(projects: ProjectView[]): {
     const live = Number(b.stack.running > 0) - Number(a.stack.running > 0);
     return live !== 0 ? live : a.stack.name.localeCompare(b.stack.name);
   });
-  loose.sort((a, b) => {
+  services.sort((a, b) => {
     const live = Number(isLive(b.service.status)) - Number(isLive(a.service.status));
     return live !== 0 ? live : a.service.name.localeCompare(b.service.name);
   });
-  return { groups, loose };
+  return { groups, services };
 }
 
 export default function Panel() {
@@ -130,7 +131,17 @@ export default function Panel() {
    * were five rows and five clicks here, which is the arithmetic the group was
    * declared to stop having to do.
    */
-  const { groups, loose } = useMemo(() => partition(projects), [projects]);
+  const { groups, services } = useMemo(() => partition(projects), [projects]);
+
+  /**
+   * What the panel is showing. Stacks by default.
+   *
+   * A stack is what somebody declared this machine is brought up as, and the
+   * only thing the panel will start — so it is what a glance should land on.
+   * The services are still a tab away, because a stack is not always what you
+   * are looking for: sometimes it is the one process you know the name of.
+   */
+  const [view, setView] = useState<"stacks" | "services">("stacks");
 
   /** Every service, whichever way it is filed — for the resting dots. */
   const rows = useMemo(
@@ -307,6 +318,22 @@ export default function Panel() {
 
       {error && <div className="panel-error">{error}</div>}
 
+      {/* Two things worth glancing at, and only one of them at a time in a
+          column this narrow. */}
+      <div className="panel-views" role="tablist">
+        {(["stacks", "services"] as const).map((which) => (
+          <button
+            key={which}
+            role="tab"
+            aria-selected={view === which}
+            className={view === which ? "panel-view active" : "panel-view"}
+            onClick={() => setView(which)}
+          >
+            {which === "stacks" ? "Stacks" : "Services"}
+          </button>
+        ))}
+      </div>
+
       <div className="panel-body">
         {rows.length === 0 ? (
           <p className="empty">
@@ -314,7 +341,16 @@ export default function Panel() {
           </p>
         ) : (
           <>
-            {groups.map(({ project, branch, stack }) => {
+            {view === "stacks" &&
+              groups.length === 0 && (
+                <p className="empty">
+                  Nothing is in a stack yet. A stack is how the panel starts things — declare
+                  one in the main window.
+                </p>
+              )}
+
+            {view === "stacks" &&
+              groups.map(({ project, branch, stack }) => {
               const key = `${project.id}/${stack.name}`;
               const total = stack.members.length;
               const allUp = total > 0 && stack.running === total;
@@ -387,18 +423,11 @@ export default function Panel() {
               );
             })}
 
-            {loose.length > 0 && (
-              <div className="panel-divider">
-                Not in a stack
-                <span className="panel-divider-note">
-                  {groups.length === 0
-                    ? "nothing here is in a stack yet — a stack is how the panel starts things"
-                    : "put these in a stack to start them from here"}
-                </span>
-              </div>
-            )}
+            {view === "services" &&
+              services.map(({ project, branch, service, inAStack }) =>
+                serviceRow(project, branch, service, inAStack),
+              )}
 
-            {loose.map(({ project, branch, service }) => serviceRow(project, branch, service, false))}
           </>
         )}
       </div>

@@ -425,7 +425,7 @@ describe("what the panel shows", () => {
     ({ id: "p", name: "shop", workspaces }) as unknown as ProjectView;
 
   it("shows a group as one thing, not as its members", () => {
-    const { groups, loose } = partition([
+    const { groups, services } = partition([
       project([
         {
           id: "w",
@@ -436,13 +436,16 @@ describe("what the panel shows", () => {
       ]),
     ]);
     expect(groups.map((one) => one.stack.name)).toEqual(["stack"]);
-    // db and api are inside it, so only docs is left over.
-    expect(loose.map((one) => one.service.name)).toEqual(["docs"]);
+    // Every service is listed; which of them a stack names is marked, since
+    // that is what decides whether the panel will start it.
+    expect(services.filter((one) => !one.inAStack).map((one) => one.service.name)).toEqual([
+      "docs",
+    ]);
   });
 
   it("does not file one checkout's service under another's group", () => {
     // Both branches have a service called `api`; only main declares the group.
-    const { loose } = partition([
+    const { services } = partition([
       project([
         {
           id: "w1",
@@ -453,8 +456,30 @@ describe("what the panel shows", () => {
         { id: "w2", git_branch: "feature", services: [service("api")], stacks: [] },
       ]),
     ]);
-    expect(loose).toHaveLength(1);
-    expect(loose[0].branch).toBe("feature");
+    const unfiled = services.filter((one) => !one.inAStack);
+    expect(unfiled).toHaveLength(1);
+    expect(unfiled[0].branch).toBe("feature");
+  });
+
+  it("lists every service, not only the ones no stack names", () => {
+    // The panel shows stacks by default and services behind a tab. The tab has
+    // to be the whole list: a service being in a stack is a reason to show it
+    // under one, not a reason it cannot be looked up by name.
+    const { services } = partition([
+      project([
+        {
+          id: "w",
+          git_branch: "main",
+          services: [service("db"), service("api"), service("docs")],
+          stacks: [{ id: "t", name: "stack", members: ["db", "api"], services: [], running: 0 }],
+        },
+      ]),
+    ]);
+    expect(services.map((one) => one.service.name).sort()).toEqual(["api", "db", "docs"]);
+    expect(services.filter((one) => one.inAStack).map((one) => one.service.name).sort()).toEqual([
+      "api",
+      "db",
+    ]);
   });
 
   it("puts what is running first", () => {

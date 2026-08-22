@@ -1387,3 +1387,32 @@ button.chip:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Which of the two lists the panel is showing. */
+.panel-views {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-view {
+  flex: 1;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.panel-view:hover {
+  background: var(--muted);
+}
+
+.panel-view.active {
+  background: var(--muted);
+  color: var(--foreground);
+}
