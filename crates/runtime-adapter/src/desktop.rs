@@ -95,6 +95,16 @@ pub struct ScreenInfo {
 /// The implementation is handed the platform's native window handle by the
 /// desktop app; nothing above this trait knows what an `NSWindow` is.
 pub trait WindowProvider: Send + Sync {
+    /// Whether this thread may touch windows at all.
+    ///
+    /// On macOS every AppKit call has to happen on the main thread, and the
+    /// callers that get this wrong are the ones that do not look like UI code:
+    /// a global shortcut handler, a tray callback, an async command. Asking is
+    /// how the caller can hop rather than fail.
+    fn on_main_thread(&self) -> bool {
+        true
+    }
+
     /// Convert an existing window into a floating, non-activating panel.
     ///
     /// Called once per window, before it is first shown.

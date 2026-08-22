@@ -79,6 +79,10 @@ impl MacWindowProvider {
 }
 
 impl WindowProvider for MacWindowProvider {
+    fn on_main_thread(&self) -> bool {
+        MainThreadMarker::new().is_some()
+    }
+
     unsafe fn adopt_panel(&self, handle: RawWindow) -> Result<()> {
         let window = unsafe { Self::window(handle)? };
 
@@ -307,6 +311,22 @@ pub fn raw_window(ns_window: *mut c_void) -> RawWindow {
 
 #[cfg(test)]
 mod tests {
+    use runtime_adapter::WindowProvider;
+
+
+    /// The question `with_panel` asks before touching a window.
+    ///
+    /// It has to be answerable from a thread that is not the main one, because
+    /// that is the case it exists for: a global shortcut handler and a tray
+    /// callback both arrive on threads of their own, and both used to reach
+    /// straight for the window and fail.
+    #[test]
+    fn a_provider_knows_whether_this_thread_may_touch_windows() {
+        let off = std::thread::spawn(|| MacWindowProvider::new().on_main_thread())
+            .join()
+            .unwrap();
+        assert!(!off, "a spawned thread claimed it was the main one");
+    }
     use super::*;
 
     fn screen() -> ScreenInfo {

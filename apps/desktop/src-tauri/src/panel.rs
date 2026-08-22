@@ -296,15 +296,49 @@ impl PanelController {
 }
 
 /// Run something with the platform panel provider and the panel's native handle.
+/// Do something to the panel window, on the thread that is allowed to.
+///
+/// Every AppKit call needs the main thread, and the callers here mostly do not
+/// look like UI code: a global shortcut handler runs on the shortcut plugin's
+/// thread, a tray callback on the tray's, an async command on the async
+/// runtime. Each of them reaching straight for the window produced "panel
+/// windows must be touched on the main thread" — a rule the platform enforces
+/// and the callers were expected to remember.
+///
+/// So it is not remembered here either. The hop happens once, in the one place
+/// that touches the window, and every caller is right by construction. Already
+/// on the main thread the closure runs inline: dispatching to a thread you are
+/// already on and then waiting for it is a deadlock.
 fn with_panel<F>(app: &AppHandle, action: F) -> Result<()>
 where
-    F: FnOnce(&dyn WindowProvider, RawWindow) -> Result<()>,
+    F: FnOnce(&dyn WindowProvider, RawWindow) -> Result<()> + Send + 'static,
 {
     let Some(provider) = window_provider() else {
         return Err(RuntimeError::unsupported("edge panels"));
     };
-    let window = panel_window(app)?;
-    action(provider, native_handle(&window)?)
+
+    if provider.on_main_thread() {
+        let window = panel_window(app)?;
+        return action(provider, native_handle(&window)?);
+    }
+
+    let (tell, hear) = std::sync::mpsc::sync_channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let outcome = window_provider()
+            .ok_or_else(|| RuntimeError::unsupported("edge panels"))
+            .and_then(|provider| {
+                let window = panel_window(&handle)?;
+                action(provider, native_handle(&window)?)
+            });
+        // The receiver is only gone if the caller was torn down mid-hop, which
+        // is not worth failing the main thread over.
+        let _ = tell.send(outcome);
+    })
+    .map_err(|err| RuntimeError::internal(format!("could not reach the main thread: {err}")))?;
+
+    hear.recv()
+        .unwrap_or_else(|_| Err(RuntimeError::internal("the main thread dropped the panel work")))
 }
 
 pub fn panel_window(app: &AppHandle) -> Result<WebviewWindow> {
