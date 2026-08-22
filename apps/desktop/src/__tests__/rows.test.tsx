@@ -8,7 +8,7 @@ import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { FlowChart } from "../components/FlowChart";
-import { partition } from "../Panel";
+import { partition, rowAction } from "../Panel";
 import { mergeLogs } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
 import { GroupEditor } from "../components/GroupEditor";
@@ -414,5 +414,22 @@ describe("adding newly-read log lines", () => {
   it("keeps the newest when there are more than it holds", () => {
     const many = Array.from({ length: 12 }, (_, index) => line(index));
     expect(mergeLogs([], many, 5).map((one) => one.seq)).toEqual([7, 8, 9, 10, 11]);
+  });
+});
+
+describe("what the panel will do with a service", () => {
+  it("starts one that is in a group", () => {
+    expect(rowAction(false, true)).toBe("start");
+  });
+
+  it("will not start one that is in none", () => {
+    expect(rowAction(false, false)).toBe("group");
+  });
+
+  it("stops one that is running, grouped or not", () => {
+    // Refusing here would withhold the thing the panel is open for, and
+    // nothing is being brought up in the wrong shape by stopping it.
+    expect(rowAction(true, true)).toBe("stop");
+    expect(rowAction(true, false)).toBe("stop");
   });
 });

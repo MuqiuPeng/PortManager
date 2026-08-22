@@ -1505,3 +1505,12 @@ button.chip:disabled {
   border-top: 1px solid var(--border);
   margin-top: 6px;
 }
+
+.panel-divider-note {
+  display: block;
+  margin-top: 2px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  opacity: 0.75;
+}

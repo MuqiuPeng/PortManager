@@ -18,6 +18,26 @@ import {
  * start / stop / open. Logs, ports and project management stay in the main
  * window; a panel that grew a second screen would just be a small main window.
  */
+/** What the button on a service row does. */
+export type RowAction = "stop" | "start" | "group";
+
+/**
+ * The panel brings up declared groups and nothing else.
+ *
+ * A service nobody has put in a group is one whose companions and order the
+ * panel does not know. Starting it alone from a glance surface is how half a
+ * stack comes up and then looks like a working one.
+ *
+ * Stopping is never refused. It is on screen and it is running; sending
+ * somebody to another window to stop it would withhold the thing the panel is
+ * open for, and the reason to insist on a group does not apply to stopping —
+ * nothing is being brought up in the wrong shape.
+ */
+export function rowAction(live: boolean, grouped: boolean): RowAction {
+  if (live) return "stop";
+  return grouped ? "start" : "group";
+}
+
 export interface PanelGroup {
   project: ProjectView;
   branch: string;
@@ -206,8 +226,25 @@ export default function Panel() {
     await api.setPanelSettings({ ...settings, pinned: next });
   }
 
-  /** One service, the same row whether it is loose or inside a group. */
-  function serviceRow(project: ProjectView, branch: string, service: ServiceView) {
+  /**
+   * One service, the same row whether it is loose or inside a group.
+   *
+   * `grouped` decides whether it can be started from here. The panel brings up
+   * declared groups and nothing else: a service somebody has not said belongs
+   * anywhere is a service whose dependencies, order and companions are unknown
+   * to the panel, and starting it alone is how half a stack comes up and looks
+   * like a working one.
+   *
+   * Stopping is never refused. Something is on screen, running; being told to
+   * go elsewhere to stop it would be the panel withholding the one thing it is
+   * open for.
+   */
+  function serviceRow(
+    project: ProjectView,
+    branch: string,
+    service: ServiceView,
+    grouped: boolean,
+  ) {
     const live = isLive(service.status);
     const id = service.id;
     const failed = failures.find((failure) => failure.service_id === id);
@@ -245,14 +282,24 @@ export default function Panel() {
               ↗
             </button>
           )}
-          <button
-            className="icon-button"
-            disabled={busy === id}
-            title={live ? "Stop" : "Start"}
-            onClick={() => act(id, () => (live ? api.stopService(id) : api.startService(id)))}
-          >
-            {live ? "■" : "▶"}
-          </button>
+          {rowAction(live, grouped) === "group" ? (
+            <button
+              className="icon-button"
+              title="Put it in a group to start it from here"
+              onClick={() => void api.openMainWindow()}
+            >
+              ⊕
+            </button>
+          ) : (
+            <button
+              className="icon-button"
+              disabled={busy === id}
+              title={live ? "Stop" : "Start"}
+              onClick={() => act(id, () => (live ? api.stopService(id) : api.startService(id)))}
+            >
+              {live ? "■" : "▶"}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -351,18 +398,25 @@ export default function Panel() {
 
                   {open && (
                     <div className="panel-members">
-                      {task.services.map((member) => serviceRow(project, branch, member))}
+                      {task.services.map((member) => serviceRow(project, branch, member, true))}
                     </div>
                   )}
                 </div>
               );
             })}
 
-            {groups.length > 0 && loose.length > 0 && (
-              <div className="panel-divider">Ungrouped</div>
+            {loose.length > 0 && (
+              <div className="panel-divider">
+                Ungrouped
+                <span className="panel-divider-note">
+                  {groups.length === 0
+                    ? "nothing here is grouped yet — group it to start it from the panel"
+                    : "group these to start them from here"}
+                </span>
+              </div>
             )}
 
-            {loose.map(({ project, branch, service }) => serviceRow(project, branch, service))}
+            {loose.map(({ project, branch, service }) => serviceRow(project, branch, service, false))}
           </>
         )}
       </div>
