@@ -173,8 +173,18 @@ async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Resul
                 connection
                     .send(&Frame::error(
                         id,
+                        // Naming the versions rather than only the request.
+                        // The three programs ship in one bundle, so a request
+                        // this daemon does not know means one of them came
+                        // from somewhere else — an older copy on the PATH,
+                        // usually — and knowing which two versions are talking
+                        // is what makes that findable. The raw serde error
+                        // stays: it names the request, which says what broke.
                         runtime_types::RuntimeError::invalid(format!(
-                            "this daemon (protocol {}) cannot handle the request: {err}",
+                            "this daemon is {} (protocol {}) and does not know that request — \
+                             whatever sent it was built against a different version, so one of \
+                             them is an older copy left on your PATH: {err}",
+                            env!("CARGO_PKG_VERSION"),
                             runtime_ipc::PROTOCOL_VERSION
                         )),
                     ))

@@ -36,6 +36,10 @@
     {
       "identifier": "dialog:allow-open",
       "comment": "Folders are chosen through the system picker rather than typed. The picker is the OS's, so the person sees where they are and the app never has to guess whether a typed path exists. Open only: this app never asks anyone to name a file to write."
+    },
+    {
+      "identifier": "updater:default",
+      "comment": "Checking for an update and installing one. The endpoint is this repository's releases, and the payload is verified against the public key in tauri.conf.json before anything is replaced."
     }
   ]
 }

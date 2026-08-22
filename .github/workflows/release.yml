@@ -1,0 +1,120 @@
+name: release
+
+# Tagged, and the tag is the version.
+#
+# One source for it: the tag is written into `tauri.conf.json` before the build,
+# so the number in the bundle, the number in `latest.json` and the number
+# somebody typed cannot disagree. Nothing in the repository carries a version
+# that has to be remembered and bumped.
+on:
+  push:
+    tags: ["v*"]
+  # For rehearsing the whole thing without publishing anything.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the leading v"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            sidecar: runtime-daemon-aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            sidecar: runtime-daemon-x86_64-pc-windows-msvc.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: The version everything is built as
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.version }}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          node -e "
+            const fs = require('fs');
+            const path = 'apps/desktop/src-tauri/tauri.conf.json';
+            const conf = JSON.parse(fs.readFileSync(path, 'utf8'));
+            conf.version = process.env.VERSION ?? '$version';
+            fs.writeFileSync(path, JSON.stringify(conf, null, 2) + '\n');
+          "
+        env:
+          VERSION: ""
+
+      # The three binaries ship together, so they are built together. The app
+      # carries the daemon as a sidecar and the CLI beside it; an update that
+      # moved one without the others is how a CLI ends up speaking a protocol
+      # its daemon has stopped accepting.
+      - name: Build the binaries the app carries
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p runtime-daemon -p runtime-cli
+          mkdir -p apps/desktop/src-tauri/binaries
+          ext=""
+          [ "${{ matrix.os }}" = "windows-latest" ] && ext=".exe"
+          cp "target/${{ matrix.target }}/release/runtime-daemon$ext" \
+             "apps/desktop/src-tauri/binaries/runtime-daemon-${{ matrix.target }}$ext"
+          cp "target/${{ matrix.target }}/release/runtime$ext" \
+             "apps/desktop/src-tauri/binaries/runtime-${{ matrix.target }}$ext"
+
+      - name: Build the MCP server the app carries
+        run: pnpm --dir packages/runtime-mcp install --frozen-lockfile=false && pnpm --dir packages/runtime-mcp build
+
+      - name: Frontend dependencies
+        run: pnpm --dir apps/desktop install --frozen-lockfile=false
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Not code signing — this is the updater's own signature, which is
+          # what lets an installed copy tell a real update from anything else
+          # that answers the endpoint.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: v__VERSION__
+          releaseName: Local Runtime v__VERSION__
+          releaseBody: |
+            Unsigned, so the first launch needs a word from you.
+
+            **macOS** — the app is not notarised, so Gatekeeper will say it is
+            damaged. It is not; that is what an unsigned app looks like:
+
+                xattr -cr "/Applications/Local Runtime.app"
+
+            **Windows** — SmartScreen will warn about an unrecognised
+            publisher. More info, then Run anyway.
+
+            Updates after this one are verified against the key this release
+            was signed with, and arrive in the app.
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: false
+          args: --target ${{ matrix.target }}

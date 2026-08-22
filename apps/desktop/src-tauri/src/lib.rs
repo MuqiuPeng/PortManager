@@ -10,6 +10,7 @@
 
 mod commands;
 mod daemon;
+mod install;
 mod panel;
 
 use std::sync::Arc;
@@ -36,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DaemonHandle::new())
         .manage(Arc::new(PanelController::new()))
         .setup(|app| {
@@ -44,6 +46,11 @@ pub fn run() {
             // The policy follows the main window rather than being fixed, so
             // the window behaves the same however it was opened.
             sync_activation_policy(&handle);
+
+            // The CLI and the MCP server live outside the bundle but come
+            // from inside it, so this runs on every launch and does nothing
+            // when the shims already name this version.
+            install::ensure_shims(&handle);
 
             build_tray(&handle)?;
             keep_main_window_alive(&handle);

@@ -7,3 +7,8 @@ dist/
 .runtime-local/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/binaries/
+
+# The updater's signing key. The public half lives in tauri.conf.json; the
+# private half belongs in a CI secret and nowhere in here.
+*.key
+!**/*.key.pub

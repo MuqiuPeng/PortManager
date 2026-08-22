@@ -42,7 +42,27 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/runtime-daemon"]
+    "icon": [
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/runtime-daemon",
+      "binaries/runtime"
+    ],
+    "resources": {
+      "../../../packages/runtime-mcp/dist": "mcp/"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MuqiuPeng/PortManager/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0MjRENzBBQkYzMDY2MjMKUldRalpqQy9DdGNrbE5QNjZZclFYbWErQTNSUnVFcUtKZ09IOHlZS2ZWKzdoU0JOZCthclJVdkQK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
