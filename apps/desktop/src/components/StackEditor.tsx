@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { ServiceView, StackView } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   /** Everything in the project that could be a member. */
@@ -116,24 +117,24 @@ export function StackEditor({ services, existing, editing, onCancel, onConfirm }
                     />
                     <span className="step-order">{index + 1}</span>
                     <span className="step-name">{step}</span>
-                    <button
+                    <Button
                       type="button"
-                      className="ghost tiny"
+                      variant="ghost" size="icon" className="size-6"
                       title="Start earlier"
                       disabled={index === 0}
                       onClick={() => move(index, -1)}
                     >
                       ↑
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="ghost tiny"
+                      variant="ghost" size="icon" className="size-6"
                       title="Start later"
                       disabled={index === chosen.length - 1}
                       onClick={() => move(index, 1)}
                     >
                       ↓
-                    </button>
+                    </Button>
                     {/* What it waits for. Stored on the service, so it holds
                         wherever else the service is used — and the diagram is
                         read from the same place rather than kept alongside. */}
@@ -193,16 +194,16 @@ export function StackEditor({ services, existing, editing, onCancel, onConfirm }
 
         <footer className="sheet-foot">
           <span className="spacer" />
-          <button className="ghost" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            className="ghost primary"
+          </Button>
+          <Button
+            variant="default" size="sm"
             disabled={!ready}
             onClick={() => ready && onConfirm(name.trim(), chosen, after)}
           >
             {editing ? "Save" : "Create"}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

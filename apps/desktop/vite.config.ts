@@ -1,10 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwind from "@tailwindcss/vite";
+import { fileURLToPath, URL } from "node:url";
 
 // Tauri serves the app from a fixed port and needs a predictable failure when
 // that port is taken — the runtime this app manages must not silently move it.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwind()],
+  // `@/` is what shadcn's components import themselves by.
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   clearScreen: false,
   server: {
     port: 1420,

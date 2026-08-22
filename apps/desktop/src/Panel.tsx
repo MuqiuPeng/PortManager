@@ -10,6 +10,7 @@ import {
   rowAction,
   type StackView,
 } from "./types";
+import { Button } from "@/components/ui/button";
 
 /**
  * The edge panel, in both of its sizes.
@@ -246,40 +247,40 @@ export default function Panel() {
 
         <div className="panel-row-actions">
           {failed && (
-            <button
-              className="icon-button"
+            <Button
+              variant="ghost" size="icon"
               title={copied === id ? "Copied" : "Copy why this failed"}
               onClick={() => void copyFailure(failed)}
             >
               {copied === id ? "✓" : "⧉"}
-            </button>
+            </Button>
           )}
           {live && service.url && (
-            <button
-              className="icon-button"
+            <Button
+              variant="ghost" size="icon"
               title={`Open ${service.url}`}
               onClick={() => act(id, () => openExternal(service.url as string))}
             >
               ↗
-            </button>
+            </Button>
           )}
           {rowAction(live, grouped) === "stack" ? (
-            <button
-              className="icon-button"
+            <Button
+              variant="ghost" size="icon"
               title="Put it in a stack to start it from here"
               onClick={() => void api.openMainWindow()}
             >
               ⊕
-            </button>
+            </Button>
           ) : (
-            <button
-              className="icon-button"
+            <Button
+              variant="ghost" size="icon"
               disabled={busy === id}
               title={live ? "Stop" : "Start"}
               onClick={() => act(id, () => (live ? api.stopService(id) : api.startService(id)))}
             >
               {live ? "■" : "▶"}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -352,16 +353,16 @@ export default function Panel() {
 
                     <div className="panel-row-actions">
                       {broken && (
-                        <button
-                          className="icon-button"
+                        <Button
+                          variant="ghost" size="icon"
                           title={copied === broken.service_id ? "Copied" : "Copy why this failed"}
                           onClick={() => void copyFailure(broken)}
                         >
                           {copied === broken.service_id ? "✓" : "⧉"}
-                        </button>
+                        </Button>
                       )}
-                      <button
-                        className="icon-button"
+                      <Button
+                        variant="ghost" size="icon"
                         disabled={busy === key}
                         title={someUp ? "Stop the stack" : "Start the stack"}
                         onClick={() =>
@@ -373,7 +374,7 @@ export default function Panel() {
                         }
                       >
                         {someUp ? "■" : "▶"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
@@ -403,9 +404,9 @@ export default function Panel() {
       </div>
 
       <footer className="panel-foot">
-        <button className="link" onClick={() => void api.openMainWindow()}>
+        <Button variant="link" size="sm" onClick={() => void api.openMainWindow()}>
           Open main window
-        </button>
+        </Button>
       </footer>
     </div>
   );

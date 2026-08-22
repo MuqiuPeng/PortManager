@@ -323,28 +323,9 @@ button {
   gap: 4px;
 }
 
-.ghost {
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
 .ghost:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--text-dim);
-}
-
-.ghost:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.ghost.primary {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .ghost.danger:hover:not(:disabled) {
@@ -732,27 +713,9 @@ button {
   opacity: 1;
 }
 
-.icon-button {
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 11px;
-}
-
 .icon-button:hover:not(:disabled) {
   background: var(--border);
   color: var(--text);
-}
-
-.icon-button.active {
-  color: var(--accent);
 }
 
 .icon-button:disabled {
@@ -764,15 +727,6 @@ button {
   padding: 7px 10px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-}
-
-.link {
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 0;
 }
 
 .link:hover {
@@ -1141,16 +1095,6 @@ button {
   color: var(--muted);
 }
 
-.toast-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 2px;
-}
-
 .toast-close:hover {
   color: var(--text);
 }
@@ -1307,12 +1251,6 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-button.ghost.tiny {
-  padding: 0 6px;
-  font-size: 11px;
-  line-height: 1.6;
 }
 
 .hint.problem {
@@ -1586,11 +1524,6 @@ button.chip:disabled {
 .stack-pick-actions {
   display: flex;
   gap: 2px;
-}
-
-.stack-pick-actions .ghost {
-  padding: 1px 6px;
-  font-size: 11px;
 }
 
 .loose-pick .stack-pick-name {

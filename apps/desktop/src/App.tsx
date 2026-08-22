@@ -29,6 +29,7 @@ import type {
   StackView,
 } from "./types";
 import { affectsFailures, mergeLogs, servicesFor } from "./types";
+import { Button } from "@/components/ui/button";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -608,17 +609,17 @@ export default function App() {
                         {!workspace.worktree && (
                           /* On the primary checkout only: a worktree is added
                              to the repository, not to a branch of it. */
-                          <button
-                            className="ghost"
+                          <Button
+                            variant="outline" size="sm"
                             disabled={busy}
                             onClick={() => setPrompt("add-worktree")}
                             title="Serve another branch of this repository at the same time"
                           >
                             + Worktree
-                          </button>
+                          </Button>
                         )}
-                        <button
-                          className="ghost"
+                        <Button
+                          variant="outline" size="sm"
                           disabled={busy}
                           onClick={() => {
                             setPromptProject(project.name);
@@ -626,7 +627,7 @@ export default function App() {
                           }}
                         >
                           + Service
-                        </button>
+                        </Button>
                       </header>
 
                       {/* Stacks on the left, services on the right. A stack

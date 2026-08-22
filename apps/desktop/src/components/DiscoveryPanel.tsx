@@ -1,4 +1,5 @@
 import type { Discovery } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   discoveries: Discovery[];
@@ -43,16 +44,16 @@ export function DiscoveryPanel({
           </p>
         </div>
         <div className="discovery-actions">
-          <button className="ghost" onClick={onRescan} disabled={scanning || busy}>
+          <Button variant="outline" size="sm" onClick={onRescan} disabled={scanning || busy}>
             Rescan
-          </button>
-          <button className="ghost" onClick={onAddByPath} disabled={busy}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={onAddByPath} disabled={busy}>
             Scan a folder…
-          </button>
+          </Button>
           {unregistered.length > 0 && (
-            <button className="ghost primary" onClick={onAddAll} disabled={busy}>
+            <Button variant="default" size="sm" onClick={onAddAll} disabled={busy}>
               Add all
-            </button>
+            </Button>
           )}
         </div>
       </header>
@@ -83,9 +84,9 @@ export function DiscoveryPanel({
             {item.registered ? (
               <span className="discovery-added">added</span>
             ) : (
-              <button className="ghost primary" onClick={() => onAdd(item)} disabled={busy}>
+              <Button variant="default" size="sm" onClick={() => onAdd(item)} disabled={busy}>
                 Add
-              </button>
+              </Button>
             )}
           </div>
         ))}

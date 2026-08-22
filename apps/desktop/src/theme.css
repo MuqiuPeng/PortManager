@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/*
+ * The look, in one place.
+ *
+ * shadcn's component set is written against a fixed set of semantic names —
+ * `background`, `card`, `muted`, `border`, `ring` and so on — so adopting it
+ * means saying what those are here. They are this app's existing colours, not
+ * shadcn's defaults: the palette was never the problem. What was inconsistent
+ * was everything around it, every panel picking its own border, radius, focus
+ * ring and control height as it was written.
+ *
+ * The runtime's own states — live, warning, danger — are kept as their own
+ * names rather than folded into `primary`/`destructive`. A service being
+ * healthy is not an accent colour, and a service having failed is not a
+ * destructive action; they mean different things and change independently.
+ */
+
+/* Follows the system, as this window always has. shadcn's own setup keys dark
+   mode off a `.dark` class for apps with a theme switch; this one has no such
+   switch and should not grow one just to satisfy a convention. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+:root {
+  --radius: 0.5rem;
+
+  --background: #f6f7f9;
+  --foreground: #1c1f26;
+  --card: #ffffff;
+  --card-foreground: #1c1f26;
+  --popover: #ffffff;
+  --popover-foreground: #1c1f26;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f4;
+  --secondary-foreground: #1c1f26;
+  --muted: #eef0f4;
+  --muted-foreground: #6b7280;
+  --accent: #eef0f4;
+  --accent-foreground: #1c1f26;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #dcdfe6;
+  --input: #dcdfe6;
+  --ring: #2563eb;
+
+  /* What a service is doing, which is not a UI intent. */
+  --live: #10b981;
+  --warn: #f59e0b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+  --background: #14161b;
+  --foreground: #e6e8ec;
+  --card: #1b1e25;
+  --card-foreground: #e6e8ec;
+  --popover: #1b1e25;
+  --popover-foreground: #e6e8ec;
+  --primary: #60a5fa;
+  --primary-foreground: #14161b;
+  --secondary: #23272f;
+  --secondary-foreground: #e6e8ec;
+  --muted: #23272f;
+  --muted-foreground: #8b929f;
+  --accent: #23272f;
+  --accent-foreground: #e6e8ec;
+  --destructive: #f87171;
+  --destructive-foreground: #14161b;
+  --border: #2e333d;
+  --input: #2e333d;
+  --ring: #60a5fa;
+
+  --live: #6ee7b7;
+  --warn: #fbbf24;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-live: var(--live);
+  --color-warn: var(--warn);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    margin: 0;
+  }
+
+  /* One focus ring for everything that takes focus, rather than each control
+     inventing its own — this is most of what made the window look assembled
+     from parts. */
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+}

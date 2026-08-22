@@ -1,4 +1,5 @@
 import type { StackView } from "../types";
+import { Button } from "@/components/ui/button";
 
 /** The selection that means "the ones no stack names". */
 export const LOOSE = " loose";
@@ -94,30 +95,30 @@ export function StackList({
             {chosen && (
             <div className="stack-pick-actions">
               {someUp ? (
-                <button className="ghost danger" disabled={busy} onClick={() => onStop(stack.name)}>
+                <Button variant="destructive" size="sm" disabled={busy} onClick={() => onStop(stack.name)}>
                   Stop
-                </button>
+                </Button>
               ) : (
-                <button className="ghost primary" disabled={busy} onClick={() => onRun(stack.name)}>
+                <Button variant="default" size="sm" disabled={busy} onClick={() => onRun(stack.name)}>
                   Start
-                </button>
+                </Button>
               )}
-              <button
-                className="ghost"
+              <Button
+                variant="outline" size="sm"
                 disabled={busy}
                 onClick={() => onEdit(stack.name)}
                 title="Change what is in this stack"
               >
                 Edit
-              </button>
-              <button
-                className="ghost"
+              </Button>
+              <Button
+                variant="outline" size="sm"
                 disabled={busy}
                 onClick={() => onRemove(stack.name)}
                 title="Delete this stack"
               >
                 &minus;
-              </button>
+              </Button>
             </div>
             )}
           </div>
@@ -135,9 +136,9 @@ export function StackList({
         </button>
       )}
 
-      <button className="ghost stack-new" disabled={busy} onClick={onNew}>
+      <Button variant="ghost" size="sm" className="justify-start" disabled={busy} onClick={onNew}>
         + Stack
-      </button>
+      </Button>
     </nav>
   );
 }

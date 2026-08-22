@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 interface Props {
   port: number;
   /** Another supervisor already keeping this alive. */
@@ -61,9 +62,9 @@ export function TakeControlSheet({
 
         <div className="sheet-foot">
           <span className="spacer" />
-          <button className="ghost" onClick={onCancel} disabled={busy}>
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>
             Cancel
-          </button>
+          </Button>
           <button
             className={supervisor ? "ghost" : "ghost primary"}
             onClick={() => onConfirm(Boolean(supervisor))}

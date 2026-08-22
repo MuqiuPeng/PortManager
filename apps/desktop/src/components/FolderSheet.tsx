@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { FolderField } from "./FolderField";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   title: string;
@@ -36,12 +37,12 @@ export function FolderSheet({
         </div>
         <footer className="sheet-foot">
           <span className="spacer" />
-          <button className="ghost" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
-          </button>
-          <button className="ghost primary" disabled={!path} onClick={() => onConfirm(path)}>
+          </Button>
+          <Button variant="default" size="sm" disabled={!path} onClick={() => onConfirm(path)}>
             {confirmLabel}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

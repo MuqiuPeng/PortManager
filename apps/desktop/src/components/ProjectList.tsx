@@ -1,4 +1,5 @@
 import type { ProjectView } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   projects: ProjectView[];
@@ -13,9 +14,9 @@ export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Pro
     <nav className="sidebar">
       <div className="sidebar-head">
         <span className="sidebar-title">Projects</span>
-        <button className="ghost" onClick={onAdd} disabled={busy} title="Find projects">
+        <Button variant="outline" size="sm" onClick={onAdd} disabled={busy} title="Find projects">
           +
-        </button>
+        </Button>
       </div>
 
       {projects.length === 0 ? (

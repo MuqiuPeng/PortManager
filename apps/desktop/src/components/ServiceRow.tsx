@@ -1,4 +1,5 @@
 import { isLive, rowAction, type ServiceView, type StartedBy } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   service: ServiceView;
@@ -110,82 +111,82 @@ export function ServiceRow({
 
       <span className="service-actions" onClick={(event) => event.stopPropagation()}>
         {/* Detection guesses; this is where the guess gets corrected. */}
-        <button className="ghost" onClick={onEdit} title="Edit how this starts">
+        <Button variant="outline" size="sm" onClick={onEdit} title="Edit how this starts">
           Edit
-        </button>
+        </Button>
         {service.url && live && (
-          <button className="ghost" onClick={onOpen} title={service.url}>
+          <Button variant="outline" size="sm" onClick={onOpen} title={service.url}>
             Open
-          </button>
+          </Button>
         )}
         {oneShot ? (
           /* No Stop: there is nothing to stop, and a migration that finished
              is not a service that is down. */
-          <button
-            className="ghost primary"
+          <Button
+            variant="default" size="sm"
             onClick={onStart}
             disabled={busy}
             title="Run it once, now"
           >
             Run
-          </button>
+          </Button>
         ) : viaSupervisor ? (
           /* Not the runtime's process, but the supervisor holding it takes
              orders — so these do what the buttons say. */
           <>
-            <button
-              className="ghost"
+            <Button
+              variant="outline" size="sm"
               onClick={() => onSupervisedControl("restart")}
               disabled={busy}
               title={`Restart via ${service.supervisor}`}
             >
               Restart
-            </button>
-            <button
-              className="ghost danger"
+            </Button>
+            <Button
+              variant="destructive" size="sm"
               onClick={() => onSupervisedControl("stop")}
               disabled={busy}
               title={`Stop via ${service.supervisor}`}
             >
               Stop
-            </button>
+            </Button>
           </>
         ) : external ? (
           /* Nobody to ask, so the way out is to declare it — with the command
              read off the running process, never guessed from the scripts. */
-          <button
-            className="ghost"
+          <Button
+            variant="outline" size="sm"
             onClick={onTakeControl}
             disabled={busy}
             title="Declare this so the runtime can start it again"
           >
             Take control
-          </button>
+          </Button>
         ) : live ? (
           <>
-            <button className="ghost" onClick={onRestart} disabled={busy}>
+            <Button variant="outline" size="sm" onClick={onRestart} disabled={busy}>
               Restart
-            </button>
-            <button className="ghost danger" onClick={onStop} disabled={busy}>
+            </Button>
+            <Button variant="destructive" size="sm" onClick={onStop} disabled={busy}>
               Stop
-            </button>
+            </Button>
           </>
         ) : (
           rowAction(false, inAStack) === "start" ? (
-            <button className="ghost primary" onClick={onStart} disabled={busy}>
+            <Button variant="default" size="sm" onClick={onStart} disabled={busy}>
               Start
-            </button>
+            </Button>
           ) : (
             // The daemon refuses this one; saying so before the click beats an
             // error after it, and the useful next move is the one offered.
-            <button
-              className="ghost"
+            <Button
+              variant="outline" size="sm"
               onClick={onAddToStack}
               disabled={busy}
               title="A service in no stack has nothing recorded about what belongs beside it"
             >
               Add to a stack
-            </button>
+            </Button>
           )
         )}
       </span>

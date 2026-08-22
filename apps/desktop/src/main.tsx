@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import Panel from "./Panel";
+import "./theme.css";
 import "./styles.css";
 
 // The panel is the same bundle at `index.html#panel`, so both windows share the

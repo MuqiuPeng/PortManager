@@ -1,5 +1,6 @@
 import { openExternal } from "../api";
 import type { ContainerView } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   container: ContainerView;
@@ -37,27 +38,27 @@ export function ContainerRow({ container, busy, onControl }: Props) {
 
       <span className="service-actions" onClick={(event) => event.stopPropagation()}>
         {running && container.url && (
-          <button
-            className="ghost"
+          <Button
+            variant="outline" size="sm"
             title={container.url}
             onClick={() => void openExternal(container.url as string)}
           >
             Open
-          </button>
+          </Button>
         )}
         {running ? (
           <>
-            <button className="ghost" disabled={busy} onClick={() => onControl("restart")}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => onControl("restart")}>
               Restart
-            </button>
-            <button className="ghost danger" disabled={busy} onClick={() => onControl("stop")}>
+            </Button>
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => onControl("stop")}>
               Stop
-            </button>
+            </Button>
           </>
         ) : (
-          <button className="ghost primary" disabled={busy} onClick={() => onControl("start")}>
+          <Button variant="default" size="sm" disabled={busy} onClick={() => onControl("start")}>
             Start
-          </button>
+          </Button>
         )}
       </span>
     </div>

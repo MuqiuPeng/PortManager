@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export interface PromptField {
   label: string;
@@ -86,12 +87,12 @@ export function PromptSheet({
 
         <footer className="sheet-foot">
           <span className="spacer" />
-          <button className="ghost" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
-          </button>
-          <button className="ghost primary" onClick={submit} disabled={!ready}>
+          </Button>
+          <Button variant="default" size="sm" onClick={submit} disabled={!ready}>
             {confirmLabel}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

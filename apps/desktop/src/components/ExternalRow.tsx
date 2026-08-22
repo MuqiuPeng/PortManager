@@ -1,5 +1,6 @@
 import { openExternal } from "../api";
 import type { ExternalService } from "../types";
+import { Button } from "@/components/ui/button";
 
 /**
  * A live port in this checkout that no declared service explains.
@@ -35,22 +36,22 @@ export function ExternalRow({ external, busy, onTakeControl }: Props) {
       <span className="service-port">:{external.port}</span>
 
       <span className="service-actions">
-        <button
-          className="ghost"
+        <Button
+          variant="outline" size="sm"
           onClick={onTakeControl}
           disabled={busy}
           title="Declare this so the runtime can start it again"
         >
           Take control
-        </button>
+        </Button>
         {external.url && (
-          <button
-            className="ghost"
+          <Button
+            variant="outline" size="sm"
             title={external.url}
             onClick={() => void openExternal(external.url as string)}
           >
             Open
-          </button>
+          </Button>
         )}
       </span>
     </div>

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { copyText } from "../api";
 import type { Failure, Finding } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   /** What the last action said when it would not do what was asked. */
@@ -53,14 +54,14 @@ export function FailureToasts({
         <div className="toast" role="alert">
           <div className="toast-head">
             <span className="toast-title">That did not work</span>
-            <button
-              className="toast-close"
+            <Button
+              variant="ghost" size="icon" className="size-6"
               onClick={onDismissError}
               title="Dismiss"
               aria-label="Dismiss"
             >
               ×
-            </button>
+            </Button>
           </div>
           <p className="toast-detail">{error}</p>
         </div>
@@ -113,9 +114,9 @@ function FindingsToast({
           {findings.length === 1 ? "1 problem" : `${findings.length} problems`} in what is
           declared
         </span>
-        <button className="toast-close" onClick={onDismiss} title="Dismiss" aria-label="Dismiss">
+        <Button variant="ghost" size="icon" className="size-6" onClick={onDismiss} title="Dismiss" aria-label="Dismiss">
           ×
-        </button>
+        </Button>
       </div>
 
       <ul className="toast-findings">
@@ -131,8 +132,8 @@ function FindingsToast({
       </ul>
 
       <div className="toast-actions">
-        <button
-          className="ghost"
+        <Button
+          variant="outline" size="sm"
           onClick={() => {
             void copyText(asText())
               .then(() => {
@@ -143,7 +144,7 @@ function FindingsToast({
           }}
         >
           {copied ? "Copied" : "Copy"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -186,9 +187,9 @@ function FailureToast({
           {failure.status}
           {failure.exit_code !== undefined && ` · exit ${failure.exit_code}`}
         </span>
-        <button className="toast-close" onClick={onDismiss} title="Dismiss" aria-label="Dismiss">
+        <Button variant="ghost" size="icon" className="size-6" onClick={onDismiss} title="Dismiss" aria-label="Dismiss">
           ×
-        </button>
+        </Button>
       </div>
 
       {detail.length > 0 ? (
@@ -200,12 +201,12 @@ function FailureToast({
       )}
 
       <div className="toast-actions">
-        <button className="ghost" onClick={onOpenLogs}>
+        <Button variant="outline" size="sm" onClick={onOpenLogs}>
           Logs
-        </button>
-        <button className="ghost" onClick={() => void copy()} disabled={detail.length === 0}>
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => void copy()} disabled={detail.length === 0}>
           {copied ? "Copied" : "Copy"}
-        </button>
+        </Button>
       </div>
     </div>
   );

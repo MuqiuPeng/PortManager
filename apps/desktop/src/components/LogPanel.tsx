@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { copyText } from "../api";
 import type { LogLine } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   serviceName: string | null;
@@ -51,14 +52,14 @@ export function LogPanel({ serviceName, lines }: Props) {
             somewhere. Selecting it out of a scrolling box by hand is the tax
             this removes; the text stays selectable for anyone who wants one
             line rather than all of them. */}
-        <button
-          className="ghost"
+        <Button
+          variant="outline" size="sm"
           disabled={lines.length === 0}
           onClick={() => void copyAll()}
           title="Copy this output"
         >
           {copied ? "Copied" : "Copy"}
-        </button>
+        </Button>
       </header>
 
       <div className="logs-body" ref={scroller} onScroll={handleScroll}>

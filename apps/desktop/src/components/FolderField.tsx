@@ -1,4 +1,5 @@
 import { chooseFolder } from "../api";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   label: string;
@@ -25,9 +26,9 @@ export function FolderField({ label, value, onChange, startingAt, hint }: Props)
         <output className={value ? "folder-path" : "folder-path empty"} title={value}>
           {value || "No folder chosen"}
         </output>
-        <button
+        <Button
           type="button"
-          className="ghost"
+          variant="outline" size="sm"
           onClick={() => {
             void chooseFolder(value || startingAt).then((picked) => {
               if (picked) onChange(picked);
@@ -35,7 +36,7 @@ export function FolderField({ label, value, onChange, startingAt, hint }: Props)
           }}
         >
           Choose…
-        </button>
+        </Button>
       </div>
       {hint && <p className="hint">{hint}</p>}
     </label>

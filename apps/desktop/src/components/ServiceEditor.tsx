@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { FolderField } from "./FolderField";
 import type { ServicePatch, ServiceType, ServiceView } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   service: ServiceView;
@@ -111,9 +112,9 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
       <div className="sheet" onClick={(event) => event.stopPropagation()}>
         <header className="sheet-head">
           <h2>{service.name}</h2>
-          <button className="ghost" onClick={onClose}>
+          <Button variant="outline" size="sm" onClick={onClose}>
             Close
-          </button>
+          </Button>
         </header>
 
         {error && <div className="banner inline">{error}</div>}
@@ -222,21 +223,21 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
                       )
                     }
                   />
-                  <button
-                    className="icon-button"
+                  <Button
+                    variant="ghost" size="icon"
                     title="Remove"
                     onClick={() => setEnv(env.filter((_, i) => i !== index))}
                   >
                     ×
-                  </button>
+                  </Button>
                 </div>
               ))}
-              <button
-                className="ghost"
+              <Button
+                variant="outline" size="sm"
                 onClick={() => setEnv([...env, { key: "", value: "" }])}
               >
                 Add variable
-              </button>
+              </Button>
               <p className="hint inline-hint">
                 These override any <code>.env</code> file the project has.
               </p>
@@ -245,19 +246,19 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
         </div>
 
         <footer className="sheet-foot">
-          <button className="ghost danger" onClick={() => void remove()} disabled={busy}>
+          <Button variant="destructive" size="sm" onClick={() => void remove()} disabled={busy}>
             {confirmingRemove ? "Really remove?" : "Remove service"}
-          </button>
+          </Button>
           {confirmingRemove && (
             <span className="unit">nothing running is stopped</span>
           )}
           <span className="spacer" />
-          <button className="ghost" onClick={onClose} disabled={busy}>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="ghost primary" onClick={() => void save()} disabled={busy}>
+          </Button>
+          <Button variant="default" size="sm" onClick={() => void save()} disabled={busy}>
             Save
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

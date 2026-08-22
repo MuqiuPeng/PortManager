@@ -1,4 +1,5 @@
 import type { SupervisedView } from "../types";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   entry: SupervisedView;
@@ -49,36 +50,36 @@ export function SupervisedRow({ entry, busy, onControl, onOpen }: Props) {
 
       <span className="service-actions" onClick={(event) => event.stopPropagation()}>
         {entry.url && live && (
-          <button className="ghost" onClick={onOpen} title={entry.url}>
+          <Button variant="outline" size="sm" onClick={onOpen} title={entry.url}>
             Open
-          </button>
+          </Button>
         )}
         {live ? (
           <>
-            <button
-              className="ghost"
+            <Button
+              variant="outline" size="sm"
               onClick={() => onControl("restart")}
               disabled={busy}
               title={entry.restart_warning ?? undefined}
             >
               Restart
-            </button>
-            <button
-              className="ghost danger"
+            </Button>
+            <Button
+              variant="destructive" size="sm"
               onClick={() => onControl("stop")}
               disabled={busy}
             >
               Stop
-            </button>
+            </Button>
           </>
         ) : (
-          <button
-            className="ghost primary"
+          <Button
+            variant="default" size="sm"
             onClick={() => onControl("start")}
             disabled={busy}
           >
             Start
-          </button>
+          </Button>
         )}
       </span>
     </div>
