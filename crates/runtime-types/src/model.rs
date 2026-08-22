@@ -69,6 +69,14 @@ pub struct Service {
     pub preferred_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_check: Option<HealthCheck>,
+    /// Nothing acts on this.
+    ///
+    /// It is stored, it round-trips, the editor offers it — and no code path
+    /// reads it to start anything, on daemon start or anywhere else. Left in
+    /// place rather than removed because a stack is how something is brought
+    /// up now, and "start this with the machine" is a question about a stack
+    /// rather than about one service. Said here so that the next person to
+    /// find it does not spend an afternoon looking for what consumes it.
     #[serde(default)]
     pub auto_start: bool,
     #[serde(default)]

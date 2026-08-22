@@ -148,6 +148,43 @@ function registerTools(
   );
 
   server.registerTool(
+    "add_project",
+    {
+      title: "Register a project",
+      description:
+        "Register a directory as a project, detecting the services in it. Detection runs once, when it is first added: adding it again will not undo a command somebody corrected or bring back a service they removed. A directory that is a second clone of a repository already registered becomes a checkout of it rather than a second project.",
+      inputSchema: {
+        path: z.string().describe("Absolute path to the project directory."),
+        name: z.string().optional().describe("What to call it. Detected when unsaid."),
+      },
+    },
+    async ({ path, name }) =>
+      run("add_project", { path, name: name ?? null }, (body) =>
+        body.type === "project" ? formatProjectRuntime(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "remove_project",
+    {
+      title: "Forget a project",
+      description:
+        "Stop tracking a project, its checkouts and everything declared in them. No directory is touched and nothing running is stopped — this is the runtime forgetting, not a deletion. Use it when a project's root directory has moved or gone, since the registration is what still points at the old one.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+      },
+    },
+    async ({ project }) =>
+      run("remove_project", { selector: project }, (body) =>
+        body.type === "done"
+          ? body.ok
+            ? `${project} is no longer tracked`
+            : `${project} was not tracked`
+          : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
     "get_project_runtime",
     {
       title: "Get project runtime",

@@ -82,9 +82,15 @@ impl Dispatcher {
 
             Request::ListWorktrees { selector } => {
                 let project = runtime.resolve_project(&selector)?;
-                // Refresh first: a worktree created since the last call should
-                // appear without the user having to register it by hand.
-                runtime.sync_worktrees(&project.id)?;
+                // Listing does not register. It used to sync first, so that a
+                // worktree made since the last call appeared without being
+                // added by hand — but registering a checkout copies the root's
+                // services into it, so asking what the checkouts were changed
+                // what they contained. A checkout somebody had deliberately
+                // emptied filled up again the next time anything listed them,
+                // including the window, which lists them to draw itself.
+                //
+                // `worktree add` registers. This says what is registered.
                 Ok(ResponseBody::Workspaces {
                     items: runtime.store().list_workspaces(&project.id)?,
                 })
@@ -151,13 +157,7 @@ impl Dispatcher {
                 name,
                 config,
             } => {
-                let project = runtime.resolve_project(&selector)?;
-                let workspace = runtime
-                    .store()
-                    .list_workspaces(&project.id)?
-                    .into_iter()
-                    .find(|workspace| !workspace.worktree)
-                    .ok_or_else(|| RuntimeError::not_found("workspace", selector.as_str()))?;
+                let workspace = self.workspace_to_run_in(&selector)?;
 
                 let cwd = match config.cwd {
                     Some(cwd) if cwd.is_absolute() => cwd,
@@ -226,16 +226,16 @@ impl Dispatcher {
             }
 
             Request::ListStacks { selector } => {
-                let workspace = self.primary_workspace(&selector)?;
+                let workspace = self.workspace_to_run_in(&selector)?;
                 Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
             Request::SetStack { selector, name, members } => {
-                let workspace = self.primary_workspace(&selector)?;
+                let workspace = self.workspace_to_run_in(&selector)?;
                 runtime.set_stack(&workspace.id, &name, members)?;
                 Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
             Request::RemoveStack { selector, name } => {
-                let workspace = self.primary_workspace(&selector)?;
+                let workspace = self.workspace_to_run_in(&selector)?;
                 Ok(ResponseBody::Done { ok: runtime.remove_stack(&workspace.id, &name)? })
             }
             Request::StopStack { selector, name } => {
@@ -493,24 +493,18 @@ impl Dispatcher {
     /// have in the project, and every worktree has the same set under different
     /// ports. Declaring one per worktree would multiply the same stack by the
     /// number of branches somebody happens to have checked out.
-    fn primary_workspace(&self, selector: &str) -> Result<runtime_types::Workspace> {
-        let project = self.runtime.resolve_project(selector)?;
-        self.runtime
-            .store()
-            .list_workspaces(&project.id)?
-            .into_iter()
-            .find(|workspace| !workspace.worktree)
-            .ok_or_else(|| {
-                RuntimeError::invalid(format!("'{}' has no main checkout", project.name))
-            })
-    }
-
-    /// The checkout a stack should *run* in.
+    /// The checkout a selector is about.
     ///
-    /// Declared once for the project, run wherever the caller is standing —
-    /// which for a worktree is the whole point: two branches served at once,
-    /// each on its own ports, from one definition. A selector that names no
-    /// particular checkout gets the main one.
+    /// A stack is declared once for the project and run wherever the caller is
+    /// standing — which for a worktree is the whole point: two branches served
+    /// at once, each on its own ports, from one definition. A selector naming
+    /// no particular checkout gets the project's root.
+    ///
+    /// Used for declaring a stack as well as running one. They were using
+    /// different resolvers: running honoured a path, declaring ignored it and
+    /// always took the root — so a stack could never name a service that lived
+    /// only in a worktree, and since a service outside every stack cannot be
+    /// started, those services could not be started at all.
     fn workspace_to_run_in(&self, selector: &str) -> Result<runtime_types::Workspace> {
         let project = self.runtime.resolve_project(selector)?;
         let workspaces = self.runtime.store().list_workspaces(&project.id)?;
@@ -525,12 +519,10 @@ impl Dispatcher {
             }
         }
 
-        workspaces
-            .into_iter()
-            .find(|workspace| !workspace.worktree)
-            .ok_or_else(|| {
-                RuntimeError::invalid(format!("'{}' has no main checkout", project.name))
-            })
+        // The project's own root, which is the first checkout registered for
+        // it — not "the one that is not a linked worktree", since a second
+        // clone is not one either and that test can match more than one.
+        self.runtime.root_checkout(&project.id)
     }
 
     fn resolve_service(&self, project: Option<&str>, selector: &str) -> Result<Service> {

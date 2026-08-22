@@ -149,11 +149,19 @@ pub fn discover(
         }
     }
 
-    let registered: Vec<PathBuf> = store
-        .list_projects()?
-        .into_iter()
-        .map(|project| project.root_path)
-        .collect();
+    // Every directory the runtime already knows, not only the ones it knows as
+    // projects. A second clone of a repository is registered as a checkout of
+    // it, so asking whether a directory is a project reported one the runtime
+    // was already managing as unknown — and adopting it registered it as the
+    // checkout it already was, which changed nothing, so it stayed "not
+    // registered" however many times you asked.
+    let mut registered: Vec<PathBuf> = Vec::new();
+    for project in store.list_projects()? {
+        registered.push(project.root_path.clone());
+        for workspace in store.list_workspaces(&project.id)? {
+            registered.push(workspace.path);
+        }
+    }
 
     let mut discoveries: Vec<Discovery> = found.into_values().collect();
     for discovery in &mut discoveries {

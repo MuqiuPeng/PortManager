@@ -442,12 +442,10 @@ impl Runtime {
         project_id: &ProjectId,
         workspace: &Workspace,
     ) -> Result<()> {
-        let primary = self
-            .store
-            .list_workspaces(project_id)?
-            .into_iter()
-            .find(|candidate| !candidate.worktree);
-        let Some(primary) = primary else {
+        // The project's root, which is the first checkout registered for it.
+        // Not "the one that is not a linked worktree": a second clone is not
+        // one either, so that test can match more than one and pick by order.
+        let Ok(primary) = self.root_checkout(project_id) else {
             return Ok(());
         };
         if primary.id == workspace.id {
@@ -727,13 +725,9 @@ impl Runtime {
     /// something the repository carries and a teammate gets for free.
     pub fn export_config(&self, project_id: &ProjectId) -> Result<runtime_types::ProjectConfig> {
         let project = self.require_project(project_id)?;
-        let workspaces = self.store.list_workspaces(project_id)?;
-        // The primary checkout defines the project; worktrees are copies of it.
-        let primary = workspaces
-            .iter()
-            .find(|workspace| !workspace.worktree)
-            .or(workspaces.first())
-            .ok_or_else(|| RuntimeError::not_found("workspace", project_id.as_str()))?;
+        // The root checkout defines the project; the others are copies of it.
+        let primary = self.root_checkout(project_id)?;
+        let primary = &primary;
 
         let mut services = std::collections::BTreeMap::new();
         for service in self.store.list_services(&primary.id)? {
@@ -2599,6 +2593,16 @@ fn command_is_findable(command: &str) -> bool {
 /// service definition produces a service that looks correctly declared and
 /// cannot start — which is worse than declining to guess.
 fn looks_runnable(command: &str) -> bool {
+    // A worker a runtime forked for itself. Its argv is a real command with a
+    // real interpreter in front, so every other test here passes it — and
+    // running it starts a worker waiting on file descriptors that closed with
+    // the parent, which is to say nothing at all. The service is the parent,
+    // and its argv is not this.
+    const FORKED: [&str; 3] = ["--multiprocessing-fork", "spawn_main(", "from multiprocessing"];
+    if FORKED.iter().any(|mark| command.contains(mark)) {
+        return false;
+    }
+
     let Some(first) = command.split_whitespace().next() else {
         return false;
     };
@@ -2725,6 +2729,20 @@ fn normalise_remote(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A worker a runtime forked for itself is not how the service starts.
+    ///
+    /// Its argv has a real interpreter at the front and real arguments after
+    /// it, so every other test for "could this start something" passes it.
+    /// Adopting a multiprocessing service recorded the child's line, and
+    /// starting it would wait on file descriptors that closed with the parent.
+    #[test]
+    fn a_forked_worker_is_not_a_command_that_starts_anything() {
+        let worker = "/usr/bin/python3 -c from multiprocessing.spawn import spawn_main; \
+                      spawn_main(tracker_fd=5, pipe_handle=7) --multiprocessing-fork";
+        assert!(!super::looks_runnable(worker), "a fork worker read as runnable");
+        assert!(super::looks_runnable("/usr/bin/python3 -m http.server 8000"));
+    }
+
     use super::*;
 
     #[test]
