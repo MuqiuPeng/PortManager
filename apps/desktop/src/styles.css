@@ -1058,45 +1058,31 @@ button {
 
 
 /* Not behind a tab: a warning nobody goes looking for does not exist. */
-.findings {
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  margin: 0 0 12px;
-  overflow: hidden;
+/* Problems with what is declared, inside a toast rather than above the list. */
+.toast.warn {
+  border-color: var(--warn);
 }
 
-.findings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-}
-
-.findings-count {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.findings-list {
-  margin: 0;
-  padding: 6px 12px 10px;
+.toast-findings {
   list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
 }
 
-.findings-list li {
+.toast-findings li {
   display: grid;
-  grid-template-columns: 14px auto 1fr;
-  gap: 8px;
+  grid-template-columns: 12px auto 1fr;
+  gap: 6px;
   align-items: baseline;
-  padding: 3px 0;
-  font-size: 12px;
-  line-height: 1.4;
 }
 
 .finding-mark {
-  color: var(--muted);
-  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--text-dim);
 }
 
 .finding-mark.certain {
@@ -1104,17 +1090,14 @@ button {
 }
 
 .finding-subject {
-  font-weight: 500;
-  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .finding-message {
-  color: var(--muted);
+  color: var(--text-dim);
 }
 
-
-/* Over the corner, not in the layout: something failing should not move the
-   row somebody was about to click. */
 .toasts {
   position: fixed;
   right: 16px;

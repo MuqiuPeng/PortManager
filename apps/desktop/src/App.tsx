@@ -5,7 +5,6 @@ import { DiscoveryPanel } from "./components/DiscoveryPanel";
 import { ContainerRow } from "./components/ContainerRow";
 import { ExternalRow } from "./components/ExternalRow";
 import { FailureToasts } from "./components/FailureToasts";
-import { FindingsBanner } from "./components/FindingsBanner";
 import { FolderSheet } from "./components/FolderSheet";
 import { StackEditor } from "./components/StackEditor";
 import { LogPanel } from "./components/LogPanel";
@@ -515,19 +514,14 @@ export default function App() {
         </nav>
       </header>
 
-      {error && (
-        <div className="banner" role="alert">
-          {error}
-          <button className="ghost" onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
       {/* Over the corner rather than in the layout: something failing should
           not move the row somebody was about to click. */}
       <FailureToasts
+        error={error}
+        onDismissError={() => setError(null)}
         failures={failures.filter((failure) => !dismissed.includes(failure.service_id))}
+        findings={findingsHidden ? [] : findings}
+        onDismissFindings={() => setFindingsHidden(true)}
         onDismiss={(serviceId) => setDismissed((seen) => [...seen, serviceId])}
         onOpenLogs={(serviceId) => {
           setTab("services");
@@ -542,10 +536,6 @@ export default function App() {
           if (owner) setSelectedProject(owner.id);
         }}
       />
-
-      {!findingsHidden && tab !== "settings" && (
-        <FindingsBanner findings={findings} onDismiss={() => setFindingsHidden(true)} />
-      )}
 
       {tab === "settings" ? (
         <main className="ports-pane">

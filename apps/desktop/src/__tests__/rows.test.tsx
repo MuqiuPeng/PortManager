@@ -6,7 +6,6 @@ import wire from "../__fixtures__/wire.json";
 import { ContainerRow } from "../components/ContainerRow";
 import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
-import { FindingsBanner } from "../components/FindingsBanner";
 import { FlowChart } from "../components/FlowChart";
 import { partition } from "../Panel";
 import { mergeLogs, rowAction } from "../types";
@@ -94,7 +93,15 @@ describe("a payload with every optional field absent", () => {
     expect("exit_code" in silent).toBe(false);
 
     const html = render(
-      <FailureToasts failures={[silent]} onOpenLogs={noop} onDismiss={noop} />,
+      <FailureToasts
+        error={null}
+        onDismissError={noop}
+        failures={[silent]}
+        findings={[]}
+        onOpenLogs={noop}
+        onDismiss={noop}
+        onDismissFindings={noop}
+      />,
     );
     expect(html).toContain("shop/web");
     expect(html).toContain("It said nothing before it stopped.");
@@ -163,7 +170,15 @@ describe("a payload with everything set", () => {
   it("shows what a failing service said", () => {
     const failure = wire.failure_full as unknown as Failure;
     const html = render(
-      <FailureToasts failures={[failure]} onOpenLogs={noop} onDismiss={noop} />,
+      <FailureToasts
+        error={null}
+        onDismissError={noop}
+        failures={[failure]}
+        findings={[]}
+        onOpenLogs={noop}
+        onDismiss={noop}
+        onDismissFindings={noop}
+      />,
     );
     expect(html).toContain("Loom/api");
     expect(html).toContain("exit 1");
@@ -175,9 +190,37 @@ describe("a payload with everything set", () => {
     const certain = wire.finding as unknown as Finding;
     const maybe: Finding = { ...certain, subject: "other/web", certain: false };
     const html = render(
-      <FindingsBanner findings={[maybe, certain]} onDismiss={noop} />,
+      <FailureToasts
+        error={null}
+        onDismissError={noop}
+        failures={[]}
+        findings={[maybe, certain]}
+        onOpenLogs={noop}
+        onDismiss={noop}
+        onDismissFindings={noop}
+      />,
     );
     expect(html.indexOf("Loom/api")).toBeLessThan(html.indexOf("other/web"));
+  });
+
+  it("shows what is declared wrong over the page, not above it", () => {
+    // A banner in the layout pushes every row down the moment a problem
+    // appears — which is what the toast stack exists to avoid, and there is no
+    // reason the quieter kind of problem should get the louder treatment.
+    const finding = wire.finding as unknown as Finding;
+    const html = render(
+      <FailureToasts
+        error={null}
+        onDismissError={noop}
+        failures={[]}
+        findings={[finding]}
+        onOpenLogs={noop}
+        onDismiss={noop}
+        onDismissFindings={noop}
+      />,
+    );
+    expect(html).toContain('class="toasts"');
+    expect(html).not.toContain('class="findings"');
   });
 });
 

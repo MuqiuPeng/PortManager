@@ -1,13 +1,19 @@
 import { useState } from "react";
 
 import { copyText } from "../api";
-import type { Failure } from "../types";
+import type { Failure, Finding } from "../types";
 
 interface Props {
+  /** What the last action said when it would not do what was asked. */
+  error: string | null;
+  onDismissError: () => void;
   failures: Failure[];
+  /** Problems with what is declared, rather than with a run of it. */
+  findings: Finding[];
   /** Open the service's own log, where the whole of it already is. */
   onOpenLogs: (serviceId: string) => void;
   onDismiss: (serviceId: string) => void;
+  onDismissFindings: () => void;
 }
 
 /**
@@ -27,11 +33,38 @@ interface Props {
  * whoever owns the service. Selecting monospace text out of a scrolling box by
  * hand is the small daily tax this removes.
  */
-export function FailureToasts({ failures, onOpenLogs, onDismiss }: Props) {
-  if (failures.length === 0) return null;
+export function FailureToasts({
+  error,
+  onDismissError,
+  failures,
+  findings,
+  onOpenLogs,
+  onDismiss,
+  onDismissFindings,
+}: Props) {
+  if (!error && failures.length === 0 && findings.length === 0) return null;
 
   return (
-    <div className="toasts" role="region" aria-label="Failures">
+    <div className="toasts" role="region" aria-label="Problems">
+      {error && (
+        // Was a strip across the top, which moved the page at the moment
+        // something had just gone wrong on it. Same place as everything else
+        // that goes wrong now.
+        <div className="toast" role="alert">
+          <div className="toast-head">
+            <span className="toast-title">That did not work</span>
+            <button
+              className="toast-close"
+              onClick={onDismissError}
+              title="Dismiss"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+          <p className="toast-detail">{error}</p>
+        </div>
+      )}
       {failures.map((failure) => (
         <FailureToast
           failure={failure}
@@ -40,6 +73,78 @@ export function FailureToasts({ failures, onOpenLogs, onDismiss }: Props) {
           onDismiss={() => onDismiss(failure.service_id)}
         />
       ))}
+      {findings.length > 0 && (
+        <FindingsToast findings={findings} onDismiss={onDismissFindings} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Problems with what is declared, in the same place as problems with what ran.
+ *
+ * These used to sit in the layout, above the list, which pushed every row down
+ * the moment one appeared — the thing toasts exist to avoid, done to the
+ * quieter kind of problem because it felt less urgent. Two kinds of problem
+ * shown two different ways is one more thing to learn for no benefit.
+ *
+ * One toast for all of them rather than one each: a checkout naming a missing
+ * service is not an event, it is a state, and five states are a list.
+ */
+function FindingsToast({
+  findings,
+  onDismiss,
+}: {
+  findings: Finding[];
+  onDismiss: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  // The ones that will fail first; the rest only might.
+  const ordered = [...findings].sort((a, b) => Number(b.certain) - Number(a.certain));
+  const asText = () =>
+    ordered
+      .map((finding) => `${finding.certain ? "!" : "?"} ${finding.subject}: ${finding.message}`)
+      .join("\n");
+
+  return (
+    <div className="toast warn" role="alert">
+      <div className="toast-head">
+        <span className="toast-title">
+          {findings.length === 1 ? "1 problem" : `${findings.length} problems`} in what is
+          declared
+        </span>
+        <button className="toast-close" onClick={onDismiss} title="Dismiss" aria-label="Dismiss">
+          ×
+        </button>
+      </div>
+
+      <ul className="toast-findings">
+        {ordered.map((finding) => (
+          <li key={`${finding.subject}-${finding.message}`}>
+            <span className={finding.certain ? "finding-mark certain" : "finding-mark"}>
+              {finding.certain ? "!" : "?"}
+            </span>
+            <span className="finding-subject">{finding.subject}</span>
+            <span className="finding-message">{finding.message}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="toast-actions">
+        <button
+          className="ghost"
+          onClick={() => {
+            void copyText(asText())
+              .then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              })
+              .catch(() => {});
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
     </div>
   );
 }
