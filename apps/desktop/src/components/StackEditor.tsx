@@ -29,7 +29,7 @@ interface Props {
  */
 export function StackEditor({ services, existing, editing, onCancel, onConfirm }: Props) {
   const [name, setName] = useState(editing?.name ?? "");
-  const [steps, setSteps] = useState<string[]>(editing?.steps ?? []);
+  const [steps, setSteps] = useState<string[]>(editing?.members ?? []);
   // What each member waits for, seeded from the services' own dependencies —
   // which is where it is stored, and where saving puts it back.
   const [after, setAfter] = useState<Record<string, string[]>>(() =>

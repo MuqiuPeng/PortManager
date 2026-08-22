@@ -8,8 +8,8 @@ import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { FlowChart } from "../components/FlowChart";
-import { partition, rowAction } from "../Panel";
-import { mergeLogs } from "../types";
+import { partition } from "../Panel";
+import { mergeLogs, rowAction } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
 import { StackEditor } from "../components/StackEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
@@ -73,6 +73,8 @@ describe("a payload with every optional field absent", () => {
         onEdit={noop}
         onTakeControl={noop}
         onSupervisedControl={noop}
+        inAStack
+        onAddToStack={noop}
       />,
     );
     expect(html).toContain("web");
@@ -123,6 +125,8 @@ describe("a payload with everything set", () => {
         onEdit={noop}
         onTakeControl={noop}
         onSupervisedControl={noop}
+        inAStack
+        onAddToStack={noop}
       />,
     );
     // The answer to "why is there no Stop button" — and, since there is a
@@ -147,6 +151,8 @@ describe("a payload with everything set", () => {
         onEdit={noop}
         onTakeControl={noop}
         onSupervisedControl={noop}
+        inAStack
+        onAddToStack={noop}
       />,
     );
     expect(html).toContain("ran successfully");
@@ -224,7 +230,7 @@ describe("declaring a group", () => {
 
   it("says so when the name is one the project already uses", () => {
     const existing = [
-      { id: "t", workspace_id: "w", name: "dev", steps: ["web"], services: [], running: 0 },
+      { id: "t", workspace_id: "w", name: "dev", members: ["web"], services: [], running: 0 },
     ] as unknown as StackView[];
     const html = renderToString(
       <StackEditor
@@ -251,7 +257,7 @@ describe("an existing group", () => {
     id: "t",
     workspace_id: "w",
     name: "dev",
-    steps: ["db", "api"],
+    members: ["db", "api"],
     services: [],
     running: 0,
   } as unknown as StackView;
@@ -269,8 +275,8 @@ describe("an existing group", () => {
     expect(html).toContain("Edit dev");
     expect(html).toContain('value="dev"');
     // Both members ticked, and the first-declared one numbered 1.
-    const first = html.indexOf(group.steps[0]);
-    const second = html.indexOf(group.steps[1]);
+    const first = html.indexOf(group.members[0]);
+    const second = html.indexOf(group.members[1]);
     expect(first).toBeGreaterThan(-1);
     expect(second).toBeGreaterThan(first);
     expect(html).toContain("Save</button>");
@@ -351,7 +357,7 @@ describe("what the panel shows", () => {
           id: "w",
           git_branch: "main",
           services: [service("db"), service("api"), service("docs")],
-          stacks: [{ id: "t", name: "stack", steps: ["db", "api"], services: [], running: 0 }],
+          stacks: [{ id: "t", name: "stack", members: ["db", "api"], services: [], running: 0 }],
         },
       ]),
     ]);
@@ -368,7 +374,7 @@ describe("what the panel shows", () => {
           id: "w1",
           git_branch: "main",
           services: [service("api")],
-          stacks: [{ id: "t", name: "stack", steps: ["api"], services: [], running: 0 }],
+          stacks: [{ id: "t", name: "stack", members: ["api"], services: [], running: 0 }],
         },
         { id: "w2", git_branch: "feature", services: [service("api")], stacks: [] },
       ]),
@@ -385,8 +391,8 @@ describe("what the panel shows", () => {
           git_branch: "main",
           services: [],
           stacks: [
-            { id: "a", name: "aaa", steps: ["x"], services: [], running: 0 },
-            { id: "b", name: "zzz", steps: ["y"], services: [], running: 1 },
+            { id: "a", name: "aaa", members: ["x"], services: [], running: 0 },
+            { id: "b", name: "zzz", members: ["y"], services: [], running: 1 },
           ],
         },
       ]),
@@ -423,7 +429,7 @@ describe("what the panel will do with a service", () => {
   });
 
   it("will not start one that is in none", () => {
-    expect(rowAction(false, false)).toBe("group");
+    expect(rowAction(false, false)).toBe("stack");
   });
 
   it("stops one that is running, grouped or not", () => {
@@ -431,5 +437,30 @@ describe("what the panel will do with a service", () => {
     // nothing is being brought up in the wrong shape by stopping it.
     expect(rowAction(true, true)).toBe("stop");
     expect(rowAction(true, false)).toBe("stop");
+  });
+});
+
+describe("a service in no stack, in the window", () => {
+  it("is not offered a Start button", () => {
+    const html = renderToString(
+      <ServiceRow
+        service={{ ...wire.service_minimal, status: "stopped" } as ServiceView}
+        selected={false}
+        busy={false}
+        inAStack={false}
+        onAddToStack={() => {}}
+        onSelect={() => {}}
+        onStart={() => {}}
+        onStop={() => {}}
+        onRestart={() => {}}
+        onOpen={() => {}}
+        onEdit={() => {}}
+        onTakeControl={() => {}}
+        onSupervisedControl={() => {}}
+      />,
+    );
+    // The daemon refuses this one, so the window must not offer it.
+    expect(html).not.toContain(">Start<");
+    expect(html).toContain("Add to a stack");
   });
 });

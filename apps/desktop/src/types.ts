@@ -321,6 +321,26 @@ export function mergeLogs(current: LogLine[], incoming: LogLine[], keep = 500): 
   return [...current, ...fresh].slice(-keep);
 }
 
+/** What the start button on a service row should do. */
+export type RowAction = "stop" | "start" | "stack";
+
+/**
+ * A service in no stack cannot be brought up by asking for it by name.
+ *
+ * The daemon refuses it; this is how a surface shows that before somebody
+ * clicks, rather than as an error afterwards. Both surfaces read it here, so
+ * "may this be started" has one answer — the first version of this rule lived
+ * inside the panel's button, and the window went on offering Start beside it.
+ *
+ * Stopping is never refused. It is on screen and running; withholding that
+ * would take away the thing the list is open for, and nothing is being brought
+ * up in the wrong shape by stopping it.
+ */
+export function rowAction(live: boolean, inAStack: boolean): RowAction {
+  if (live) return "stop";
+  return inAStack ? "start" : "stack";
+}
+
 /** True while the runtime believes a process should exist. */
 export function isLive(status: ServiceStatus): boolean {
   return (
@@ -364,8 +384,13 @@ export interface Stack {
   id: string;
   workspace_id: string;
   name: string;
-  /** Service names, in order. Each brings up its own dependencies first. */
-  steps: string[];
+  /**
+   * The services this stack is made of.
+   *
+   * A set, not an order: what waits for what comes from the members' own
+   * dependencies, which is what `flow` is worked out from.
+   */
+  members: string[];
 }
 
 /** Something wrong with what is declared, found without being asked. */

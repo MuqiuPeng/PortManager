@@ -284,6 +284,13 @@ export default function App() {
   function serviceRow(service: ServiceView) {
     return (
                           <ServiceRow
+                            inAStack={stacks.some((stack) =>
+                              stack.members.includes(service.name),
+                            )}
+                            onAddToStack={() => {
+                              setEditingStack(null);
+                              setPrompt("add-stack");
+                            }}
         key={service.id}
         service={service}
         selected={service.id === selectedService}
@@ -665,7 +672,7 @@ export default function App() {
                         (() => {
                           const loose = workspace.services.filter(
                             (service: ServiceView) =>
-                              !stacks.some((stack) => stack.steps.includes(service.name)),
+                              !stacks.some((stack) => stack.members.includes(service.name)),
                           );
                           if (loose.length === 0) return null;
                           // Groups are what somebody declared; the rest is a

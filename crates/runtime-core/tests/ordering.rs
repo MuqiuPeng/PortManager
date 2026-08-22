@@ -583,3 +583,52 @@ async fn declaring_and_dropping_a_group_is_announced() {
         "dropping a group said nothing"
     );
 }
+
+/// A service in no stack cannot be brought up by asking for it by name.
+///
+/// The rule the panel and the window both show, held where it is actually
+/// enforced. It lived in a button first, which left the same question answered
+/// three ways — the panel refused, the window offered, the CLI obliged.
+///
+/// The two things it must not break are the reasons a loose service still gets
+/// started: it is depended on by something that is being started, or it is a
+/// member of a stack being run. Both go through the runtime rather than
+/// through a request naming it, which is exactly the distinction being drawn.
+#[tokio::test]
+async fn a_service_in_no_stack_is_refused_by_name_but_still_started_as_a_dependency() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let base = declare(&runtime, &workspace.id, dir.path(), "base", stays_up(), &[], false);
+    let front = declare(&runtime, &workspace.id, dir.path(), "front", stays_up(), &["base"], false);
+
+    // Neither is in a stack yet: both refused.
+    assert!(runtime.require_in_a_stack(&base.id).is_err());
+    assert!(runtime.require_in_a_stack(&front.id).is_err());
+
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["front".to_string()])
+        .unwrap();
+
+    // `front` is named by the stack, so asking for it is allowed.
+    runtime.require_in_a_stack(&front.id).unwrap();
+    // `base` still is not — but running the stack brings it up anyway.
+    assert!(runtime.require_in_a_stack(&base.id).is_err());
+
+    let done = runtime.run_stack(&workspace.id, "dev").await.unwrap();
+    assert_eq!(done, vec!["front".to_string()], "the stack reports its own members");
+
+    let up = runtime.service_view(&base).unwrap();
+    assert!(up.status.is_live(), "a dependency outside the stack was left down: {up:?}");
+
+    runtime.stop_stack(&workspace.id, "dev").await.unwrap();
+    let _ = runtime
+        .stop_service(&base.id, std::time::Duration::from_secs(5))
+        .await;
+}

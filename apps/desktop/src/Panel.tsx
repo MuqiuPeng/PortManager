@@ -7,6 +7,7 @@ import {
   type PanelState,
   type ProjectView,
   type ServiceView,
+  rowAction,
   type StackView,
 } from "./types";
 
@@ -18,26 +19,6 @@ import {
  * start / stop / open. Logs, ports and project management stay in the main
  * window; a panel that grew a second screen would just be a small main window.
  */
-/** What the button on a service row does. */
-export type RowAction = "stop" | "start" | "group";
-
-/**
- * The panel brings up declared groups and nothing else.
- *
- * A service nobody has put in a group is one whose companions and order the
- * panel does not know. Starting it alone from a glance surface is how half a
- * stack comes up and then looks like a working one.
- *
- * Stopping is never refused. It is on screen and it is running; sending
- * somebody to another window to stop it would withhold the thing the panel is
- * open for, and the reason to insist on a group does not apply to stopping —
- * nothing is being brought up in the wrong shape.
- */
-export function rowAction(live: boolean, grouped: boolean): RowAction {
-  if (live) return "stop";
-  return grouped ? "start" : "group";
-}
-
 export interface PanelGroup {
   project: ProjectView;
   branch: string;
@@ -76,7 +57,7 @@ export function partition(projects: ProjectView[]): {
       for (const stack of stacks) {
         groups.push({ project, branch, stack });
       }
-      const grouped = new Set(stacks.flatMap((stack) => stack.steps));
+      const grouped = new Set(stacks.flatMap((stack) => stack.members));
       for (const service of workspace.services) {
         if (grouped.has(service.name)) continue;
         loose.push({ project, branch, service });
@@ -282,7 +263,7 @@ export default function Panel() {
               ↗
             </button>
           )}
-          {rowAction(live, grouped) === "group" ? (
+          {rowAction(live, grouped) === "stack" ? (
             <button
               className="icon-button"
               title="Put it in a stack to start it from here"
@@ -334,7 +315,7 @@ export default function Panel() {
           <>
             {groups.map(({ project, branch, stack }) => {
               const key = `${project.id}/${stack.name}`;
-              const total = stack.steps.length;
+              const total = stack.members.length;
               const allUp = total > 0 && stack.running === total;
               const someUp = stack.running > 0;
               const open = opened.includes(key);

@@ -1238,6 +1238,37 @@ impl Runtime {
     /// Every step is checked against the checkout now rather than when it is
     /// run: a stack naming a service that does not exist is a stack that fails
     /// halfway through, having already started the things before it.
+    /// Refuse to bring up a service that belongs to no stack.
+    ///
+    /// A service in no stack is one whose companions and order nobody has
+    /// written down. Starting it on its own is how half a set comes up and
+    /// then looks like a working one — which is the misreading a stack is
+    /// declared to prevent.
+    ///
+    /// Here rather than on a button. The first version of this rule lived in
+    /// the panel's start button, which left the same question answered three
+    /// different ways: the panel refused, the window offered, the CLI obliged.
+    /// A rule that only one caller obeys is a suggestion.
+    ///
+    /// Asked only of a request naming the service. Starting a stack starts its
+    /// members, and starting anything brings up what it depends on, and
+    /// neither of those is somebody asking for a loose service by name — they
+    /// go through `start_service` directly and never past here.
+    pub fn require_in_a_stack(&self, service_id: &ServiceId) -> Result<()> {
+        let service = self.require_service(service_id)?;
+        let stacks = self.store.list_stacks(&service.workspace_id)?;
+        if stacks
+            .iter()
+            .any(|stack| stack.members.iter().any(|name| name == &service.name))
+        {
+            return Ok(());
+        }
+        Err(RuntimeError::invalid(format!(
+            "'{}' is in no stack, so there is nothing recorded about what it needs beside it; put it in one first",
+            service.name
+        )))
+    }
+
     pub fn set_stack(&self, workspace_id: &WorkspaceId, name: &str, members: Vec<String>) -> Result<Stack> {
         let declared = self.store.list_services(workspace_id)?;
         for step in &members {

@@ -254,6 +254,10 @@ impl Dispatcher {
                 session,
             } => {
                 let service = self.resolve_service(project.as_deref(), &service)?;
+                // Somebody asked for this one by name, so the rule applies.
+                // Members of a stack and things depended on are started
+                // through the runtime directly and never reach here.
+                runtime.require_in_a_stack(&service.id)?;
                 let options = StartOptions {
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
@@ -300,6 +304,9 @@ impl Dispatcher {
                 session,
             } => {
                 let service = self.resolve_service(project.as_deref(), &service)?;
+                // A restart ends with the service up, so it is a way of
+                // starting it and answers to the same rule.
+                runtime.require_in_a_stack(&service.id)?;
                 let options = StartOptions {
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),

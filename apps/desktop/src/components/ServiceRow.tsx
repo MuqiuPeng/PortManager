@@ -1,9 +1,13 @@
-import { isLive, type ServiceView, type StartedBy } from "../types";
+import { isLive, rowAction, type ServiceView, type StartedBy } from "../types";
 
 interface Props {
   service: ServiceView;
   selected: boolean;
   busy: boolean;
+  /** False when no stack names it, which is what makes it unstartable. */
+  inAStack: boolean;
+  /** Offered instead of Start, to make it startable. */
+  onAddToStack: () => void;
   onSelect: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -28,6 +32,8 @@ export function ServiceRow({
   service,
   selected,
   busy,
+  inAStack,
+  onAddToStack,
   onSelect,
   onStart,
   onStop,
@@ -165,9 +171,22 @@ export function ServiceRow({
             </button>
           </>
         ) : (
-          <button className="ghost primary" onClick={onStart} disabled={busy}>
-            Start
-          </button>
+          rowAction(false, inAStack) === "start" ? (
+            <button className="ghost primary" onClick={onStart} disabled={busy}>
+              Start
+            </button>
+          ) : (
+            // The daemon refuses this one; saying so before the click beats an
+            // error after it, and the useful next move is the one offered.
+            <button
+              className="ghost"
+              onClick={onAddToStack}
+              disabled={busy}
+              title="A service in no stack has nothing recorded about what belongs beside it"
+            >
+              Add to a stack
+            </button>
+          )
         )}
       </span>
     </div>

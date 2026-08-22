@@ -29,7 +29,7 @@ interface Props {
 export function StackRow({ stack, busy, onRun, onStop, onEdit, onRemove, renderService }: Props) {
   /** A node clicked on the diagram, whose row is then the one shown. */
   const [picked, setPicked] = useState<string | undefined>(undefined);
-  const total = stack.steps.length;
+  const total = stack.members.length;
   const missing = stack.missing ?? [];
   const allUp = total > 0 && stack.running === total;
   const someUp = stack.running > 0;
