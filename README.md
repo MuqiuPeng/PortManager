@@ -128,7 +128,7 @@ runtime hook install    # record what gets started outside it
 
 The **MCP server** gives an agent the operations: "start this project's frontend
 and API and wait until they are healthy", "why is localhost:3000 unavailable?",
-"run the dev task". There is no `execute_shell`, no `kill_pid` and no
+"run the dev stack". There is no `execute_shell`, no `kill_pid` and no
 `run_command` — the daemon's protocol does not offer them, so the server cannot
 expose them. See [docs/mcp.md](docs/mcp.md).
 
@@ -163,7 +163,7 @@ runtime port list|check|reserve|release
 runtime errors [-n N]               what is broken, and what it said
 runtime adopt <port> [--force]      declare what is already on a port
 runtime supervised start|stop|restart <name>   drive PM2, without taking it over
-runtime task list|set|remove|run|stop   start a set of services as one
+runtime stack list|set|remove|run|stop   start a set of services as one
 runtime container start|stop|restart|logs
 runtime worktree list|add
 runtime hook install|uninstall|status|mcp|log
@@ -204,7 +204,7 @@ runtime start feature/refund/web
 Worktrees carry the project's services on their own port range, so two branches
 can be served at once. `worktree add` also tops up a checkout that was
 registered before a service existed, and leaves any copy you have edited alone.
-A task is declared once for the project and runs in whichever checkout you name
+A stack is declared once for the project and runs in whichever checkout you name
 — which is the point: one definition, two branches, different ports.
 
 Every command takes `--json` for scripting.

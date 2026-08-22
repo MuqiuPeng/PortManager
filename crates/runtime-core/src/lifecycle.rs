@@ -303,7 +303,7 @@ impl Runtime {
         })
     }
 
-    /// Stop everything a task started, in the reverse of the order it started.
+    /// Stop everything a stack started, in the reverse of the order it started.
     ///
     /// Reverse because the order was there for a reason: a front end talking to
     /// an API that has already gone spends its last moments logging failures
@@ -312,18 +312,18 @@ impl Runtime {
     /// A member the runtime did not start is left alone, as everywhere else,
     /// and a member already stopped is not an error — stopping a group is a
     /// statement about where things should end up, not about each step.
-    pub async fn stop_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
-        let task = self
+    pub async fn stop_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+        let stack = self
             .store()
-            .list_tasks(workspace_id)?
+            .list_stacks(workspace_id)?
             .into_iter()
-            .find(|task| task.name == name)
-            .ok_or_else(|| RuntimeError::invalid(format!("no task called '{name}' here")))?;
+            .find(|stack| stack.name == name)
+            .ok_or_else(|| RuntimeError::invalid(format!("no stack called '{name}' here")))?;
 
         let declared = self.store().list_services(workspace_id)?;
         let mut stopped = Vec::new();
 
-        for step in task.steps.iter().rev() {
+        for step in stack.members.iter().rev() {
             let Some(service) = declared.iter().find(|service| &service.name == step) else {
                 continue;
             };
@@ -341,13 +341,13 @@ impl Runtime {
         Ok(stopped)
     }
 
-    /// Run a named task: each step brought up in order.
+    /// Run a named stack: each step brought up in order.
     ///
     /// Each step resolves its own dependencies, so a step already covered by an
-    /// earlier one does nothing. Failure stops the task where it failed rather
+    /// earlier one does nothing. Failure stops the stack where it failed rather
     /// than carrying on: the later steps are there because the earlier ones
     /// were supposed to have worked.
-    pub async fn run_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+    pub async fn run_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
         // The definition lives on the project's main checkout; the services it
         // names are resolved in whichever checkout this is being run in.
         let workspace = self.require_workspace(workspace_id)?;
@@ -359,12 +359,12 @@ impl Runtime {
             .map(|candidate| candidate.id)
             .unwrap_or_else(|| workspace_id.clone());
 
-        let task = self
+        let stack = self
             .store()
-            .list_tasks(&declared_in)?
+            .list_stacks(&declared_in)?
             .into_iter()
-            .find(|task| task.name == name)
-            .ok_or_else(|| RuntimeError::invalid(format!("no task called '{name}' here")))?;
+            .find(|stack| stack.name == name)
+            .ok_or_else(|| RuntimeError::invalid(format!("no stack called '{name}' here")))?;
 
         let declared = self.store().list_services(workspace_id)?;
         let mut done = Vec::new();
@@ -373,8 +373,8 @@ impl Runtime {
         // members happen to be stored in. What somebody sees on the diagram is
         // what runs; the stored order only decides between members that wait
         // for nothing and so could go in any order at all.
-        let members: Vec<Service> = task
-            .steps
+        let members: Vec<Service> = stack
+            .members
             .iter()
             .map(|step| {
                 declared
@@ -405,7 +405,7 @@ impl Runtime {
             // were, but they are not reported as steps of it: the group is
             // what somebody declared, not everything that had to happen.
             let step = &planned.name;
-            if !task.steps.contains(step) {
+            if !stack.members.contains(step) {
                 continue;
             }
             let service = declared
@@ -860,7 +860,7 @@ impl Runtime {
         }
 
         // The process is gone; its last output is almost always the reason.
-        // Output is pumped on another task, which may not have caught up with a
+        // Output is pumped on another stack, which may not have caught up with a
         // process that died this quickly — so give it a moment rather than
         // reporting "no output" for something that printed the answer.
         let mut detail = None;

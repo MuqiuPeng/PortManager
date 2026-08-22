@@ -153,7 +153,7 @@ pub trait NotificationProvider: Send + Sync {
     fn notify(&self, title: &str, body: &str) -> Result<()>;
 }
 
-/// Start the daemon at login: `launchd` on macOS, Task Scheduler / Run key on Windows.
+/// Start the daemon at login: `launchd` on macOS, Stack Scheduler / Run key on Windows.
 pub trait AutostartProvider: Send + Sync {
     fn is_enabled(&self) -> Result<bool>;
     fn enable(&self) -> Result<()>;

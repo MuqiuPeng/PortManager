@@ -146,7 +146,7 @@ export interface WorkspaceView extends Workspace {
    * A member listed here is still present in `services`; a surface showing
    * groups is expected to show each service once, under its group.
    */
-  tasks?: TaskView[];
+  stacks?: StackView[];
 }
 
 export interface ProjectView extends Project {
@@ -360,7 +360,7 @@ export interface SupervisedView {
 }
 
 /** A named sequence of steps in a checkout. */
-export interface Task {
+export interface Stack {
   id: string;
   workspace_id: string;
   name: string;
@@ -389,8 +389,8 @@ export interface Failure {
   detail?: string[];
 }
 
-/** A task with what its members are actually doing. */
-export interface TaskView extends Task {
+/** A stack with what its members are actually doing. */
+export interface StackView extends Stack {
   /** Its members, in the order they start. */
   services: ServiceView[];
   /** How many of them are up. */

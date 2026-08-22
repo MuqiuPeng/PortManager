@@ -81,7 +81,7 @@ fn project_view() -> ProjectView {
                 supervisor: Some("pm2".to_string()),
             }],
             supervised: vec![],
-            tasks: vec![],
+            stacks: vec![],
             containers: vec![ContainerView {
                 name: "db".to_string(),
                 service: Some("db".to_string()),
@@ -250,13 +250,13 @@ fn responses() -> Vec<ResponseBody> {
             url: Some("http://localhost:3007".to_string()),
             restart_warning: Some("holds a development build".to_string()),
         }),
-        ResponseBody::Tasks {
-            items: vec![TaskView {
-                task: Task {
-                    id: TaskId::from("task"),
+        ResponseBody::Stacks {
+            items: vec![StackView {
+                stack: Stack {
+                    id: StackId::from("stack"),
                     workspace_id: WorkspaceId::from("ws"),
                     name: "dev".to_string(),
-                    steps: vec!["migrate".to_string(), "api".to_string()],
+                    members: vec!["migrate".to_string(), "api".to_string()],
                 },
                 services: vec![service_view()],
                 running: 1,
@@ -271,8 +271,8 @@ fn responses() -> Vec<ResponseBody> {
                 }],
             }],
         },
-        ResponseBody::TaskRun {
-            steps: vec!["migrate (ran)".to_string(), "api".to_string()],
+        ResponseBody::StackRun {
+            done: vec!["migrate (ran)".to_string(), "api".to_string()],
         },
         ResponseBody::Findings {
             items: vec![Finding {
@@ -381,15 +381,15 @@ fn every_request_survives_a_round_trip() {
         Request::ListLaunches,
         Request::Diagnose,
         Request::ListFailures { detail_lines: 8 },
-        Request::ListTasks { selector: ".".to_string() },
-        Request::SetTask {
+        Request::ListStacks { selector: ".".to_string() },
+        Request::SetStack {
             selector: ".".to_string(),
             name: "dev".to_string(),
-            steps: vec!["migrate".to_string(), "api".to_string()],
+            members: vec!["migrate".to_string(), "api".to_string()],
         },
-        Request::RemoveTask { selector: ".".to_string(), name: "dev".to_string() },
-        Request::RunTask { selector: ".".to_string(), name: "dev".to_string() },
-        Request::StopTask { selector: ".".to_string(), name: "dev".to_string() },
+        Request::RemoveStack { selector: ".".to_string(), name: "dev".to_string() },
+        Request::RunStack { selector: ".".to_string(), name: "dev".to_string() },
+        Request::StopStack { selector: ".".to_string(), name: "dev".to_string() },
         Request::ControlSupervised {
             name: "flip7".to_string(),
             action: "restart".to_string(),

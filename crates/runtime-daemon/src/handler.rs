@@ -209,28 +209,28 @@ impl Dispatcher {
                 ))
             }
 
-            Request::ListTasks { selector } => {
+            Request::ListStacks { selector } => {
                 let workspace = self.primary_workspace(&selector)?;
-                Ok(ResponseBody::Tasks { items: runtime.task_views(&workspace.id)? })
+                Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
-            Request::SetTask { selector, name, steps } => {
+            Request::SetStack { selector, name, members } => {
                 let workspace = self.primary_workspace(&selector)?;
-                runtime.set_task(&workspace.id, &name, steps)?;
-                Ok(ResponseBody::Tasks { items: runtime.task_views(&workspace.id)? })
+                runtime.set_stack(&workspace.id, &name, members)?;
+                Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
-            Request::RemoveTask { selector, name } => {
+            Request::RemoveStack { selector, name } => {
                 let workspace = self.primary_workspace(&selector)?;
-                Ok(ResponseBody::Done { ok: runtime.remove_task(&workspace.id, &name)? })
+                Ok(ResponseBody::Done { ok: runtime.remove_stack(&workspace.id, &name)? })
             }
-            Request::StopTask { selector, name } => {
+            Request::StopStack { selector, name } => {
                 let workspace = self.workspace_to_run_in(&selector)?;
-                Ok(ResponseBody::TaskRun { steps: runtime.stop_task(&workspace.id, &name).await? })
+                Ok(ResponseBody::StackRun { done: runtime.stop_stack(&workspace.id, &name).await? })
             }
 
-            Request::RunTask { selector, name } => {
+            Request::RunStack { selector, name } => {
                 // Where it runs, not where it is declared.
                 let workspace = self.workspace_to_run_in(&selector)?;
-                Ok(ResponseBody::TaskRun { steps: runtime.run_task(&workspace.id, &name).await? })
+                Ok(ResponseBody::StackRun { done: runtime.run_stack(&workspace.id, &name).await? })
             }
 
             Request::Diagnose => Ok(ResponseBody::Findings { items: runtime.diagnose()? }),
@@ -464,11 +464,11 @@ impl Dispatcher {
         }
     }
 
-    /// The checkout a task is *declared* in.
+    /// The checkout a stack is *declared* in.
     ///
-    /// The main one, not a worktree: a task names services by the names they
+    /// The main one, not a worktree: a stack names services by the names they
     /// have in the project, and every worktree has the same set under different
-    /// ports. Declaring one per worktree would multiply the same task by the
+    /// ports. Declaring one per worktree would multiply the same stack by the
     /// number of branches somebody happens to have checked out.
     fn primary_workspace(&self, selector: &str) -> Result<runtime_types::Workspace> {
         let project = self.runtime.resolve_project(selector)?;
@@ -482,7 +482,7 @@ impl Dispatcher {
             })
     }
 
-    /// The checkout a task should *run* in.
+    /// The checkout a stack should *run* in.
     ///
     /// Declared once for the project, run wherever the caller is standing —
     /// which for a worktree is the whole point: two branches served at once,

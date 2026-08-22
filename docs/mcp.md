@@ -143,9 +143,9 @@ if the attribution matters to you.
 
 ### Ordering
 
-* `list_tasks`, `set_task` — named step sequences over a project's services.
-* `run_task` — bring up every step in order, waiting for each to report healthy.
-  A step that runs to completion must succeed or the task stops there.
+* `list_stacks`, `set_stack` — named step sequences over a project's services.
+* `run_stack` — bring up every step in order, waiting for each to report healthy.
+  A step that runs to completion must succeed or the stack stops there.
 
 ## What it deliberately does not expose
 

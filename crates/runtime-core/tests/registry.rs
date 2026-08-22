@@ -787,7 +787,7 @@ async fn a_service_writing_output_does_not_depend_on_a_reader() {
         .expect("an instance")
         .pid;
 
-    // Drop everything the runtime holds — the tailing tasks, the child handle,
+    // Drop everything the runtime holds — the tailing stacks, the child handle,
     // the log store. This is what a killed daemon leaves behind.
     drop(runtime);
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;

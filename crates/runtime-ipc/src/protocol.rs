@@ -17,7 +17,7 @@ use runtime_types::{
     AdoptOutcome, AgentSession, DaemonInfo, Failure, Finding, HealthReport,
     LaunchObservation,
     LogLine,
-    PortOwner, SupervisedView, TaskView,
+    PortOwner, SupervisedView, StackView,
     PortReservation, PortStatus,
     ContainerView, ProjectConfig, ProjectView, RuntimeError, ServiceConfig, ServicePatch,
     ServiceView, StartOutcome, Workspace,
@@ -129,19 +129,19 @@ pub enum Request {
         detail_lines: usize,
     },
 
-    /// Named step sequences declared in a checkout.
-    ListTasks { selector: String },
+    /// Stacks declared in a checkout.
+    ListStacks { selector: String },
     /// Declare or replace one.
-    SetTask {
+    SetStack {
         selector: String,
         name: String,
-        steps: Vec<String>,
+        members: Vec<String>,
     },
-    RemoveTask { selector: String, name: String },
+    RemoveStack { selector: String, name: String },
     /// Bring up every step in order, each with its own dependencies.
-    RunTask { selector: String, name: String },
+    RunStack { selector: String, name: String },
     /// Stop everything it started, in the reverse of the order it started.
-    StopTask { selector: String, name: String },
+    StopStack { selector: String, name: String },
 
     /// Switch an entry another supervisor keeps.
     ///
@@ -312,8 +312,8 @@ pub enum ResponseBody {
     Launches { items: Vec<LaunchObservation> },
     Findings { items: Vec<Finding> },
     Failures { items: Vec<Failure> },
-    Tasks { items: Vec<TaskView> },
-    TaskRun { steps: Vec<String> },
+    Stacks { items: Vec<StackView> },
+    StackRun { done: Vec<String> },
     Supervised(SupervisedView),
     Adopted(AdoptOutcome),
     Sessions { items: Vec<AgentSession> },

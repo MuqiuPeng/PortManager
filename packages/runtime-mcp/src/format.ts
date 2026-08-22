@@ -20,7 +20,7 @@ import type {
   ServiceView,
   StartOutcome,
   SupervisedView,
-  TaskView,
+  StackView,
   Workspace,
 } from "./protocol.js";
 
@@ -311,14 +311,14 @@ export function formatSupervised(view: SupervisedView): string {
   return lines.join("\n");
 }
 
-export function formatTasks(tasks: TaskView[]): string {
-  if (tasks.length === 0) return "No tasks declared.";
-  return tasks
-    .map((task) => {
-      const missing = (task.missing ?? []).length
-        ? `  (missing ${(task.missing ?? []).join(", ")})`
+export function formatTasks(stacks: StackView[]): string {
+  if (stacks.length === 0) return "No stacks declared.";
+  return stacks
+    .map((stack) => {
+      const missing = (stack.missing ?? []).length
+        ? `  (missing ${(stack.missing ?? []).join(", ")})`
         : "";
-      return `${task.name} — ${task.running}/${task.steps.length} up${missing}\n    ${task.steps.join(" -> ")}`;
+      return `${stack.name} — ${stack.running}/${stack.members.length} up${missing}\n    ${stack.members.join(" -> ")}`;
     })
     .join("\n");
 }

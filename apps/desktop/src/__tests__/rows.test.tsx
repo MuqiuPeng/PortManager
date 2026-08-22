@@ -11,9 +11,9 @@ import { FlowChart } from "../components/FlowChart";
 import { partition, rowAction } from "../Panel";
 import { mergeLogs } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
-import { GroupEditor } from "../components/GroupEditor";
+import { StackEditor } from "../components/StackEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
-import { TaskGroup } from "../components/TaskGroup";
+import { StackRow } from "../components/StackRow";
 import { affectsFailures } from "../types";
 import type {
   ContainerView,
@@ -22,7 +22,7 @@ import type {
   Finding,
   ServiceView,
   SupervisedView,
-  TaskView,
+  StackView,
   FlowNode,
   ProjectView,
   LogLine,
@@ -203,7 +203,7 @@ describe("declaring a group", () => {
 
   it("offers the project's services rather than a box to type names in", () => {
     const html = renderToString(
-      <GroupEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
+      <StackEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
     );
     for (const service of services) {
       expect(html).toContain(service.name);
@@ -216,7 +216,7 @@ describe("declaring a group", () => {
 
   it("cannot be created with no members", () => {
     const html = renderToString(
-      <GroupEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
+      <StackEditor services={services} existing={[]} onCancel={() => {}} onConfirm={() => {}} />,
     );
     expect(html).toContain("Create</button>");
     expect(html).toContain("disabled");
@@ -225,9 +225,9 @@ describe("declaring a group", () => {
   it("says so when the name is one the project already uses", () => {
     const existing = [
       { id: "t", workspace_id: "w", name: "dev", steps: ["web"], services: [], running: 0 },
-    ] as unknown as TaskView[];
+    ] as unknown as StackView[];
     const html = renderToString(
-      <GroupEditor
+      <StackEditor
         services={services}
         existing={existing}
         editing={undefined}
@@ -254,11 +254,11 @@ describe("an existing group", () => {
     steps: ["db", "api"],
     services: [],
     running: 0,
-  } as unknown as TaskView;
+  } as unknown as StackView;
 
   it("opens showing what it was set to, in the order it was set in", () => {
     const html = renderToString(
-      <GroupEditor
+      <StackEditor
         services={services}
         existing={[group]}
         editing={group}
@@ -278,7 +278,7 @@ describe("an existing group", () => {
 
   it("does not call its own name a clash with itself", () => {
     const html = renderToString(
-      <GroupEditor
+      <StackEditor
         services={services}
         existing={[group]}
         editing={group}
@@ -291,8 +291,8 @@ describe("an existing group", () => {
 
   it("offers a way in from the row itself", () => {
     const html = renderToString(
-      <TaskGroup
-        task={{ ...group, services: [] }}
+      <StackRow
+        stack={{ ...group, services: [] }}
         busy={false}
         onRun={() => {}}
         onStop={() => {}}
@@ -351,11 +351,11 @@ describe("what the panel shows", () => {
           id: "w",
           git_branch: "main",
           services: [service("db"), service("api"), service("docs")],
-          tasks: [{ id: "t", name: "stack", steps: ["db", "api"], services: [], running: 0 }],
+          stacks: [{ id: "t", name: "stack", steps: ["db", "api"], services: [], running: 0 }],
         },
       ]),
     ]);
-    expect(groups.map((one) => one.task.name)).toEqual(["stack"]);
+    expect(groups.map((one) => one.stack.name)).toEqual(["stack"]);
     // db and api are inside it, so only docs is left over.
     expect(loose.map((one) => one.service.name)).toEqual(["docs"]);
   });
@@ -368,9 +368,9 @@ describe("what the panel shows", () => {
           id: "w1",
           git_branch: "main",
           services: [service("api")],
-          tasks: [{ id: "t", name: "stack", steps: ["api"], services: [], running: 0 }],
+          stacks: [{ id: "t", name: "stack", steps: ["api"], services: [], running: 0 }],
         },
-        { id: "w2", git_branch: "feature", services: [service("api")], tasks: [] },
+        { id: "w2", git_branch: "feature", services: [service("api")], stacks: [] },
       ]),
     ]);
     expect(loose).toHaveLength(1);
@@ -384,14 +384,14 @@ describe("what the panel shows", () => {
           id: "w",
           git_branch: "main",
           services: [],
-          tasks: [
+          stacks: [
             { id: "a", name: "aaa", steps: ["x"], services: [], running: 0 },
             { id: "b", name: "zzz", steps: ["y"], services: [], running: 1 },
           ],
         },
       ]),
     ]);
-    expect(groups.map((one) => one.task.name)).toEqual(["zzz", "aaa"]);
+    expect(groups.map((one) => one.stack.name)).toEqual(["zzz", "aaa"]);
   });
 });
 

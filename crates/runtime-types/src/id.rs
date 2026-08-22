@@ -71,6 +71,6 @@ define_id!(
     SessionId
 );
 define_id!(
-    /// Identifies a `Task` — a named sequence of steps in a workspace.
-    TaskId
+    /// Identifies a `Stack` — a named sequence of steps in a workspace.
+    StackId
 );

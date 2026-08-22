@@ -7,7 +7,7 @@ import {
   type PanelState,
   type ProjectView,
   type ServiceView,
-  type TaskView,
+  type StackView,
 } from "./types";
 
 /**
@@ -41,7 +41,7 @@ export function rowAction(live: boolean, grouped: boolean): RowAction {
 export interface PanelGroup {
   project: ProjectView;
   branch: string;
-  task: TaskView;
+  stack: StackView;
 }
 
 export interface PanelService {
@@ -72,11 +72,11 @@ export function partition(projects: ProjectView[]): {
   for (const project of projects) {
     for (const workspace of project.workspaces) {
       const branch = workspace.git_branch ?? "";
-      const tasks = workspace.tasks ?? [];
-      for (const task of tasks) {
-        groups.push({ project, branch, task });
+      const stacks = workspace.stacks ?? [];
+      for (const stack of stacks) {
+        groups.push({ project, branch, stack });
       }
-      const grouped = new Set(tasks.flatMap((task) => task.steps));
+      const grouped = new Set(stacks.flatMap((stack) => stack.steps));
       for (const service of workspace.services) {
         if (grouped.has(service.name)) continue;
         loose.push({ project, branch, service });
@@ -85,8 +85,8 @@ export function partition(projects: ProjectView[]): {
   }
 
   groups.sort((a, b) => {
-    const live = Number(b.task.running > 0) - Number(a.task.running > 0);
-    return live !== 0 ? live : a.task.name.localeCompare(b.task.name);
+    const live = Number(b.stack.running > 0) - Number(a.stack.running > 0);
+    return live !== 0 ? live : a.stack.name.localeCompare(b.stack.name);
   });
   loose.sort((a, b) => {
     const live = Number(isLive(b.service.status)) - Number(isLive(a.service.status));
@@ -285,7 +285,7 @@ export default function Panel() {
           {rowAction(live, grouped) === "group" ? (
             <button
               className="icon-button"
-              title="Put it in a group to start it from here"
+              title="Put it in a stack to start it from here"
               onClick={() => void api.openMainWindow()}
             >
               ⊕
@@ -332,19 +332,19 @@ export default function Panel() {
           </p>
         ) : (
           <>
-            {groups.map(({ project, branch, task }) => {
-              const key = `${project.id}/${task.name}`;
-              const total = task.steps.length;
-              const allUp = total > 0 && task.running === total;
-              const someUp = task.running > 0;
+            {groups.map(({ project, branch, stack }) => {
+              const key = `${project.id}/${stack.name}`;
+              const total = stack.steps.length;
+              const allUp = total > 0 && stack.running === total;
+              const someUp = stack.running > 0;
               const open = opened.includes(key);
               // Whichever member broke. What somebody wants to carry away is
               // the reason, not which of five names it came from.
-              const broken = task.services
+              const broken = stack.services
                 .map((member) => failures.find((one) => one.service_id === member.id))
                 .find(Boolean);
               return (
-                <div className="panel-group" key={key}>
+                <div className="panel-stack" key={key}>
                   <div className="panel-row">
                     <span
                       className={allUp ? "dot status-healthy" : someUp ? "dot partial" : "dot"}
@@ -357,15 +357,15 @@ export default function Panel() {
                         setOpened(open ? opened.filter((one) => one !== key) : [...opened, key])
                       }
                       aria-expanded={open}
-                      title={open ? "Hide its services" : "Show its services"}
+                      title={open ? "Hide what is in it" : "Show what is in it"}
                     >
                       <div className="panel-row-title">
                         <span className="panel-caret">{open ? "▾" : "▸"}</span>
-                        <span className="panel-service">{task.name}</span>
+                        <span className="panel-service">{stack.name}</span>
                         <span className="panel-project">{project.name}</span>
                       </div>
                       <div className="panel-row-meta">
-                        {task.running}/{total} up{branch && ` · ${branch}`}
+                        {stack.running}/{total} up{branch && ` · ${branch}`}
                       </div>
                     </button>
 
@@ -382,12 +382,12 @@ export default function Panel() {
                       <button
                         className="icon-button"
                         disabled={busy === key}
-                        title={someUp ? "Stop the group" : "Start the group"}
+                        title={someUp ? "Stop the stack" : "Start the stack"}
                         onClick={() =>
                           act(key, () =>
                             someUp
-                              ? api.stopTask(project.id, task.name)
-                              : api.runTask(project.id, task.name),
+                              ? api.stopStack(project.id, stack.name)
+                              : api.runStack(project.id, stack.name),
                           )
                         }
                       >
@@ -398,7 +398,7 @@ export default function Panel() {
 
                   {open && (
                     <div className="panel-members">
-                      {task.services.map((member) => serviceRow(project, branch, member, true))}
+                      {stack.services.map((member) => serviceRow(project, branch, member, true))}
                     </div>
                   )}
                 </div>
@@ -407,11 +407,11 @@ export default function Panel() {
 
             {loose.length > 0 && (
               <div className="panel-divider">
-                Ungrouped
+                Not in a stack
                 <span className="panel-divider-note">
                   {groups.length === 0
-                    ? "nothing here is grouped yet — group it to start it from the panel"
-                    : "group these to start them from here"}
+                    ? "nothing here is in a stack yet — a stack is how the panel starts things"
+                    : "put these in a stack to start them from here"}
                 </span>
               </div>
             )}

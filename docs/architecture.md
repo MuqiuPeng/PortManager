@@ -265,7 +265,7 @@ migration work?" is the only question this kind of step raises, and without a
 record the answer is whatever the last attempt left behind — which is how a run
 that succeeded goes on reporting the failure before it.
 
-A **group** — a task — is a named sequence over both, and it is a unit rather
+A **group** — a stack — is a named sequence over both, and it is a unit rather
 than a shortcut. A database, an API and a front end that have to start in that
 order are one thing to the person using them; three peers with three buttons
 makes the reader reassemble that every time they look, and leaves the order to
@@ -291,7 +291,7 @@ moment it is expensive:
 | --- | --- |
 | A dependency naming nothing | Fails halfway through a start, with everything before it already up |
 | Services depending on each other | Hangs |
-| A task step that was removed | Same, one layer out |
+| A stack step that was removed | Same, one layer out |
 | A command that will not resolve here | A command is written in the shell that had it working and run by a daemon whose `PATH` is whatever launched the app |
 | A build directory two services share | Breaks whichever of them is not looking, on its next restart, hours after the cause |
 

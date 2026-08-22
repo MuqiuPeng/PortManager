@@ -153,9 +153,9 @@ enum Command {
         write: bool,
     },
 
-    /// Named step sequences: bring up a set of services in order.
+    /// Stacks: a named set of services this project is brought up as.
     #[command(subcommand)]
-    Task(TaskCommand),
+    Stack(StackCommand),
 
     /// Manage git worktrees of a project.
     #[command(subcommand)]
@@ -196,17 +196,17 @@ enum Command {
 }
 
 #[derive(Debug, Subcommand)]
-enum TaskCommand {
-    /// List the tasks declared in a project.
+enum StackCommand {
+    /// List the stacks declared in a project.
     List,
     /// Declare or replace one. Steps run in the order given.
     Set {
         name: String,
         /// Service names, in order. Each brings up its own dependencies first.
         #[arg(required = true)]
-        steps: Vec<String>,
+        members: Vec<String>,
     },
-    /// Remove a task. Nothing running is touched.
+    /// Remove a stack. Nothing running is touched.
     Remove { name: String },
     /// Bring up every step in order.
     Run { name: String },
@@ -444,21 +444,21 @@ async fn run(cli: Cli) -> Result<String> {
             None => client.call(Request::ListProjects).await?,
         },
 
-        Command::Task(command) => {
+        Command::Stack(command) => {
             let selector = project.clone().unwrap_or_else(|| ".".to_string());
             match command {
-                TaskCommand::List => client.call(Request::ListTasks { selector }).await?,
-                TaskCommand::Set { name, steps } => {
-                    client.call(Request::SetTask { selector, name, steps }).await?
+                StackCommand::List => client.call(Request::ListStacks { selector }).await?,
+                StackCommand::Set { name, members } => {
+                    client.call(Request::SetStack { selector, name, members }).await?
                 }
-                TaskCommand::Remove { name } => {
-                    client.call(Request::RemoveTask { selector, name }).await?
+                StackCommand::Remove { name } => {
+                    client.call(Request::RemoveStack { selector, name }).await?
                 }
-                TaskCommand::Run { name } => {
-                    client.call(Request::RunTask { selector, name }).await?
+                StackCommand::Run { name } => {
+                    client.call(Request::RunStack { selector, name }).await?
                 }
-                TaskCommand::Stop { name } => {
-                    client.call(Request::StopTask { selector, name }).await?
+                StackCommand::Stop { name } => {
+                    client.call(Request::StopStack { selector, name }).await?
                 }
             }
         }
@@ -893,12 +893,12 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         }
         ResponseBody::Logs { items } => render::logs(items),
         ResponseBody::Setting { value } => value.clone().unwrap_or_else(|| "(unset)".to_string()),
-        ResponseBody::Tasks { items } => render::tasks(items),
-        ResponseBody::TaskRun { steps } => {
-            if steps.is_empty() {
+        ResponseBody::Stacks { items } => render::stacks(items),
+        ResponseBody::StackRun { done } => {
+            if done.is_empty() {
                 "Nothing to do.".to_string()
             } else {
-                steps
+                done
                     .iter()
                     .map(|step| format!("\u{2713} {step}"))
                     .collect::<Vec<_>>()

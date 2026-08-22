@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Task, TaskId, FlowNode, TaskView, Workspace, WorkspaceId, WorkspaceView,
+    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Stack, StackId, FlowNode, StackView, Workspace, WorkspaceId, WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -800,17 +800,17 @@ impl Runtime {
                 .into_iter()
                 .filter(|entry| !claimed.contains(&entry.name))
                 .collect();
-            // Read from the same producer that answers `task list`, so a
+            // Read from the same producer that answers `stack list`, so a
             // group is one fact with one source rather than something each
             // surface assembles for itself.
-            let tasks = self.task_views(&workspace.id).unwrap_or_default();
+            let stacks = self.stack_views(&workspace.id).unwrap_or_default();
             workspaces.push(WorkspaceView {
                 workspace,
                 services,
                 external,
                 containers,
                 supervised,
-                tasks,
+                stacks,
             });
         }
 
@@ -1184,30 +1184,30 @@ impl Runtime {
         Ok((ServiceStatus::Stopped, Some(instance)))
     }
 
-    // ---- tasks -----------------------------------------------------------
+    // ---- stacks -----------------------------------------------------------
 
-    pub fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Task>> {
-        self.store.list_tasks(workspace_id)
+    pub fn list_stacks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Stack>> {
+        self.store.list_stacks(workspace_id)
     }
 
-    /// Tasks with what their members are actually doing.
+    /// Stacks with what their members are actually doing.
     ///
     /// The group as a unit, because that is what it was declared to be. A
     /// database, an API and a front end shown as three peers with three buttons
     /// makes the reader reassemble the thing every time they look, and leaves
     /// the order to memory.
-    pub fn task_views(&self, workspace_id: &WorkspaceId) -> Result<Vec<TaskView>> {
+    pub fn stack_views(&self, workspace_id: &WorkspaceId) -> Result<Vec<StackView>> {
         let declared = self.store.list_services(workspace_id)?;
         let owners = self.port_owners()?;
         let mut out = Vec::new();
 
-        for task in self.store.list_tasks(workspace_id)? {
+        for stack in self.store.list_stacks(workspace_id)? {
             let mut services = Vec::new();
             let mut missing = Vec::new();
 
-            for step in &task.steps {
+            for step in &stack.members {
                 match declared.iter().find(|service| &service.name == step) {
-                    // In the order the task names them, not the order they were
+                    // In the order the stack names them, not the order they were
                     // declared: the order is the point.
                     Some(service) => services.push(self.service_view_with(service, &owners)?),
                     None => missing.push(step.clone()),
@@ -1221,9 +1221,9 @@ impl Runtime {
                 .filter(|view| view.status.is_live() || view.service.one_shot)
                 .count();
 
-            let flow = flow_of(&task, &services, &missing);
-            out.push(TaskView {
-                task,
+            let flow = flow_of(&stack, &services, &missing);
+            out.push(StackView {
+                stack,
                 services,
                 running,
                 missing,
@@ -1236,11 +1236,11 @@ impl Runtime {
     /// Declare a named sequence of steps.
     ///
     /// Every step is checked against the checkout now rather than when it is
-    /// run: a task naming a service that does not exist is a task that fails
+    /// run: a stack naming a service that does not exist is a stack that fails
     /// halfway through, having already started the things before it.
-    pub fn set_task(&self, workspace_id: &WorkspaceId, name: &str, steps: Vec<String>) -> Result<Task> {
+    pub fn set_stack(&self, workspace_id: &WorkspaceId, name: &str, members: Vec<String>) -> Result<Stack> {
         let declared = self.store.list_services(workspace_id)?;
-        for step in &steps {
+        for step in &members {
             if !declared.iter().any(|service| &service.name == step) {
                 return Err(RuntimeError::invalid(format!(
                     "'{step}' is not a service in this checkout"
@@ -1250,31 +1250,31 @@ impl Runtime {
 
         let existing = self
             .store
-            .list_tasks(workspace_id)?
+            .list_stacks(workspace_id)?
             .into_iter()
-            .find(|task| task.name == name);
+            .find(|stack| stack.name == name);
 
-        let task = Task {
-            id: existing.map(|task| task.id).unwrap_or_else(TaskId::new),
+        let stack = Stack {
+            id: existing.map(|stack| stack.id).unwrap_or_else(StackId::new),
             workspace_id: workspace_id.clone(),
             name: name.to_string(),
-            steps,
+            members,
         };
-        self.store.upsert_task(&task)?;
+        self.store.upsert_stack(&stack)?;
         self.announce_workspace(workspace_id);
-        Ok(task)
+        Ok(stack)
     }
 
-    pub fn remove_task(&self, workspace_id: &WorkspaceId, name: &str) -> Result<bool> {
-        let Some(task) = self
+    pub fn remove_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<bool> {
+        let Some(stack) = self
             .store
-            .list_tasks(workspace_id)?
+            .list_stacks(workspace_id)?
             .into_iter()
-            .find(|task| task.name == name)
+            .find(|stack| stack.name == name)
         else {
             return Ok(false);
         };
-        let removed = self.store.remove_task(&task.id)?;
+        let removed = self.store.remove_stack(&stack.id)?;
         if removed {
             self.announce_workspace(workspace_id);
         }
@@ -1462,13 +1462,13 @@ impl Runtime {
                     }
                 }
 
-                // A task validates its steps when it is declared, and a service
+                // A stack validates its steps when it is declared, and a service
                 // can be renamed or removed afterwards.
-                for task in self.store.list_tasks(&workspace.id)? {
-                    for step in &task.steps {
+                for stack in self.store.list_stacks(&workspace.id)? {
+                    for step in &stack.members {
                         if !declared.iter().any(|service| &service.name == step) {
                             findings.push(Finding {
-                                subject: format!("{}/{}", project.name, task.name),
+                                subject: format!("{}/{}", project.name, stack.name),
                                 message: format!("step '{step}' is no longer a service here"),
                                 certain: true,
                             });
@@ -2312,10 +2312,10 @@ fn looks_runnable(command: &str) -> bool {
 /// it fails to run and says so. This only has to not spin, which it does by
 /// giving up once a pass places nothing new and putting the rest on the last
 /// level, where the reader can see them sitting on each other.
-fn flow_of(task: &Task, services: &[ServiceView], missing: &[String]) -> Vec<FlowNode> {
+fn flow_of(stack: &Stack, services: &[ServiceView], missing: &[String]) -> Vec<FlowNode> {
     use std::collections::BTreeMap;
 
-    let members: Vec<&str> = task.steps.iter().map(String::as_str).collect();
+    let members: Vec<&str> = stack.members.iter().map(String::as_str).collect();
     let after: BTreeMap<&str, Vec<String>> = services
         .iter()
         .map(|view| {
@@ -2355,8 +2355,8 @@ fn flow_of(task: &Task, services: &[ServiceView], missing: &[String]) -> Vec<Flo
     // Anything left is in a cycle; show it after everything that is placed.
     let floor = level.values().copied().max().map(|n| n + 1).unwrap_or(0);
 
-    let mut nodes: Vec<FlowNode> = task
-        .steps
+    let mut nodes: Vec<FlowNode> = stack
+        .members
         .iter()
         .map(|name| {
             let view = services.iter().find(|view| &view.service.name == name);

@@ -455,7 +455,7 @@ async fn services_that_depend_on_each_other_are_found() {
 }
 
 #[tokio::test]
-async fn a_task_step_that_was_removed_is_found() {
+async fn a_stack_step_that_was_removed_is_found() {
     let dir = repo();
     let runtime = Runtime::in_memory().unwrap();
     let project = runtime.add_project(dir.path(), None).unwrap();
@@ -467,9 +467,9 @@ async fn a_task_step_that_was_removed_is_found() {
 
     let web = declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
     runtime
-        .set_task(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
         .unwrap();
-    // Steps are checked when a task is declared; a service can go afterwards.
+    // Steps are checked when a stack is declared; a service can go afterwards.
     runtime.delete_service(&web.id).unwrap();
 
     let findings = runtime.diagnose().unwrap();
@@ -570,14 +570,14 @@ async fn declaring_and_dropping_a_group_is_announced() {
 
     let mut events = runtime.events().subscribe();
     runtime
-        .set_task(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
         .unwrap();
     assert!(
         matches!(events.try_recv(), Ok(runtime_core::events::RuntimeEvent::WorkspaceChanged { .. })),
         "declaring a group said nothing"
     );
 
-    assert!(runtime.remove_task(&workspace.id, "dev").unwrap());
+    assert!(runtime.remove_stack(&workspace.id, "dev").unwrap());
     assert!(
         matches!(events.try_recv(), Ok(runtime_core::events::RuntimeEvent::WorkspaceChanged { .. })),
         "dropping a group said nothing"

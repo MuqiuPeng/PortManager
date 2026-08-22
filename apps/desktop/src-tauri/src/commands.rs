@@ -9,7 +9,7 @@ use runtime_types::{ContainerView, ServicePatch};
 use runtime_ipc::protocol::{Request, ResponseBody};
 use runtime_types::{
     AdoptOutcome, DaemonInfo, Failure, Finding, HealthReport, LogLine, PortOwner, PortStatus, ProjectView,
-    ServiceView, StartOutcome, SupervisedView, TaskView, Workspace,
+    ServiceView, StartOutcome, SupervisedView, StackView, Workspace,
 };
 use tauri::State;
 
@@ -270,64 +270,64 @@ pub async fn list_failures(
 }
 
 #[tauri::command]
-pub async fn list_tasks(
+pub async fn list_stacks(
     state: State<'_, DaemonHandle>,
     project: String,
-) -> CmdResult<Vec<TaskView>> {
-    match call(&state, Request::ListTasks { selector: project }).await? {
-        ResponseBody::Tasks { items } => Ok(items),
+) -> CmdResult<Vec<StackView>> {
+    match call(&state, Request::ListStacks { selector: project }).await? {
+        ResponseBody::Stacks { items } => Ok(items),
         other => Err(unexpected(&other)),
     }
 }
 
 #[tauri::command]
-pub async fn set_task(
+pub async fn set_stack(
     state: State<'_, DaemonHandle>,
     project: String,
     name: String,
-    steps: Vec<String>,
-) -> CmdResult<Vec<TaskView>> {
-    let request = Request::SetTask { selector: project, name, steps };
+    members: Vec<String>,
+) -> CmdResult<Vec<StackView>> {
+    let request = Request::SetStack { selector: project, name, members };
     match call(&state, request).await? {
-        ResponseBody::Tasks { items } => Ok(items),
+        ResponseBody::Stacks { items } => Ok(items),
         other => Err(unexpected(&other)),
     }
 }
 
-/// Stop everything a task started, in the reverse of the order it started.
+/// Stop everything a stack started, in the reverse of the order it started.
 #[tauri::command]
-pub async fn stop_task(
+pub async fn stop_stack(
     state: State<'_, DaemonHandle>,
     project: String,
     name: String,
 ) -> CmdResult<Vec<String>> {
-    match call(&state, Request::StopTask { selector: project, name }).await? {
-        ResponseBody::TaskRun { steps } => Ok(steps),
+    match call(&state, Request::StopStack { selector: project, name }).await? {
+        ResponseBody::StackRun { done } => Ok(done),
         other => Err(unexpected(&other)),
     }
 }
 
 #[tauri::command]
-pub async fn remove_task(
+pub async fn remove_stack(
     state: State<'_, DaemonHandle>,
     project: String,
     name: String,
 ) -> CmdResult<bool> {
-    match call(&state, Request::RemoveTask { selector: project, name }).await? {
+    match call(&state, Request::RemoveStack { selector: project, name }).await? {
         ResponseBody::Done { ok } => Ok(ok),
         other => Err(unexpected(&other)),
     }
 }
 
-/// Bring up every step of a task in order.
+/// Bring up every step of a stack in order.
 #[tauri::command]
-pub async fn run_task(
+pub async fn run_stack(
     state: State<'_, DaemonHandle>,
     project: String,
     name: String,
 ) -> CmdResult<Vec<String>> {
-    match call(&state, Request::RunTask { selector: project, name }).await? {
-        ResponseBody::TaskRun { steps } => Ok(steps),
+    match call(&state, Request::RunStack { selector: project, name }).await? {
+        ResponseBody::StackRun { done } => Ok(done),
         other => Err(unexpected(&other)),
     }
 }

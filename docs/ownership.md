@@ -200,7 +200,7 @@ was made reaches it — and a copy that has been edited on its own terms is left
 alone rather than quietly overwritten.
 
 Dependencies are names within a workspace, so a copy resolves against its own
-siblings rather than reaching back into the checkout it came from. A **task** is
+siblings rather than reaching back into the checkout it came from. A **stack** is
 the other way round: declared once for the project, since every checkout has the
 same service names, and run in whichever checkout the caller names. Two branches
 served at once, on different ports, from one definition.

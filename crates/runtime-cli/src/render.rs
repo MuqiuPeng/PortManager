@@ -6,7 +6,7 @@
 use runtime_core::discover::Discovery;
 use runtime_types::{
     ContainerView, DaemonInfo, ExternalService, HealthReport, LogLine, PortOwner, PortStatus, ProjectView, ServiceStatus,
-    ServiceView, StartOutcome, SupervisedView, TaskView, Workspace,
+    ServiceView, StartOutcome, SupervisedView, StackView, Workspace,
 };
 
 /// A filled dot for live services, hollow for stopped — readable at a glance
@@ -74,12 +74,12 @@ pub fn projects(views: &[ProjectView]) -> String {
             // A declared group is one thing. Its members are shown under it,
             // and not again in the loose list — the same rule the window
             // follows, so the two do not disagree about what exists.
-            for task in &workspace.tasks {
-                out.push_str(&format!("    {}\n", task_header(task)));
+            for stack in &workspace.stacks {
+                out.push_str(&format!("    {}\n", stack_header(stack)));
                 // Members in the order the group actually starts them, and
                 // indented by how deep they wait — the list is the diagram.
-                for node in &task.flow {
-                    let member = task
+                for node in &stack.flow {
+                    let member = stack
                         .services
                         .iter()
                         .find(|view| view.service.name == node.name);
@@ -93,9 +93,9 @@ pub fn projects(views: &[ProjectView]) -> String {
                 }
             }
             let grouped: Vec<&str> = workspace
-                .tasks
+                .stacks
                 .iter()
-                .flat_map(|task| task.task.steps.iter().map(String::as_str))
+                .flat_map(|stack| stack.stack.members.iter().map(String::as_str))
                 .collect();
             for service in &workspace.services {
                 if grouped.contains(&service.service.name.as_str()) {
@@ -118,8 +118,8 @@ pub fn projects(views: &[ProjectView]) -> String {
 }
 
 /// A group's own header: the unit somebody declared, and how it is made.
-pub fn task_header(view: &TaskView) -> String {
-    let total = view.task.steps.len();
+pub fn stack_header(view: &StackView) -> String {
+    let total = view.stack.members.len();
     let mark = if view.running == total && total > 0 {
         "\u{25cf}"
     } else if view.running > 0 {
@@ -134,7 +134,7 @@ pub fn task_header(view: &TaskView) -> String {
     };
     format!(
         "{mark} {}  {}/{} up{missing}",
-        view.task.name, view.running, total
+        view.stack.name, view.running, total
     )
 }
 
@@ -143,9 +143,9 @@ pub fn task_header(view: &TaskView) -> String {
 /// `a -> b -> c` could only ever describe a line, and a group is a graph — two
 /// services that wait for the same thing and for nothing else start at the
 /// same time, and saying so is most of what the shape is for.
-pub fn task_flow(view: &TaskView) -> String {
+pub fn stack_flow(view: &StackView) -> String {
     if view.flow.is_empty() {
-        return format!("    {}", view.task.steps.join(", "));
+        return format!("    {}", view.stack.members.join(", "));
     }
     let depth = view.flow.iter().map(|node| node.level).max().unwrap_or(0);
     (0..=depth)
@@ -163,13 +163,13 @@ pub fn task_flow(view: &TaskView) -> String {
         .join("\n")
 }
 
-pub fn tasks(items: &[TaskView]) -> String {
+pub fn stacks(items: &[StackView]) -> String {
     if items.is_empty() {
-        return "No tasks declared.".to_string();
+        return "No stacks declared.".to_string();
     }
     items
         .iter()
-        .map(|view| format!("{}\n{}", task_header(view), task_flow(view)))
+        .map(|view| format!("{}\n{}", stack_header(view), stack_flow(view)))
         .collect::<Vec<_>>()
         .join("\n")
 }

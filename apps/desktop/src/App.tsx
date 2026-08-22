@@ -7,7 +7,7 @@ import { ExternalRow } from "./components/ExternalRow";
 import { FailureToasts } from "./components/FailureToasts";
 import { FindingsBanner } from "./components/FindingsBanner";
 import { FolderSheet } from "./components/FolderSheet";
-import { GroupEditor } from "./components/GroupEditor";
+import { StackEditor } from "./components/StackEditor";
 import { LogPanel } from "./components/LogPanel";
 import { PortTable } from "./components/PortTable";
 import { ProjectList } from "./components/ProjectList";
@@ -16,7 +16,7 @@ import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
-import { TaskGroup } from "./components/TaskGroup";
+import { StackRow } from "./components/StackRow";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
@@ -26,7 +26,7 @@ import type {
   PortOwner,
   ProjectView,
   ServiceView,
-  TaskView,
+  StackView,
 } from "./types";
 import { affectsFailures, mergeLogs } from "./types";
 
@@ -50,7 +50,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   /** Which in-app prompt is open, if any. */
   const [prompt, setPrompt] = useState<
-    "add-service" | "scan-folder" | "add-task" | "add-worktree" | null
+    "add-service" | "scan-folder" | "add-stack" | "add-worktree" | null
   >(null);
   const [promptProject, setPromptProject] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +199,7 @@ export default function App() {
   }, [project, selectedService]);
 
   /** Tasks for the selected project, reloaded whenever it changes. */
-  const [tasks, setTasks] = useState<TaskView[]>([]);
+  const [stacks, setTasks] = useState<StackView[]>([]);
 
   /** Problems with what is declared, across every project. */
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -209,10 +209,10 @@ export default function App() {
   const [failures, setFailures] = useState<Failure[]>([]);
   /// Bumped when the daemon reports a change worth re-checking for.
   const [revision, setRevision] = useState(0);
-  /** The group the editor is open on, or null when it is making a new one. */
-  const [editingTask, setEditingTask] = useState<string | null>(null);
-  /** Whether the ungrouped drawer is open; null means "whatever suits". */
-  const [ungrouped, setUngrouped] = useState<boolean | null>(null);
+  /** The stack the editor is open on, or null when it is making a new one. */
+  const [editingStack, setEditingStack] = useState<string | null>(null);
+  /** Whether the drawer of services in no stack is open; null means "whatever suits". */
+  const [looseOpen, setLooseOpen] = useState<boolean | null>(null);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
 
@@ -262,7 +262,7 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const found = await api.listTasks(project.id);
+        const found = await api.listStacks(project.id);
         if (!cancelled) setTasks(found);
       } catch {
         // A project whose daemon cannot answer still renders; the services
@@ -275,9 +275,9 @@ export default function App() {
     };
   }, [project?.id, busy]);
 
-  async function reloadTasks() {
+  async function reloadStacks() {
     if (!project) return;
-    setTasks(await api.listTasks(project.id));
+    setTasks(await api.listStacks(project.id));
   }
 
   /** One service row, wherever it appears — loose, or inside a group. */
@@ -402,20 +402,20 @@ export default function App() {
         />
       )}
 
-      {prompt === "add-task" && project && (
-        <GroupEditor
+      {prompt === "add-stack" && project && (
+        <StackEditor
           services={project.workspaces.flatMap((workspace) => workspace.services)}
-          existing={tasks}
-          editing={tasks.find((task) => task.name === editingTask) ?? undefined}
+          existing={stacks}
+          editing={stacks.find((stack) => stack.name === editingStack) ?? undefined}
           onCancel={() => {
             setPrompt(null);
-            setEditingTask(null);
+            setEditingStack(null);
           }}
           onConfirm={(name, steps, after) => {
-            const renamed = editingTask && editingTask !== name ? editingTask : null;
+            const renamed = editingStack && editingStack !== name ? editingStack : null;
             const members = project.workspaces.flatMap((workspace) => workspace.services);
             setPrompt(null);
-            setEditingTask(null);
+            setEditingStack(null);
             void act(async () => {
               // The edges are the members' own dependencies, so saving the
               // group writes them back where they live rather than keeping a
@@ -430,11 +430,11 @@ export default function App() {
                   before.every((one) => waits.includes(one));
                 if (!same) await api.updateService(service.id, { depends_on: waits });
               }
-              await api.setTask(project.id, name, steps);
+              await api.setStack(project.id, name, steps);
               // A group is keyed by its name, so saving under a new one
               // declares a second group rather than renaming the first.
-              if (renamed) await api.removeTask(project.id, renamed);
-              await reloadTasks();
+              if (renamed) await api.removeStack(project.id, renamed);
+              await reloadStacks();
             });
           }}
         />
@@ -613,12 +613,12 @@ export default function App() {
                             // New means new: the sheet is the same one Edit
                             // opens, so it would otherwise arrive filled in
                             // with whichever group was edited last.
-                            setEditingTask(null);
-                            setPrompt("add-task");
+                            setEditingStack(null);
+                            setPrompt("add-stack");
                           }}
-                          title="Start several services together, in order"
+                          title="Bring a set of services up together"
                         >
-                          + Group
+                          + Stack
                         </button>
                         <button
                           className="ghost"
@@ -635,22 +635,22 @@ export default function App() {
                       {/* Members are shown inside their group; listing them
                           above as peers too would be the same service twice,
                           with the grouping saying nothing. */}
-                      {tasks.map((task) => (
-                        <TaskGroup
-                          task={task}
+                      {stacks.map((stack) => (
+                        <StackRow
+                          stack={stack}
                           busy={busy}
-                          key={task.id}
-                          onRun={() => project && act(() => api.runTask(project.id, task.name))}
-                          onStop={() => project && act(() => api.stopTask(project.id, task.name))}
+                          key={stack.id}
+                          onRun={() => project && act(() => api.runStack(project.id, stack.name))}
+                          onStop={() => project && act(() => api.stopStack(project.id, stack.name))}
                           onEdit={() => {
-                            setEditingTask(task.name);
-                            setPrompt("add-task");
+                            setEditingStack(stack.name);
+                            setPrompt("add-stack");
                           }}
                           onRemove={() =>
                             project &&
                             act(async () => {
-                              await api.removeTask(project.id, task.name);
-                              await reloadTasks();
+                              await api.removeStack(project.id, stack.name);
+                              await reloadStacks();
                             })
                           }
                           renderService={(service) => serviceRow(service)}
@@ -665,23 +665,23 @@ export default function App() {
                         (() => {
                           const loose = workspace.services.filter(
                             (service: ServiceView) =>
-                              !tasks.some((task) => task.steps.includes(service.name)),
+                              !stacks.some((stack) => stack.steps.includes(service.name)),
                           );
                           if (loose.length === 0) return null;
                           // Groups are what somebody declared; the rest is a
                           // drawer under them rather than a list of peers. Open
                           // when there is no group yet, so a new service is not
                           // filed away before there is anywhere to file it.
-                          const open = ungrouped ?? tasks.length === 0;
+                          const open = looseOpen ?? stacks.length === 0;
                           return (
                             <section className="loose">
                               <button
                                 className="loose-head"
-                                onClick={() => setUngrouped(!open)}
+                                onClick={() => setLooseOpen(!open)}
                                 aria-expanded={open}
                               >
                                 <span className="loose-caret">{open ? "▾" : "▸"}</span>
-                                Ungrouped
+                                Not in a stack
                                 <span className="loose-count">{loose.length}</span>
                               </button>
                               {open && (

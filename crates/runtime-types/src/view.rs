@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::id::{ProjectId, ServiceId, WorkspaceId};
 use crate::model::{
-    Task,
+    Stack,
     ConflictPolicy, PortLeaseStatus, Project, RuntimeInstance, Service, ServiceStatus, StartedBy,
     Workspace,
 };
@@ -122,7 +122,7 @@ pub struct WorkspaceView {
     /// present in `services`; a surface that shows groups is expected to show
     /// each service once, under its group.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tasks: Vec<TaskView>,
+    pub stacks: Vec<StackView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,7 +387,7 @@ pub struct Failure {
     pub detail: Vec<String>,
 }
 
-/// A task with what its members are actually doing.
+/// A stack with what its members are actually doing.
 ///
 /// The point of declaring one is that a database, an API and a front end are
 /// one thing to the person using them. Listing the three as peers, each with
@@ -395,9 +395,9 @@ pub struct Failure {
 /// leaves them to remember the order. This is the group as a unit: one state,
 /// one thing to start, one thing to stop.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskView {
+pub struct StackView {
     #[serde(flatten)]
-    pub task: Task,
+    pub stack: Stack,
     /// Its members, in the order they start.
     pub services: Vec<ServiceView>,
     /// How many of them are up.

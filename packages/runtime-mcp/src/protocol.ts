@@ -175,16 +175,16 @@ export interface Finding {
   certain: boolean;
 }
 
-/** A named sequence of steps in a checkout. */
+/** A named sequence of members in a checkout. */
 export interface Task {
   id: string;
   workspace_id: string;
   name: string;
-  steps: string[];
+  members: string[];
 }
 
-/** A task with what its members are actually doing. */
-export interface TaskView extends Task {
+/** A stack with what its members are actually doing. */
+export interface StackView extends Task {
   services: ServiceView[];
   running: number;
   /** Steps naming a service that no longer exists. */
@@ -283,8 +283,8 @@ export type ResponseBody =
   | ({ type: "supervised" } & SupervisedView)
   | { type: "findings"; items: Finding[] }
   | { type: "failures"; items: Failure[] }
-  | { type: "tasks"; items: TaskView[] }
-  | { type: "task_run"; steps: string[] }
+  | { type: "stacks"; items: StackView[] }
+  | { type: "task_run"; members: string[] }
   | ({ type: "adopted" } & AdoptOutcome)
   | { type: "sessions"; items: AgentSession[] }
   | ({ type: "session" } & AgentSession)

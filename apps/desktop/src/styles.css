@@ -1200,14 +1200,14 @@ button {
 
 /* A group reads as a container, not as another row competing with its own
    members: the members are what it is made of. */
-.group {
+.stack {
   border: 1px solid var(--border);
   border-radius: 8px;
   margin: 0 0 8px;
   overflow: hidden;
 }
 
-.group-head {
+.stack-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1215,17 +1215,17 @@ button {
   background: var(--surface-alt);
 }
 
-.group-name {
+.stack-name {
   font-size: 12px;
   font-weight: 600;
 }
 
-.group-count {
+.stack-count {
   font-size: 11px;
   color: var(--muted);
 }
 
-.group-missing {
+.stack-missing {
   font-size: 11px;
   color: var(--warn);
 }
@@ -1237,7 +1237,7 @@ button {
 }
 
 /* Indented, so a member is visibly part of something rather than beside it. */
-.group-members {
+.stack-members {
   padding-left: 10px;
   border-left: 2px solid var(--border);
   margin-left: 12px;
@@ -1276,8 +1276,8 @@ button {
 }
 
 /* One list: chosen on top and numbered, the rest below. */
-.field.wide > span:first-child + .group-list,
-.group-list {
+.field.wide > span:first-child + .stack-list,
+.stack-list {
   list-style: none;
   margin: 6px 0 0;
   padding: 4px;
@@ -1291,7 +1291,7 @@ button {
   overflow-y: auto;
 }
 
-.group-list li {
+.stack-list li {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1301,12 +1301,12 @@ button {
 }
 
 /* A member of the group reads as one; the rest are still on offer. */
-.group-list li.chosen {
+.stack-list li.chosen {
   background: var(--surface-alt);
   color: var(--text);
 }
 
-.group-list input[type="checkbox"] {
+.stack-list input[type="checkbox"] {
   margin: 0;
 }
 
@@ -1337,7 +1337,7 @@ button.ghost.tiny {
 }
 
 /* A group is a graph; this is it drawn. */
-.group-flow {
+.stack-flow {
   padding: 10px 12px 4px;
   overflow-x: auto;
 }
@@ -1429,7 +1429,7 @@ button.ghost.tiny {
   background: var(--surface-alt);
 }
 
-.group-list li.chosen {
+.stack-list li.chosen {
   flex-wrap: wrap;
 }
 

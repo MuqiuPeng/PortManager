@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::id::{InstanceId, ProjectId, ServiceId, SessionId, TaskId, WorkspaceId};
+use crate::id::{InstanceId, ProjectId, ServiceId, SessionId, StackId, WorkspaceId};
 
 /// A repository as the user thinks of it, independent of which checkout is open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,17 +92,21 @@ pub struct Service {
 
 /// A named sequence of steps in a checkout.
 ///
-/// Dependencies say what a single service needs. A task says what *you* want
+/// Dependencies say what a single service needs. A stack says what *you* want
 /// brought up, which is not always one service's chain: a dev session is often
 /// an API and a web front end side by side, plus a migration in front of both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Task {
-    pub id: TaskId,
+pub struct Stack {
+    pub id: StackId,
     pub workspace_id: WorkspaceId,
     pub name: String,
-    /// Service names, run in this order. Each brings up its own dependencies
-    /// first, so a step already covered by an earlier one is a no-op.
-    pub steps: Vec<String>,
+    /// The services this stack is made of.
+    ///
+    /// A set, not an order: what waits for what comes from the members' own
+    /// dependencies, so the shape is one fact with one source. The order here
+    /// only decides between members that wait for nothing and could therefore
+    /// start in any order at all.
+    pub members: Vec<String>,
 }
 
 /// Who asked for a service to start. Drives ownership display and kill safety.

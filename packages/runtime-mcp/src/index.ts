@@ -582,7 +582,7 @@ function registerTools(
     {
       title: "Check what is declared",
       description:
-        "List everything wrong with the declared services that has not caused a failure yet: a dependency naming a service that does not exist, services depending on each other, a task step that was removed, a command that will not resolve from the daemon, and a build directory two services would overwrite for each other. Worth calling before starting things in an unfamiliar project — each of these is quiet until the moment it is expensive, and several of them fail somewhere other than where the cause is.",
+        "List everything wrong with the declared services that has not caused a failure yet: a dependency naming a service that does not exist, services depending on each other, a stack step that was removed, a command that will not resolve from the daemon, and a build directory two services would overwrite for each other. Worth calling before starting things in an unfamiliar project — each of these is quiet until the moment it is expensive, and several of them fail somewhere other than where the cause is.",
       inputSchema: {},
     },
     async () =>
@@ -610,76 +610,76 @@ function registerTools(
       ),
   );
 
-  // ---- tasks ---------------------------------------------------------
+  // ---- stacks ---------------------------------------------------------
 
   server.registerTool(
-    "list_tasks",
+    "list_stacks",
     {
-      title: "List tasks",
+      title: "List stacks",
       description:
-        "List the named step sequences declared in a project. A task brings up several services in order — a migration, then an API, then a front end.",
+        "List the named step sequences declared in a project. A stack brings up several services in order — a migration, then an API, then a front end.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
       },
     },
     async ({ project }) =>
-      run("list_tasks", { selector: project }, (body) =>
-        body.type === "tasks" ? formatTasks(body.items) : unexpected(body),
+      run("list_stacks", { selector: project }, (body) =>
+        body.type === "stacks" ? formatTasks(body.items) : unexpected(body),
       ),
   );
 
   server.registerTool(
-    "set_task",
+    "set_stack",
     {
-      title: "Declare a task",
+      title: "Declare a stack",
       description:
-        "Declare or replace a named sequence of steps. Steps are service names, run in the order given; each brings up its own dependencies first, so a step already covered by an earlier one does nothing. Every step is checked now rather than when it runs.",
+        "Declare or replace a named sequence of members. Steps are service names, run in the order given; each brings up its own dependencies first, so a step already covered by an earlier one does nothing. Every step is checked now rather than when it runs.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
         name: z.string(),
-        steps: z.array(z.string()).describe("Service names, in order."),
+        members: z.array(z.string()).describe("Service names, in order."),
       },
     },
-    async ({ project, name, steps }) =>
-      run("set_task", { selector: project, name, steps }, (body) =>
-        body.type === "tasks" ? formatTasks(body.items) : unexpected(body),
+    async ({ project, name, members }) =>
+      run("set_stack", { selector: project, name, members }, (body) =>
+        body.type === "stacks" ? formatTasks(body.items) : unexpected(body),
       ),
   );
 
   server.registerTool(
-    "run_task",
+    "run_stack",
     {
-      title: "Run a task",
+      title: "Run a stack",
       description:
-        "Bring up every step of a task in order, waiting for each to report healthy before the next. A step that runs to completion must succeed or the task stops there — starting an API against a database whose migration failed is worse than not starting it. A service already running is left alone rather than restarted.",
+        "Bring up every step of a stack in order, waiting for each to report healthy before the next. A step that runs to completion must succeed or the stack stops there — starting an API against a database whose migration failed is worse than not starting it. A service already running is left alone rather than restarted.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
         name: z.string(),
       },
     },
     async ({ project, name }) =>
-      run("run_task", { selector: project, name }, (body) =>
+      run("run_stack", { selector: project, name }, (body) =>
         body.type === "task_run"
-          ? body.steps.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+          ? body.members.map((step) => `* ${step}`).join("\n") || "Nothing to do."
           : unexpected(body),
       ),
   );
 
   server.registerTool(
-    "stop_task",
+    "stop_stack",
     {
       title: "Stop a group",
       description:
-        "Stop everything a task started, in the reverse of the order it started — a front end before the API it talks to, and that before the database under both. A member the runtime did not start is left alone, and one already stopped is not an error.",
+        "Stop everything a stack started, in the reverse of the order it started — a front end before the API it talks to, and that before the database under both. A member the runtime did not start is left alone, and one already stopped is not an error.",
       inputSchema: {
         project: z.string().describe(PROJECT_DESCRIPTION),
         name: z.string(),
       },
     },
     async ({ project, name }) =>
-      run("stop_task", { selector: project, name }, (body) =>
+      run("stop_stack", { selector: project, name }, (body) =>
         body.type === "task_run"
-          ? body.steps.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+          ? body.members.map((step) => `* ${step}`).join("\n") || "Nothing to do."
           : unexpected(body),
       ),
   );

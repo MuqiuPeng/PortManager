@@ -1,10 +1,10 @@
 import { useState } from "react";
 
-import type { ServiceView, TaskView } from "../types";
+import type { ServiceView, StackView } from "../types";
 import { FlowChart } from "./FlowChart";
 
 interface Props {
-  task: TaskView;
+  stack: StackView;
   busy: boolean;
   onRun: () => void;
   onStop: () => void;
@@ -26,30 +26,30 @@ interface Props {
  * what it is made of rather than as alternatives to it. Nothing here is
  * inferred: a group exists because somebody said so.
  */
-export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderService }: Props) {
+export function StackRow({ stack, busy, onRun, onStop, onEdit, onRemove, renderService }: Props) {
   /** A node clicked on the diagram, whose row is then the one shown. */
   const [picked, setPicked] = useState<string | undefined>(undefined);
-  const total = task.steps.length;
-  const missing = task.missing ?? [];
-  const allUp = total > 0 && task.running === total;
-  const someUp = task.running > 0;
+  const total = stack.steps.length;
+  const missing = stack.missing ?? [];
+  const allUp = total > 0 && stack.running === total;
+  const someUp = stack.running > 0;
 
   return (
-    <section className="group">
-      <header className="group-head">
+    <section className="stack">
+      <header className="stack-head">
         <span
           className={allUp ? "dot status-healthy" : someUp ? "dot partial" : "dot"}
           aria-hidden
         />
-        <span className="group-name">{task.name}</span>
-        <span className="group-count">
-          {task.running}/{total} up
+        <span className="stack-name">{stack.name}</span>
+        <span className="stack-count">
+          {stack.running}/{total} up
         </span>
 
         {missing.length > 0 && (
           // A step naming nothing fails the group halfway through, having
           // already started what came before it.
-          <span className="group-missing">missing {missing.join(", ")}</span>
+          <span className="stack-missing">missing {missing.join(", ")}</span>
         )}
 
         <span className="spacer" />
@@ -65,18 +65,18 @@ export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderS
         {/* Somewhere to see what this group was set to. Without it the only
             way back to the order somebody chose is to delete the group and
             declare it again from memory. */}
-        <button className="ghost" onClick={onEdit} disabled={busy} title="Change its members or their order">
+        <button className="ghost" onClick={onEdit} disabled={busy} title="Change what is in this stack">
           Edit
         </button>
-        <button className="ghost" onClick={onRemove} disabled={busy} title="Ungroup">
+        <button className="ghost" onClick={onRemove} disabled={busy} title="Delete this stack">
           −
         </button>
       </header>
 
-      {(task.flow ?? []).length > 0 && (
-        <div className="group-flow">
+      {(stack.flow ?? []).length > 0 && (
+        <div className="stack-flow">
           <FlowChart
-            flow={task.flow ?? []}
+            flow={stack.flow ?? []}
             selected={picked}
             onSelect={(node) => setPicked(picked === node.name ? undefined : node.name)}
           />
@@ -86,8 +86,8 @@ export function TaskGroup({ task, busy, onRun, onStop, onEdit, onRemove, renderS
       {/* The diagram says the shape; the rows say the state, and only for what
           was clicked unless nothing was — a group of eight is a diagram worth
           reading, not eight rows to scroll past. */}
-      <div className="group-members">
-        {task.services
+      <div className="stack-members">
+        {stack.services
           .filter((service) => !picked || service.name === picked)
           .map(renderService)}
       </div>

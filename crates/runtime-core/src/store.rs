@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use runtime_types::{
     AgentSession, HealthCheck, InstanceId, PortLease, PortLeaseStatus, Project, ProjectId, Result,
     RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, SessionId, StartedBy,
-    Task, TaskId, Workspace, WorkspaceId,
+    Stack, StackId, Workspace, WorkspaceId,
 };
 
 const SCHEMA_VERSION: i64 = 2;
@@ -62,14 +62,14 @@ CREATE TABLE IF NOT EXISTS services (
     UNIQUE(workspace_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
+CREATE TABLE IF NOT EXISTS stacks (
     id           TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
-    steps        TEXT NOT NULL DEFAULT '[]',
+    members      TEXT NOT NULL DEFAULT '[]',
     UNIQUE(workspace_id, name)
 );
-CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_stacks_workspace ON stacks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_services_workspace ON services(workspace_id);
 
 CREATE TABLE IF NOT EXISTS instances (
@@ -156,7 +156,10 @@ impl Store {
             .map_err(sqlite_err)?;
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(sqlite_err)?;
+        // After the schema, not before: the copy needs the new table to exist,
+        // and `CREATE TABLE IF NOT EXISTS` leaves a populated one alone.
         conn.execute_batch(SCHEMA).map_err(sqlite_err)?;
+        Self::carry_over_old_tasks(conn);
         Self::add_missing_columns(conn);
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
@@ -165,6 +168,46 @@ impl Store {
         )
         .map_err(sqlite_err)?;
         Ok(())
+    }
+
+    /// A stack used to be called a task, in the database as well.
+    ///
+    /// Carried over rather than abandoned: somebody's declared stacks are the
+    /// one thing here typed by hand rather than detected, and `CREATE TABLE IF
+    /// NOT EXISTS stacks` beside the old table would leave them in place and
+    /// invisible.
+    ///
+    /// Copies rather than renames, and copies row by row, because the first
+    /// version of this shipped broken — a rename sweep rewrote its own literals
+    /// so the guard read `has(new) && !has(new)`, which is never true. It did
+    /// nothing, silently, and the schema then created the new table empty
+    /// beside the full old one. So this has to handle that state too, and the
+    /// way to handle both is to ask what is missing rather than what happened.
+    fn carry_over_old_tasks(conn: &Connection) {
+        let old = "tasks";
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![old],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if !exists {
+            return;
+        }
+        // Only what the new table does not already have, so running twice is
+        // the same as running once.
+        let copy = format!(
+            "INSERT INTO stacks(id, workspace_id, name, members)
+             SELECT id, workspace_id, name, steps FROM {old}
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM stacks s
+                 WHERE s.workspace_id = {old}.workspace_id AND s.name = {old}.name
+             )"
+        );
+        if conn.execute(&copy, []).is_ok() {
+            let _ = conn.execute(&format!("DROP TABLE {old}"), []);
+        }
     }
 
     /// Bring an existing database up to the current shape.
@@ -375,20 +418,20 @@ impl Store {
         Ok((0u16..u16::MAX).find(|n| !used.contains(n)).unwrap_or(0))
     }
 
-    // ---- tasks ---------------------------------------------------------
+    // ---- stacks --------------------------------------------------------
 
-    pub fn upsert_task(&self, task: &Task) -> Result<()> {
-        let steps = serde_json::to_string(&task.steps).map_err(json_err)?;
+    pub fn upsert_stack(&self, stack: &Stack) -> Result<()> {
+        let members = serde_json::to_string(&stack.members).map_err(json_err)?;
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO tasks(id, workspace_id, name, steps)
+                "INSERT INTO stacks(id, workspace_id, name, members)
                  VALUES(?1, ?2, ?3, ?4)
-                 ON CONFLICT(workspace_id, name) DO UPDATE SET steps = excluded.steps",
+                 ON CONFLICT(workspace_id, name) DO UPDATE SET members = excluded.members",
                 params![
-                    task.id.as_str(),
-                    task.workspace_id.as_str(),
-                    task.name,
-                    steps
+                    stack.id.as_str(),
+                    stack.workspace_id.as_str(),
+                    stack.name,
+                    members
                 ],
             )
             .map_err(sqlite_err)?;
@@ -396,10 +439,10 @@ impl Store {
         })
     }
 
-    pub fn list_tasks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Task>> {
+    pub fn list_stacks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Stack>> {
         self.with_conn(|conn| {
             let mut statement = conn
-                .prepare("SELECT * FROM tasks WHERE workspace_id = ?1 ORDER BY name")
+                .prepare("SELECT * FROM stacks WHERE workspace_id = ?1 ORDER BY name")
                 .map_err(sqlite_err)?;
             let rows = statement
                 .query_map(params![workspace_id.as_str()], |row| Ok(row_task(row)))
@@ -412,10 +455,10 @@ impl Store {
         })
     }
 
-    pub fn remove_task(&self, id: &TaskId) -> Result<bool> {
+    pub fn remove_stack(&self, id: &StackId) -> Result<bool> {
         self.with_conn(|conn| {
             let changed = conn
-                .execute("DELETE FROM tasks WHERE id = ?1", params![id.as_str()])
+                .execute("DELETE FROM stacks WHERE id = ?1", params![id.as_str()])
                 .map_err(sqlite_err)?;
             Ok(changed > 0)
         })
@@ -845,12 +888,12 @@ fn row_service(row: &Row<'_>) -> Result<Service> {
     })
 }
 
-fn row_task(row: &Row<'_>) -> Result<Task> {
-    Ok(Task {
-        id: TaskId(get_text(row, "id")?),
+fn row_task(row: &Row<'_>) -> Result<Stack> {
+    Ok(Stack {
+        id: StackId(get_text(row, "id")?),
         workspace_id: WorkspaceId(get_text(row, "workspace_id")?),
         name: get_text(row, "name")?,
-        steps: serde_json::from_str(&get_text(row, "steps")?).map_err(json_err)?,
+        members: serde_json::from_str(&get_text(row, "members")?).map_err(json_err)?,
     })
 }
 

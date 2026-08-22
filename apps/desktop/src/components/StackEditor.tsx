@@ -1,14 +1,14 @@
 import { useState } from "react";
 
-import type { ServiceView, TaskView } from "../types";
+import type { ServiceView, StackView } from "../types";
 
 interface Props {
   /** Everything in the project that could be a member. */
   services: ServiceView[];
   /** Groups already declared, so a name is not reused by accident. */
-  existing: TaskView[];
+  existing: StackView[];
   /** The group being edited, if this is an edit rather than a new one. */
-  editing?: TaskView;
+  editing?: StackView;
   onCancel: () => void;
   onConfirm: (name: string, steps: string[], after: Record<string, string[]>) => void;
 }
@@ -27,7 +27,7 @@ interface Props {
  * service that is not there, spell one wrong, or list one twice, and none of
  * that shows until the group is run. Ticking cannot express any of it.
  */
-export function GroupEditor({ services, existing, editing, onCancel, onConfirm }: Props) {
+export function StackEditor({ services, existing, editing, onCancel, onConfirm }: Props) {
   const [name, setName] = useState(editing?.name ?? "");
   const [steps, setSteps] = useState<string[]>(editing?.steps ?? []);
   // What each member waits for, seeded from the services' own dependencies —
@@ -42,7 +42,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
   const rest = services.filter((view) => !steps.includes(view.name)).map((view) => view.name);
 
   const clash = existing.find(
-    (task) => task.name === name.trim() && task.name !== editing?.name,
+    (stack) => stack.name === name.trim() && stack.name !== editing?.name,
   );
   const ready = name.trim() !== "" && !clash && chosen.length > 0;
 
@@ -78,7 +78,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
     <div className="sheet-backdrop" onClick={onCancel}>
       <div className="sheet narrow" onClick={(event) => event.stopPropagation()}>
         <header className="sheet-head">
-          <h2>{editing ? `Edit ${editing.name}` : "New group"}</h2>
+          <h2>{editing ? `Edit ${editing.name}` : "New stack"}</h2>
         </header>
 
         <div className="sheet-body">
@@ -97,7 +97,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
             />
           </label>
           {clash && (
-            <p className="hint problem">This project already has a group called {clash.name}.</p>
+            <p className="hint problem">This project already has a stack called {clash.name}.</p>
           )}
 
           <div className="field wide">
@@ -105,7 +105,7 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
             {services.length === 0 ? (
               <p className="hint">This project has no services yet.</p>
             ) : (
-              <ul className="group-list">
+              <ul className="stack-list">
                 {chosen.map((step, index) => (
                   <li key={step} className="chosen">
                     <input
@@ -186,8 +186,8 @@ export function GroupEditor({ services, existing, editing, onCancel, onConfirm }
 
           <p className="hint">
             {chosen.length === 0
-              ? "Tick the services this group starts."
-              : "Anything waiting for nothing starts at once; the rest follow what they wait for, and the group stops in reverse. A service already up when its turn comes is left alone. What a member waits for is its own dependency, so it holds outside this group too."}
+              ? "Tick the services this stack is made of."
+              : "Anything waiting for nothing starts at once; the rest follow what they wait for, and the stack stops in reverse. A service already up when its turn comes is left alone. What a member waits for is its own dependency, so it holds outside this stack too."}
           </p>
         </div>
 
