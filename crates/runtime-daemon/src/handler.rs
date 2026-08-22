@@ -518,10 +518,16 @@ impl Dispatcher {
     }
 
     fn resolve_service(&self, project: Option<&str>, selector: &str) -> Result<Service> {
+        // A selector that is a path names one checkout. Resolving only as far
+        // as its project would send the request to whichever checkout came
+        // first, which for a repository cloned twice is the other one.
+        let workspace = project
+            .and_then(|selector| self.runtime.workspace_for_selector(selector).ok().flatten());
         let project: Option<Project> = project
             .map(|selector| self.runtime.resolve_project(selector))
             .transpose()?;
-        self.runtime.resolve_service(project.as_ref(), selector)
+        self.runtime
+            .resolve_service_in(project.as_ref(), workspace.as_ref(), selector)
     }
 }
 

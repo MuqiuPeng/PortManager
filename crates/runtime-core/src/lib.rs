@@ -195,6 +195,32 @@ impl Runtime {
         let detection = detect::detect(&root);
         let now = Utc::now();
         let known = self.store.find_project_by_path(&root)?;
+
+        // A second clone of a repository already known is a checkout of it, not
+        // a second project.
+        //
+        // The runtime already models a project as one thing with several
+        // checkouts, told apart by branch — that is what git worktrees get. A
+        // separate clone is the same situation reached a different way, and
+        // registering it as its own project produced three entries all called
+        // `stockviewer`, where `-p stockviewer` picked one of them by luck.
+        //
+        // Identified by remote, because that is what makes two directories the
+        // same repository. A clone with no remote has nothing to be the same
+        // as, and stays its own project.
+        if known.is_none() {
+            if let Some(remote) = git.as_ref().and_then(|info| info.remote_url.as_deref()) {
+                if let Some(sibling) = self.project_with_remote(remote)? {
+                    let workspace = self.register_workspace(&sibling.id, &root)?;
+                    self.copy_services_from_primary(&sibling.id, &workspace)?;
+                    self.events.publish(RuntimeEvent::WorkspaceChanged {
+                        project_id: sibling.id.clone(),
+                        workspace_id: workspace.id,
+                    });
+                    return self.project_view(&sibling);
+                }
+            }
+        }
         // Detection runs when a project is first added, and never again.
         // Re-adding happens easily — the Discover tab, a scan, `project add`
         // twice — and must not undo curation: a service the user deleted would
@@ -309,6 +335,26 @@ impl Runtime {
     /// registering one by hand used to produce exactly that — `sync_worktrees`
     /// copied them and this did not, so the same act had two outcomes
     /// depending on which way it was asked for.
+    /// A registered project cloned from the same place.
+    ///
+    /// Compared after trimming the shapes of the same URL apart: `git@host:a/b.git`
+    /// and `https://host/a/b` are one repository, and a trailing `.git` or slash
+    /// is punctuation rather than identity.
+    fn project_with_remote(&self, remote: &str) -> Result<Option<Project>> {
+        let wanted = normalise_remote(remote);
+        Ok(self
+            .store
+            .list_projects()?
+            .into_iter()
+            .find(|project| {
+                project
+                    .repository_url
+                    .as_deref()
+                    .map(|url| normalise_remote(url) == wanted)
+                    .unwrap_or(false)
+            }))
+    }
+
     pub fn register_worktree(&self, project_id: &ProjectId, path: &Path) -> Result<Workspace> {
         let workspace = self.register_workspace(project_id, path)?;
         if workspace.worktree {
@@ -680,7 +726,39 @@ impl Runtime {
     ///
     /// When a project has several workspaces, a bare name resolves to the
     /// primary checkout; a worktree's service needs `branch/name`.
+    /// The checkout a selector points *inside*, when it is a path.
+    ///
+    /// `-p /path/to/a/checkout` names one checkout, not just the project it
+    /// belongs to. Resolving only as far as the project sends an edit to
+    /// whichever checkout came first — which for a repository cloned twice is
+    /// the other one, silently.
+    pub fn workspace_for_selector(&self, selector: &str) -> Result<Option<Workspace>> {
+        let path = Path::new(selector);
+        if !path.is_absolute() && !path.exists() {
+            return Ok(None);
+        }
+        let Ok(path) = canonicalize(path) else {
+            return Ok(None);
+        };
+        for candidate in path.ancestors() {
+            if let Some(workspace) = self.store.find_workspace_by_path(candidate)? {
+                return Ok(Some(workspace));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn resolve_service(&self, project: Option<&Project>, selector: &str) -> Result<Service> {
+        self.resolve_service_in(project, None, selector)
+    }
+
+    /// As `resolve_service`, but confined to one checkout when one is known.
+    pub fn resolve_service_in(
+        &self,
+        project: Option<&Project>,
+        workspace_filter: Option<&Workspace>,
+        selector: &str,
+    ) -> Result<Service> {
         if let Some(service) = self.store.get_service(&ServiceId::from(selector))? {
             return Ok(service);
         }
@@ -700,6 +778,11 @@ impl Runtime {
         let mut matches = Vec::new();
         for project in &projects {
             for workspace in self.store.list_workspaces(&project.id)? {
+                if let Some(only) = workspace_filter {
+                    if workspace.id != only.id {
+                        continue;
+                    }
+                }
                 if let Some(branch) = branch {
                     let workspace_branch = workspace.git_branch.as_deref().unwrap_or_default();
                     if !workspace_branch.eq_ignore_ascii_case(branch) {
@@ -718,15 +801,28 @@ impl Runtime {
             return Err(RuntimeError::not_found("service", selector));
         }
 
-        // Preferring the primary checkout disambiguates `main` from a worktree
-        // of the *same* project. Applying it across projects would silently
-        // pick one of several unrelated services with the same name.
+        // Preferring the project's own root disambiguates it from its other
+        // checkouts. Applying that across projects would silently pick one of
+        // several unrelated services sharing a name.
+        //
+        // The root, not merely "not a worktree": a second clone of the same
+        // repository is a checkout too and is not a linked worktree, so on
+        // that test a project could have several primaries and the first one
+        // found would win — which is the silent pick this is here to stop.
         let single_project = matches
             .iter()
             .all(|(workspace, _)| workspace.project_id == matches[0].0.project_id);
         if branch.is_none() && single_project {
-            if let Some((_, service)) = matches.iter().find(|(workspace, _)| !workspace.worktree) {
-                return Ok(service.clone());
+            let root = self
+                .store
+                .get_project(&matches[0].0.project_id)?
+                .map(|project| project.root_path);
+            if let Some(root) = root {
+                if let Some((_, service)) =
+                    matches.iter().find(|(workspace, _)| workspace.path == root)
+                {
+                    return Ok(service.clone());
+                }
             }
         }
         if matches.len() > 1 {
@@ -1428,6 +1524,35 @@ impl Runtime {
         let mut findings = Vec::new();
 
         for project in self.store.list_projects()? {
+            // Two checkouts on one branch is a real conflict, not a tidiness
+            // complaint: the services in them are the same services, declared
+            // twice, wanting the same ports. A branch is what you bring up
+            // once, so which of the two is running becomes a question with no
+            // answer in the tool — and both being up is a pair of servers
+            // fighting over a port with the same name on each side.
+            let mut on_branch: std::collections::BTreeMap<String, Vec<PathBuf>> =
+                std::collections::BTreeMap::new();
+            for workspace in self.store.list_workspaces(&project.id)? {
+                if let Some(branch) = workspace.git_branch.clone() {
+                    on_branch.entry(branch).or_default().push(workspace.path.clone());
+                }
+            }
+            for (branch, paths) in on_branch.iter().filter(|(_, paths)| paths.len() > 1) {
+                findings.push(Finding {
+                    subject: format!("{}/{branch}", project.name),
+                    message: format!(
+                        "{} checkouts are on this branch: {}. Only one of them can hold the branch's ports",
+                        paths.len(),
+                        paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    certain: true,
+                });
+            }
+
             for workspace in self.store.list_workspaces(&project.id)? {
                 let declared = self.store.list_services(&workspace.id)?;
 
@@ -2407,6 +2532,22 @@ fn flow_of(stack: &Stack, services: &[ServiceView], missing: &[String]) -> Vec<F
     let _ = missing;
     nodes.sort_by_key(|node| node.level);
     nodes
+}
+
+/// One repository written two ways is still one repository.
+fn normalise_remote(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    // `git@host:owner/repo` and `https://host/owner/repo` differ only in how
+    // they say where the host ends.
+    let rest = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .rsplit_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(url);
+    rest.replacen(':', "/", 1).to_lowercase()
 }
 
 #[cfg(test)]

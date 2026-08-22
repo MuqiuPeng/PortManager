@@ -1131,3 +1131,89 @@ async fn taking_over_something_stopped_just_starts_it() {
         .await
         .unwrap();
 }
+
+/// Two clones of one repository are one project with two checkouts.
+///
+/// Registering them separately produced two entries with the same name, and a
+/// selector naming that name picked one of them by luck. The runtime already
+/// models a project as one thing with several checkouts told apart by branch;
+/// a second clone is that situation reached a different way.
+#[tokio::test]
+async fn a_second_clone_of_a_repository_becomes_a_checkout_of_it() {
+    let remote = "git@github.com:someone/shop.git";
+    let first = repo(&[("package.json", PACKAGE_JSON)]);
+    let second = repo(&[("package.json", PACKAGE_JSON)]);
+    for dir in [&first, &second] {
+        git(dir.path(), &["remote", "add", "origin", remote]);
+    }
+    git(second.path(), &["checkout", "-b", "other"]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let one = runtime.add_project(first.path(), None).unwrap();
+    let two = runtime.add_project(second.path(), None).unwrap();
+
+    assert_eq!(one.project.id, two.project.id, "a second project was made");
+    assert_eq!(runtime.list_projects().unwrap().len(), 1);
+    assert_eq!(two.workspaces.len(), 2, "{:?}", two.workspaces);
+
+    // And the same branch twice is worth saying out loud.
+    let third = repo(&[("package.json", PACKAGE_JSON)]);
+    git(third.path(), &["remote", "add", "origin", remote]);
+    git(third.path(), &["checkout", "-b", "other"]);
+    runtime.add_project(third.path(), None).unwrap();
+
+    let findings = runtime.diagnose().unwrap();
+    assert!(
+        findings.iter().any(|f| f.message.contains("checkouts are on this branch")),
+        "{findings:?}"
+    );
+}
+
+/// With a repository cloned twice, a service name must not pick one by luck.
+///
+/// The resolver preferred "the checkout that is not a linked worktree", which
+/// assumed a project had exactly one of those. A second clone registered as a
+/// checkout is not a worktree either, so the assumption broke the moment that
+/// became possible, and an edit meant for one clone landed in the other —
+/// silently, which is the part that matters.
+#[tokio::test]
+async fn a_path_selector_names_the_checkout_it_points_inside() {
+    let remote = "git@github.com:someone/shop.git";
+    let first = repo(&[("package.json", PACKAGE_JSON)]);
+    let second = repo(&[("package.json", PACKAGE_JSON)]);
+    for dir in [&first, &second] {
+        git(dir.path(), &["remote", "add", "origin", remote]);
+    }
+    git(second.path(), &["checkout", "-b", "other"]);
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(first.path(), None).unwrap();
+    runtime.add_project(second.path(), None).unwrap();
+    let project = view.project.clone();
+
+    // A bare name answers with the project's own root. This one passes under
+    // the old rule too, since the root also happens to be the first checkout
+    // registered — it is here as a smoke check, not as the guard. The guard is
+    // below: without narrowing, that assertion fails.
+    let root = runtime
+        .store()
+        .find_workspace_by_path(&canonical(first.path()))
+        .unwrap()
+        .unwrap();
+    let picked = runtime.resolve_service(Some(&project), "web").unwrap();
+    assert_eq!(picked.workspace_id, root.id);
+
+    // A path inside the other clone names that one.
+    let other = runtime
+        .workspace_for_selector(second.path().to_str().unwrap())
+        .unwrap()
+        .expect("the second checkout should be found by its path");
+    let picked = runtime
+        .resolve_service_in(Some(&project), Some(&other), "web")
+        .unwrap();
+    assert_eq!(picked.workspace_id, other.id, "the path did not narrow anything");
+}
+
+fn canonical(path: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap()
+}
