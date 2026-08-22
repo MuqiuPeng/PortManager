@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 interface Props {
   serviceName: string | null;
   lines: LogLine[];
+  /** Give the column back, since it is a column now rather than a strip. */
+  onClose?: () => void;
 }
 
-export function LogPanel({ serviceName, lines }: Props) {
+export function LogPanel({ serviceName, lines, onClose }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
@@ -60,6 +62,11 @@ export function LogPanel({ serviceName, lines }: Props) {
         >
           {copied ? "Copied" : "Copy"}
         </Button>
+        {onClose && (
+          <Button variant="ghost" size="icon" className="size-6" onClick={onClose} title="Close">
+            ×
+          </Button>
+        )}
       </header>
 
       <div className="logs-body" ref={scroller} onScroll={handleScroll}>

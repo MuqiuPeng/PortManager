@@ -765,13 +765,22 @@ export default function App() {
                 })()}
 
 
-                <LogPanel
-                  serviceName={selectedServiceView?.name ?? null}
-                  lines={logs}
-                />
               </>
             )}
           </main>
+        )}
+
+        {/* Beside what it belongs to, not under it. A log pane across the
+            bottom takes the same height whether or not anything is selected,
+            and the thing it describes is a row you are pointing at — which is
+            up here. It appears only when there is a service to show, so it
+            costs nothing the rest of the time. */}
+        {tab === "services" && selectedServiceView && (
+          <LogPanel
+            serviceName={selectedServiceView.name}
+            lines={logs}
+            onClose={() => setSelectedService(null)}
+          />
         )}
       </div>
     </div>

@@ -285,13 +285,27 @@ button {
 
 /* ---- logs ------------------------------------------------------------ */
 
+/* A column beside what it describes, not a strip beneath everything. The
+   width is fixed rather than a share of the window: log lines are monospace
+   and a column that grows with the window just gets emptier on the right. */
 .logs {
-  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   background: var(--surface);
-  height: 220px;
+  width: min(440px, 40vw);
+  min-width: 280px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
+}
+
+/* Below 1000px there is not room for three columns; the log takes the place
+   of the detail rather than squeezing it, since it is what was just asked
+   for. */
+@media (max-width: 1000px) {
+  .logs {
+    width: min(440px, 60vw);
+  }
 }
 
 .logs-head {
