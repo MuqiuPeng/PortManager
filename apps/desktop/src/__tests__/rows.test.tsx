@@ -9,6 +9,7 @@ import { FailureToasts } from "../components/FailureToasts";
 import { FindingsBanner } from "../components/FindingsBanner";
 import { FlowChart } from "../components/FlowChart";
 import { partition } from "../Panel";
+import { mergeLogs } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
 import { GroupEditor } from "../components/GroupEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
@@ -24,6 +25,7 @@ import type {
   TaskView,
   FlowNode,
   ProjectView,
+  LogLine,
 } from "../types";
 
 /**
@@ -390,5 +392,27 @@ describe("what the panel shows", () => {
       ]),
     ]);
     expect(groups.map((one) => one.task.name)).toEqual(["zzz", "aaa"]);
+  });
+});
+
+describe("adding newly-read log lines", () => {
+  const line = (seq: number) => ({ seq, stream: "stdout", message: `line ${seq}` }) as LogLine;
+
+  it("shows a line once when the same read arrives twice", () => {
+    // Two reads in flight, both asked from the beginning because the cursor
+    // had not moved yet. This is the whole log arriving twice.
+    const first = [line(0), line(1), line(2)];
+    const shown = mergeLogs(mergeLogs([], first), first);
+    expect(shown.map((one) => one.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("still adds what is genuinely new", () => {
+    const shown = mergeLogs(mergeLogs([], [line(0), line(1)]), [line(1), line(2)]);
+    expect(shown.map((one) => one.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("keeps the newest when there are more than it holds", () => {
+    const many = Array.from({ length: 12 }, (_, index) => line(index));
+    expect(mergeLogs([], many, 5).map((one) => one.seq)).toEqual([7, 8, 9, 10, 11]);
   });
 });

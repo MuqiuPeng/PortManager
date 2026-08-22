@@ -28,7 +28,7 @@ import type {
   ServiceView,
   TaskView,
 } from "./types";
-import { affectsFailures } from "./types";
+import { affectsFailures, mergeLogs } from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -149,10 +149,16 @@ export default function App() {
     }
 
     let cancelled = false;
+    let reading = false;
     logCursor.current = undefined;
     setLogs([]);
 
     const poll = async () => {
+      // One read at a time. The first read of a long log is the slow one, and
+      // a tick landing inside it would ask from the beginning again, since the
+      // cursor only moves when a reply arrives.
+      if (reading) return;
+      reading = true;
       try {
         const incoming = await api.getLogs(selectedService, 300, logCursor.current);
         if (cancelled || incoming.length === 0) return;
@@ -162,9 +168,11 @@ export default function App() {
         // which reads as the service repeating itself.
         const furthest = incoming.reduce((seq, line) => Math.max(seq, line.seq), 0);
         logCursor.current = Math.max(logCursor.current ?? 0, furthest);
-        setLogs((current) => [...current, ...incoming].slice(-500));
+        setLogs((current) => mergeLogs(current, incoming));
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
+      } finally {
+        reading = false;
       }
     };
 

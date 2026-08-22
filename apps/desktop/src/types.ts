@@ -305,6 +305,22 @@ export interface FlowNode {
   one_shot?: boolean;
 }
 
+/**
+ * Add newly-read lines to what is already shown, once each.
+ *
+ * A line is identified by its seq, which counts up per service, so anything
+ * not past the last line held is something already held. Filtering on that
+ * rather than trusting the request to have asked for the right window: the
+ * cursor is only advanced once a reply arrives, so two reads in flight at
+ * once both ask from the beginning, and the whole log arrives twice.
+ */
+export function mergeLogs(current: LogLine[], incoming: LogLine[], keep = 500): LogLine[] {
+  const last = current.length > 0 ? current[current.length - 1].seq : -1;
+  const fresh = incoming.filter((line) => line.seq > last);
+  if (fresh.length === 0) return current;
+  return [...current, ...fresh].slice(-keep);
+}
+
 /** True while the runtime believes a process should exist. */
 export function isLive(status: ServiceStatus): boolean {
   return (
