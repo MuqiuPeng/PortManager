@@ -182,6 +182,14 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_seconds: Option<u64>,
     },
+    /// Stop what something else started and start it here instead.
+    TakeOverService {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        service: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_seconds: Option<u64>,
+    },
     RestartService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,

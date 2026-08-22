@@ -1091,3 +1091,43 @@ async fn a_cursored_read_is_not_answered_with_a_synthesised_line() {
         "a cursored read was answered with {following:?}"
     );
 }
+
+/// Taking over is refused for a service nothing else is holding up.
+///
+/// The rule the whole design rests on is that the runtime does not terminate
+/// what it did not start. Take-over is the one door through it, so what it
+/// refuses matters more than what it does: a stopped service has nothing to
+/// take over and is simply started, and a service under another supervisor is
+/// left alone, because stopping it here is undone a second later by whatever
+/// is watching it.
+#[tokio::test]
+async fn taking_over_something_stopped_just_starts_it() {
+    let dir = repo(&[(
+        ".runtime.json",
+        r#"{ "name": "app", "services": { "web": { "command": "CMD" } } }"#
+            .replace("CMD", if cfg!(windows) { "ping -n 30 127.0.0.1" } else { "sleep 30" })
+            .as_str(),
+    )]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    let taken = runtime
+        .take_over(&service.id, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(taken.status.is_live(), "{taken:?}");
+    assert!(taken.managed, "it should be ours now");
+
+    // And again, on something already ours: nothing to take over.
+    let again = runtime
+        .take_over(&service.id, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(again.managed);
+
+    runtime
+        .stop_service(&service.id, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+}

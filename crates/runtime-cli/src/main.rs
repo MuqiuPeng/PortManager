@@ -80,6 +80,17 @@ enum Command {
         wait: bool,
     },
 
+    /// Stop a service something else started, and start it here instead.
+    ///
+    /// The runtime never terminates what it did not start. This is the one way
+    /// across, and it asks for the service by name so that nothing automatic
+    /// can take it.
+    TakeOver {
+        service: String,
+        /// Seconds to wait before forcing termination.
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
     /// Stop a service and everything it spawned.
     Stop {
         service: String,
@@ -644,6 +655,16 @@ async fn run(cli: Cli) -> Result<String> {
                 ));
             }
             started
+        }
+
+        Command::TakeOver { service, timeout } => {
+            client
+                .call(Request::TakeOverService {
+                    project,
+                    service,
+                    timeout_seconds: timeout,
+                })
+                .await?
         }
 
         Command::Stop { service, timeout } => {

@@ -279,6 +279,20 @@ impl Dispatcher {
                 ))
             }
 
+            Request::TakeOverService {
+                project,
+                service,
+                timeout_seconds,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                let timeout = timeout_seconds
+                    .map(Duration::from_secs)
+                    .unwrap_or(GRACEFUL_TIMEOUT);
+                Ok(ResponseBody::Service(
+                    runtime.take_over(&service.id, timeout).await?,
+                ))
+            }
+
             Request::RestartService {
                 project,
                 service,

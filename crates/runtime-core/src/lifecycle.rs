@@ -432,6 +432,115 @@ impl Runtime {
         Ok(done)
     }
 
+    /// Stop a service something else started, and start it here instead.
+    ///
+    /// The runtime does not terminate what it did not start. That rule is what
+    /// makes it safe to run beside a terminal, PM2 and Docker, and nothing
+    /// automatic gets to break it — not a port conflict, not a restart, not a
+    /// group bringing up its members.
+    ///
+    /// This is the one way across, and it is a door rather than a hole because
+    /// of what it takes to open: a service somebody declared, on a port it is
+    /// actually holding right now, named by a person asking for this. The pid
+    /// is not supplied by the caller and never guessed — it is whoever holds
+    /// that port at this moment, which is the same process the caller is
+    /// looking at in the list.
+    ///
+    /// Refused when another supervisor holds it. Stopping a PM2 entry from
+    /// here is undone by PM2 a second later, and the runtime can drive PM2
+    /// directly instead; a fight between two supervisors is not something to
+    /// win quietly.
+    pub async fn take_over(&self, service_id: &ServiceId, timeout: Duration) -> Result<ServiceView> {
+        let service = self.require_service(service_id)?;
+        let view = self.service_view(&service)?;
+
+        // Nothing to take over: start it the ordinary way, or leave it alone.
+        if !view.status.is_live() {
+            self.start_service(service_id, StartOptions::default()).await?;
+            return self.service_view(&self.require_service(service_id)?);
+        }
+        if view.managed {
+            return Ok(view);
+        }
+
+        let port = view.actual_port.ok_or_else(|| {
+            RuntimeError::invalid(format!(
+                "'{}' is running but not on a port the runtime can see, so there is nothing here to identify it by",
+                service.name
+            ))
+        })?;
+        let owner = self
+            .port_owners()?
+            .into_iter()
+            .find(|owner| owner.port == port)
+            .ok_or_else(|| {
+                RuntimeError::invalid(format!("nothing is listening on port {port} any more"))
+            })?;
+
+        if let Some(supervisor) = &owner.supervisor {
+            return Err(RuntimeError::NotPermitted {
+                pid: owner.pid,
+                reason: format!(
+                    "{supervisor} keeps '{}' alive and would start it again; switch it off there, or drive {supervisor} through `supervised`",
+                    service.name
+                ),
+            });
+        }
+        if let Some(container) = &owner.container {
+            return Err(RuntimeError::NotPermitted {
+                pid: owner.pid,
+                reason: format!(
+                    "port {port} is published by container {container}; switch the container off through `container` instead"
+                ),
+            });
+        }
+
+        let info = self
+            .adapter()
+            .process()
+            .process_info(owner.pid)?
+            .ok_or_else(|| {
+                RuntimeError::invalid(format!("pid {} is already gone", owner.pid))
+            })?;
+
+        self.logs_arc().append(
+            &service.id,
+            LogStream::System,
+            format!("taking over pid {} on port {port}", owner.pid),
+        )?;
+
+        let process = self.adapter().process();
+        let identity = info.identity();
+        process.terminate_tree(&identity, TerminationMode::Graceful)?;
+
+        // The same escalation a stop uses: something that ignores a polite
+        // request still has to let the port go within a bounded time.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut forced = false;
+        while process.is_alive(&identity)? {
+            if tokio::time::Instant::now() >= deadline {
+                if forced {
+                    return Err(RuntimeError::internal(format!(
+                        "pid {} survived a forced termination",
+                        identity.pid
+                    )));
+                }
+                self.logs_arc().append(
+                    &service.id,
+                    LogStream::System,
+                    "graceful stop timed out; forcing termination",
+                )?;
+                process.terminate_tree(&identity, TerminationMode::Forceful)?;
+                forced = true;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        self.invalidate_port_owners();
+
+        self.start_service(service_id, StartOptions::default()).await?;
+        self.service_view(&self.require_service(service_id)?)
+    }
+
     /// Run a step to completion and require that it succeed.
     ///
     /// The opposite test from a service: a server that exits has failed, and a
