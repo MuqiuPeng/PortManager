@@ -26,6 +26,17 @@ export function LogPanel({ serviceName, lines, onClose }: Props) {
 
   const [copied, setCopied] = useState(false);
 
+  // It covers what is behind it now, so it takes the key that dismisses
+  // things that cover other things.
+  useEffect(() => {
+    if (!onClose) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   async function copyAll() {
     try {
       await copyText(lines.map((line) => line.message).join("\n"));

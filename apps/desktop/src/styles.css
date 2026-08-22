@@ -67,6 +67,7 @@ button {
 }
 
 .body {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -281,27 +282,30 @@ button {
 
 /* ---- logs ------------------------------------------------------------ */
 
-/* A column beside what it describes, not a strip beneath everything. The
-   width is fixed rather than a share of the window: log lines are monospace
-   and a column that grows with the window just gets emptier on the right. */
+/* Over what it describes, not beside it.
+ *
+ * As a third column it took its width from the middle one, so opening a log
+ * reflowed the thing you were reading — the stack cards wrapped to two rows
+ * the moment you clicked a service. A log is something you consult and
+ * dismiss, so it covers the content and gives it back whole.
+ *
+ * The width is fixed rather than a share of the window: log lines are
+ * monospace, and a column that grows with the window only gets emptier on the
+ * right. */
 .logs {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 50vw);
+  min-width: 300px;
+  z-index: 20;
   border-left: 1px solid var(--border);
   background: var(--card);
-  width: min(440px, 40vw);
-  min-width: 280px;
+  box-shadow: -12px 0 28px rgb(0 0 0 / 0.32);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
   min-height: 0;
-}
-
-/* Below 1000px there is not room for three columns; the log takes the place
-   of the detail rather than squeezing it, since it is what was just asked
-   for. */
-@media (max-width: 1000px) {
-  .logs {
-    width: min(440px, 60vw);
-  }
 }
 
 .logs-head {
