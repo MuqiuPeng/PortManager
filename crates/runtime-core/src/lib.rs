@@ -187,10 +187,17 @@ impl Runtime {
         }
 
         let git = git::info(&path);
+        // Canonicalised, because the checkout that gets registered for it will
+        // be. git prints `C:/Users/...` where the filesystem calls the same
+        // directory `\\?\C:\Users\...`, so on Windows a project's root and
+        // its own root checkout were two different strings for one directory —
+        // and every lookup that asks "which checkout is the root" found none.
+        // On macOS the two forms happen to agree, which is why this held.
         let root = git
             .as_ref()
             .map(|info| info.main_root.clone())
             .unwrap_or_else(|| path.clone());
+        let root = canonicalize(&root).unwrap_or(root);
 
         let detection = detect::detect(&root);
         let now = Utc::now();
@@ -813,16 +820,10 @@ impl Runtime {
             .iter()
             .all(|(workspace, _)| workspace.project_id == matches[0].0.project_id);
         if branch.is_none() && single_project {
-            let root = self
-                .store
-                .get_project(&matches[0].0.project_id)?
-                .map(|project| project.root_path);
-            if let Some(root) = root {
-                if let Some((_, service)) =
-                    matches.iter().find(|(workspace, _)| workspace.path == root)
-                {
-                    return Ok(service.clone());
-                }
+            let root = self.root_checkout(&matches[0].0.project_id)?;
+            if let Some((_, service)) = matches.iter().find(|(workspace, _)| workspace.id == root.id)
+            {
+                return Ok(service.clone());
             }
         }
         if matches.len() > 1 {
@@ -1380,20 +1381,33 @@ impl Runtime {
     }
 
     /// The checkout a project's stacks are declared in: its root.
+    /// The checkout a project's own root is registered as.
+    ///
+    /// The first one registered for it: `add_project` creates the project and
+    /// registers its root, and anything else arrives later. Offsets are handed
+    /// out in that order and never reused, so the lowest is the root, and
+    /// `list_workspaces` is ordered by it.
+    ///
+    /// Not by comparing paths. That is the more direct statement of what a root
+    /// is, and it is also a string comparison between a path git printed and a
+    /// path the filesystem canonicalised — the same directory spelled two ways
+    /// on Windows, where it found nothing and every caller quietly took the
+    /// wrong branch. A number has no spelling.
+    pub fn root_checkout(&self, project_id: &ProjectId) -> Result<Workspace> {
+        self.store
+            .list_workspaces(project_id)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| RuntimeError::not_found("checkout of project", project_id.as_str()))
+    }
+
     fn stack_home(&self, workspace_id: &WorkspaceId) -> Result<WorkspaceId> {
         let workspace = self.require_workspace(workspace_id)?;
         let project = self
             .store
             .get_project(&workspace.project_id)?
             .ok_or_else(|| RuntimeError::not_found("project", workspace.project_id.as_str()))?;
-        let declared_in = self
-            .store
-            .list_workspaces(&project.id)?
-            .into_iter()
-            .find(|candidate| candidate.path == project.root_path)
-            .map(|candidate| candidate.id)
-            .unwrap_or_else(|| workspace_id.clone());
-        Ok(declared_in)
+        Ok(self.root_checkout(&project.id)?.id)
     }
 
     pub fn require_in_a_stack(&self, service_id: &ServiceId) -> Result<()> {

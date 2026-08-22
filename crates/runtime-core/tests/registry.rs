@@ -1261,3 +1261,29 @@ async fn an_ambiguous_name_says_how_to_tell_the_candidates_apart() {
         .expect("no finding about the shared branch");
     assert!(!branch.message.contains("ports"), "{}", branch.message);
 }
+
+/// A project's root path and its own checkout's path are one directory.
+///
+/// They were two strings for it. The project took its root from git, which
+/// prints `C:/Users/...`, and the checkout canonicalised, which on Windows
+/// gives `\\?\C:\Users\...` — so every lookup asking "which checkout is the
+/// root of this project" found none, and a stack declared once stopped
+/// reaching the checkouts it was declared for. On macOS the two forms agree,
+/// which is why it passed here and failed there.
+///
+/// Comparing them is the invariant, and it is checkable on any platform.
+#[tokio::test]
+async fn a_project_root_is_the_path_of_its_own_checkout() {
+    let dir = repo(&[("package.json", PACKAGE_JSON)]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+
+    let root = &view.project.root_path;
+    let checkouts = runtime.store().list_workspaces(&view.project.id).unwrap();
+    assert!(
+        checkouts.iter().any(|checkout| &checkout.path == root),
+        "no checkout is at {}: {:?}",
+        root.display(),
+        checkouts.iter().map(|c| c.path.display().to_string()).collect::<Vec<_>>()
+    );
+}
