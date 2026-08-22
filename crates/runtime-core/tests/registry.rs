@@ -1217,3 +1217,47 @@ async fn a_path_selector_names_the_checkout_it_points_inside() {
 fn canonical(path: &std::path::Path) -> std::path::PathBuf {
     std::fs::canonicalize(path).unwrap()
 }
+
+/// When two checkouts share a branch, saying so must say which is which.
+///
+/// The list of candidates was built from project, branch and service name —
+/// which is precisely what is the same about them — so it printed one string
+/// twice and left the reader no way to choose. The way out is a path, so the
+/// paths are what it shows.
+#[tokio::test]
+async fn an_ambiguous_name_says_how_to_tell_the_candidates_apart() {
+    let remote = "git@github.com:someone/shop.git";
+    let first = repo(&[("package.json", PACKAGE_JSON)]);
+    let second = repo(&[("package.json", PACKAGE_JSON)]);
+    for dir in [&first, &second] {
+        git(dir.path(), &["remote", "add", "origin", remote]);
+        git(dir.path(), &["checkout", "-B", "shared"]);
+    }
+
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(first.path(), None).unwrap();
+    runtime.add_project(second.path(), None).unwrap();
+
+    let error = runtime
+        .resolve_service(Some(&view.project), "shared/web")
+        .unwrap_err()
+        .to_string();
+    for dir in [&first, &second] {
+        let path = canonical(dir.path());
+        assert!(
+            error.contains(&path.display().to_string()),
+            "the error does not name {}: {error}",
+            path.display()
+        );
+    }
+
+    // And the finding says the same thing the error does, rather than claiming
+    // a port conflict — the checkouts have different offsets, so their ports
+    // do not collide at all.
+    let findings = runtime.diagnose().unwrap();
+    let branch = findings
+        .iter()
+        .find(|f| f.message.contains("checkouts are on this branch"))
+        .expect("no finding about the shared branch");
+    assert!(!branch.message.contains("ports"), "{}", branch.message);
+}

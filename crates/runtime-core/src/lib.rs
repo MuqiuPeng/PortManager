@@ -836,16 +836,21 @@ impl Runtime {
                         .flatten()
                         .map(|p| p.name)
                         .unwrap_or_default();
+                    // With the checkout path, because the branch is not always
+                    // enough to tell them apart — and when it is not, this list
+                    // was the same string printed twice, which told the reader
+                    // nothing about how to choose.
                     format!(
-                        "{project}/{}/{}",
+                        "{project}/{}/{} ({})",
                         workspace.git_branch.as_deref().unwrap_or("-"),
-                        service.name
+                        service.name,
+                        workspace.path.display()
                     )
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(RuntimeError::invalid(format!(
-                "'{selector}' matches several services: {options}"
+                "'{selector}' matches several services: {options}. Name one with a path inside it"
             )));
         }
         Ok(matches.remove(0).1)
@@ -1541,7 +1546,7 @@ impl Runtime {
                 findings.push(Finding {
                     subject: format!("{}/{branch}", project.name),
                     message: format!(
-                        "{} checkouts are on this branch: {}. Only one of them can hold the branch's ports",
+                        "{} checkouts are on this branch, so naming a service by it is refused: {}. Say which with a path",
                         paths.len(),
                         paths
                             .iter()
@@ -1549,7 +1554,7 @@ impl Runtime {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ),
-                    certain: true,
+                    certain: false,
                 });
             }
 
