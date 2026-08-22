@@ -8,11 +8,11 @@ import { ExternalRow } from "../components/ExternalRow";
 import { FailureToasts } from "../components/FailureToasts";
 import { FlowChart } from "../components/FlowChart";
 import { partition } from "../Panel";
-import { mergeLogs, rowAction } from "../types";
+import { mergeLogs, rowAction, servicesFor } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
 import { StackEditor } from "../components/StackEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
-import { StackRow } from "../components/StackRow";
+import { LOOSE, StackList } from "../components/StackList";
 import { affectsFailures } from "../types";
 import type {
   ContainerView,
@@ -338,19 +338,47 @@ describe("an existing group", () => {
     expect(html).not.toContain("already has a group");
   });
 
-  it("offers a way in from the row itself", () => {
+  it("offers a way in from the stack that is chosen", () => {
     const html = renderToString(
-      <StackRow
-        stack={{ ...group, services: [] }}
+      <StackList
+        stacks={[group]}
+        total={2}
+        loose={0}
+        selected={group.name}
         busy={false}
+        onSelect={() => {}}
         onRun={() => {}}
         onStop={() => {}}
         onEdit={() => {}}
         onRemove={() => {}}
-        renderService={() => null}
+        onNew={() => {}}
       />,
     );
     expect(html).toContain("Edit");
+  });
+
+  it("does not put three buttons on every stack", () => {
+    // The actions belong to the one being looked at. A column of stacks each
+    // carrying Start, Edit and Remove is a wall rather than a list.
+    const html = renderToString(
+      <StackList
+        stacks={[group]}
+        total={2}
+        loose={0}
+        selected={null}
+        busy={false}
+        onSelect={() => {}}
+        onRun={() => {}}
+        onStop={() => {}}
+        onEdit={() => {}}
+        onRemove={() => {}}
+        onNew={() => {}}
+      />,
+    );
+    expect(html).toContain(group.name);
+    // The stack is listed, but its actions are not in the page at all.
+    expect(html).not.toContain(">Edit<");
+    expect(html).not.toContain(">Start<");
   });
 });
 
@@ -505,5 +533,35 @@ describe("a service in no stack, in the window", () => {
     // The daemon refuses this one, so the window must not offer it.
     expect(html).not.toContain(">Start<");
     expect(html).toContain("Add to a stack");
+  });
+});
+
+describe("choosing a stack narrows what is beside it", () => {
+  const service = (name: string) => ({ ...wire.service_minimal, id: name, name }) as ServiceView;
+  const services = [service("db"), service("api"), service("docs")];
+  const stacks = [
+    { id: "s", name: "dev", members: ["db", "api"], services: [], running: 0 },
+  ] as unknown as StackView[];
+
+  it("shows every service when nothing is chosen", () => {
+    expect(servicesFor(services, stacks, null, LOOSE).map((s) => s.name)).toEqual([
+      "db",
+      "api",
+      "docs",
+    ]);
+  });
+
+  it("shows a stack's members when it is chosen", () => {
+    expect(servicesFor(services, stacks, "dev", LOOSE).map((s) => s.name)).toEqual(["db", "api"]);
+  });
+
+  it("shows what no stack names when that is chosen", () => {
+    expect(servicesFor(services, stacks, LOOSE, LOOSE).map((s) => s.name)).toEqual(["docs"]);
+  });
+
+  it("shows nothing rather than everything for a stack that is gone", () => {
+    // A selection outliving its stack must not silently mean "all": that reads
+    // as the filter having been cleared when it has not.
+    expect(servicesFor(services, stacks, "removed", LOOSE)).toEqual([]);
   });
 });

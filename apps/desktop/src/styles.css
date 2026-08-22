@@ -1497,3 +1497,114 @@ button.chip:disabled {
   font-size: 10px;
   opacity: 0.75;
 }
+
+/* Stacks on the left, services on the right. */
+.workspace-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+/* Narrow windows cannot hold two columns; the stacks go above instead of
+   squeezing the services into a strip. */
+@media (max-width: 900px) {
+  .workspace-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stacks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.stack-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stack-pick:hover {
+  background: var(--surface-alt);
+}
+
+.stack-pick.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.stack-pick-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.stack-pick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-pick-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.stack-pick-missing {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* Only rendered for the stack being looked at — see StackList. */
+.stack-pick-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.stack-pick-actions .ghost {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.loose-pick .stack-pick-name {
+  color: var(--text-dim);
+}
+
+.stack-new {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.workspace-services {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

@@ -15,7 +15,8 @@ import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
-import { StackRow } from "./components/StackRow";
+import { FlowChart } from "./components/FlowChart";
+import { LOOSE, StackList } from "./components/StackList";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
@@ -27,7 +28,7 @@ import type {
   ServiceView,
   StackView,
 } from "./types";
-import { affectsFailures, mergeLogs } from "./types";
+import { affectsFailures, mergeLogs, servicesFor } from "./types";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -211,7 +212,15 @@ export default function App() {
   /** The stack the editor is open on, or null when it is making a new one. */
   const [editingStack, setEditingStack] = useState<string | null>(null);
   /** Whether the drawer of services in no stack is open; null means "whatever suits". */
-  const [looseOpen, setLooseOpen] = useState<boolean | null>(null);
+  /** The stack whose services are shown, LOOSE for the unfiled, null for all. */
+  const [pickedStack, setPickedStack] = useState<string | null>(null);
+
+  // A choice belongs to the project it was made in. Carrying it across would
+  // filter the next project's list by a stack it does not have, which shows
+  // nothing and looks like the project is empty.
+  useEffect(() => {
+    setPickedStack(null);
+  }, [selectedProject]);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
 
@@ -607,20 +616,6 @@ export default function App() {
                           className="ghost"
                           disabled={busy}
                           onClick={() => {
-                            // New means new: the sheet is the same one Edit
-                            // opens, so it would otherwise arrive filled in
-                            // with whichever group was edited last.
-                            setEditingStack(null);
-                            setPrompt("add-stack");
-                          }}
-                          title="Bring a set of services up together"
-                        >
-                          + Stack
-                        </button>
-                        <button
-                          className="ghost"
-                          disabled={busy}
-                          onClick={() => {
                             setPromptProject(project.name);
                             setPrompt("add-service");
                           }}
@@ -629,67 +624,78 @@ export default function App() {
                         </button>
                       </header>
 
-                      {/* Members are shown inside their group; listing them
-                          above as peers too would be the same service twice,
-                          with the grouping saying nothing. */}
-                      {stacks.map((stack) => (
-                        <StackRow
-                          stack={stack}
+                      {/* Stacks on the left, services on the right. A stack
+                          is what somebody declared this is brought up as, so
+                          it is what you choose by; nothing chosen shows every
+                          service, because the list is still one list. */}
+                      <div className="workspace-body">
+                        <StackList
+                          stacks={stacks}
+                          total={workspace.services.length}
+                          loose={
+                            workspace.services.filter(
+                              (service: ServiceView) =>
+                                !stacks.some((stack) => stack.members.includes(service.name)),
+                            ).length
+                          }
+                          selected={pickedStack}
                           busy={busy}
-                          key={stack.id}
-                          onRun={() => project && act(() => api.runStack(project.id, stack.name))}
-                          onStop={() => project && act(() => api.stopStack(project.id, stack.name))}
-                          onEdit={() => {
-                            setEditingStack(stack.name);
+                          onSelect={setPickedStack}
+                          onRun={(name) => act(() => api.runStack(project.id, name))}
+                          onStop={(name) => act(() => api.stopStack(project.id, name))}
+                          onEdit={(name) => {
+                            setEditingStack(name);
                             setPrompt("add-stack");
                           }}
-                          onRemove={() =>
-                            project &&
+                          onRemove={(name) =>
                             act(async () => {
-                              await api.removeStack(project.id, stack.name);
+                              await api.removeStack(project.id, name);
                               await reloadStacks();
                             })
                           }
-                          renderService={(service) => serviceRow(service)}
+                          onNew={() => {
+                            // New means new: the sheet is the one Edit opens,
+                            // so it would otherwise arrive filled in.
+                            setEditingStack(null);
+                            setPrompt("add-stack");
+                          }}
                         />
-                      ))}
 
-                      {workspace.services.length === 0 &&
-                      (workspace.external ?? []).length === 0 &&
-                      (workspace.containers ?? []).length === 0 ? (
-                        <p className="empty">No services detected.</p>
-                      ) : (
-                        (() => {
-                          const loose = workspace.services.filter(
-                            (service: ServiceView) =>
-                              !stacks.some((stack) => stack.members.includes(service.name)),
-                          );
-                          if (loose.length === 0) return null;
-                          // Groups are what somebody declared; the rest is a
-                          // drawer under them rather than a list of peers. Open
-                          // when there is no group yet, so a new service is not
-                          // filed away before there is anywhere to file it.
-                          const open = looseOpen ?? stacks.length === 0;
-                          return (
-                            <section className="loose">
-                              <button
-                                className="loose-head"
-                                onClick={() => setLooseOpen(!open)}
-                                aria-expanded={open}
-                              >
-                                <span className="loose-caret">{open ? "▾" : "▸"}</span>
-                                Not in a stack
-                                <span className="loose-count">{loose.length}</span>
-                              </button>
-                              {open && (
-                                <div className="loose-body">
-                                  {loose.map((service: ServiceView) => serviceRow(service))}
-                                </div>
-                              )}
-                            </section>
-                          );
-                        })()
-                      )}
+                        <div className="workspace-services">
+                          {(() => {
+                            const chosen = stacks.find((stack) => stack.name === pickedStack);
+                            const shown = servicesFor(
+                              workspace.services,
+                              stacks,
+                              pickedStack,
+                              LOOSE,
+                            );
+
+                            return (
+                              <>
+                                {/* The shape of the chosen stack, above its
+                                    members: what waits for what is the reason
+                                    it is one thing rather than several. */}
+                                {chosen && (chosen.flow ?? []).length > 0 && (
+                                  <div className="stack-flow">
+                                    <FlowChart flow={chosen.flow ?? []} />
+                                  </div>
+                                )}
+
+                                {shown.length === 0 ? (
+                                  <p className="empty">
+                                    {workspace.services.length === 0
+                                      ? "No services detected."
+                                      : "Nothing here."}
+                                  </p>
+                                ) : (
+                                  shown.map((service: ServiceView) => serviceRow(service))
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
 
                       {(workspace.supervised ?? []).map((entry) => (
                         <SupervisedRow

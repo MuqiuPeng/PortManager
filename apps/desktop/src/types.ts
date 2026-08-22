@@ -341,6 +341,33 @@ export function rowAction(live: boolean, inAStack: boolean): RowAction {
   return inAStack ? "start" : "stack";
 }
 
+/**
+ * The services shown beside a stack list, for whatever is selected.
+ *
+ * Null means every service: a project with three stacks still has one list of
+ * services, and sometimes that is what somebody came to look at. LOOSE means
+ * the ones no stack names — the only ones that cannot be started, so worth
+ * being able to see by themselves.
+ *
+ * A function rather than three ternaries in the markup, because it is the
+ * whole behaviour of the change and the markup is not where that is checked.
+ */
+export function servicesFor(
+  services: ServiceView[],
+  stacks: StackView[],
+  selected: string | null,
+  loose: string,
+): ServiceView[] {
+  if (selected === null) return services;
+  if (selected === loose) {
+    return services.filter(
+      (service) => !stacks.some((stack) => stack.members.includes(service.name)),
+    );
+  }
+  const chosen = stacks.find((stack) => stack.name === selected);
+  return services.filter((service) => (chosen?.members ?? []).includes(service.name));
+}
+
 /** True while the runtime believes a process should exist. */
 export function isLive(status: ServiceStatus): boolean {
   return (
