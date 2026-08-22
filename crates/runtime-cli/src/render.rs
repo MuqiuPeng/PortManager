@@ -132,8 +132,17 @@ pub fn stack_header(view: &StackView) -> String {
     } else {
         format!("  ! missing {}", view.missing.join(", "))
     };
+    // "up" is wrong for a stack made only of one-shots: one that has run is
+    // not running, and never will be. Counting it as up is right — otherwise a
+    // migration that succeeded leaves the stack permanently short — but saying
+    // "up" about a stopped process is not.
+    let word = if view.flow.iter().all(|node| node.one_shot) && total > 0 {
+        "ready"
+    } else {
+        "up"
+    };
     format!(
-        "{mark} {}  {}/{} up{missing}",
+        "{mark} {}  {}/{} {word}{missing}",
         view.stack.name, view.running, total
     )
 }

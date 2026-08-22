@@ -1288,7 +1288,7 @@ impl Runtime {
     // ---- stacks -----------------------------------------------------------
 
     pub fn list_stacks(&self, workspace_id: &WorkspaceId) -> Result<Vec<Stack>> {
-        self.store.list_stacks(workspace_id)
+        self.stacks_for(workspace_id)
     }
 
     /// Stacks with what their members are actually doing.
@@ -1302,7 +1302,7 @@ impl Runtime {
         let owners = self.port_owners()?;
         let mut out = Vec::new();
 
-        for stack in self.store.list_stacks(workspace_id)? {
+        for stack in self.stacks_for(workspace_id)? {
             let mut services = Vec::new();
             let mut missing = Vec::new();
 
@@ -1355,9 +1355,42 @@ impl Runtime {
     /// members, and starting anything brings up what it depends on, and
     /// neither of those is somebody asking for a loose service by name — they
     /// go through `start_service` directly and never past here.
+    /// The stacks that apply to a checkout, wherever they were declared.
+    ///
+    /// A stack is declared once for the project, on its own root, and names
+    /// services by the names they have in every checkout of it. Reading them
+    /// out of the checkout they happen to be stored in makes a worktree look
+    /// like it has none — which is how `stack list` came to show one and the
+    /// start rule to deny it, about the same service.
+    ///
+    /// The root, not "the checkout that is not a linked worktree": a second
+    /// clone is a checkout too and is not a worktree, so that test can match
+    /// more than one and pick by iteration order.
+    pub fn stacks_for(&self, workspace_id: &WorkspaceId) -> Result<Vec<Stack>> {
+        let home = self.stack_home(workspace_id)?;
+        self.store.list_stacks(&home)
+    }
+
+    /// The checkout a project's stacks are declared in: its root.
+    fn stack_home(&self, workspace_id: &WorkspaceId) -> Result<WorkspaceId> {
+        let workspace = self.require_workspace(workspace_id)?;
+        let project = self
+            .store
+            .get_project(&workspace.project_id)?
+            .ok_or_else(|| RuntimeError::not_found("project", workspace.project_id.as_str()))?;
+        let declared_in = self
+            .store
+            .list_workspaces(&project.id)?
+            .into_iter()
+            .find(|candidate| candidate.path == project.root_path)
+            .map(|candidate| candidate.id)
+            .unwrap_or_else(|| workspace_id.clone());
+        Ok(declared_in)
+    }
+
     pub fn require_in_a_stack(&self, service_id: &ServiceId) -> Result<()> {
         let service = self.require_service(service_id)?;
-        let stacks = self.store.list_stacks(&service.workspace_id)?;
+        let stacks = self.stacks_for(&service.workspace_id)?;
         if stacks
             .iter()
             .any(|stack| stack.members.iter().any(|name| name == &service.name))
@@ -1380,15 +1413,16 @@ impl Runtime {
             }
         }
 
+        let declared_in = self.stack_home(workspace_id)?;
         let existing = self
             .store
-            .list_stacks(workspace_id)?
+            .list_stacks(&declared_in)?
             .into_iter()
             .find(|stack| stack.name == name);
 
         let stack = Stack {
             id: existing.map(|stack| stack.id).unwrap_or_else(StackId::new),
-            workspace_id: workspace_id.clone(),
+            workspace_id: declared_in,
             name: name.to_string(),
             members,
         };
@@ -1399,8 +1433,7 @@ impl Runtime {
 
     pub fn remove_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<bool> {
         let Some(stack) = self
-            .store
-            .list_stacks(workspace_id)?
+            .stacks_for(workspace_id)?
             .into_iter()
             .find(|stack| stack.name == name)
         else {

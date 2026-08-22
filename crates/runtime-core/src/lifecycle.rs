@@ -314,8 +314,7 @@ impl Runtime {
     /// statement about where things should end up, not about each step.
     pub async fn stop_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
         let stack = self
-            .store()
-            .list_stacks(workspace_id)?
+            .stacks_for(workspace_id)?
             .into_iter()
             .find(|stack| stack.name == name)
             .ok_or_else(|| RuntimeError::invalid(format!("no stack called '{name}' here")))?;
@@ -348,20 +347,10 @@ impl Runtime {
     /// than carrying on: the later steps are there because the earlier ones
     /// were supposed to have worked.
     pub async fn run_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
-        // The definition lives on the project's main checkout; the services it
+        // The definition lives on the project's root checkout; the services it
         // names are resolved in whichever checkout this is being run in.
-        let workspace = self.require_workspace(workspace_id)?;
-        let declared_in = self
-            .store()
-            .list_workspaces(&workspace.project_id)?
-            .into_iter()
-            .find(|candidate| !candidate.worktree)
-            .map(|candidate| candidate.id)
-            .unwrap_or_else(|| workspace_id.clone());
-
         let stack = self
-            .store()
-            .list_stacks(&declared_in)?
+            .stacks_for(workspace_id)?
             .into_iter()
             .find(|stack| stack.name == name)
             .ok_or_else(|| RuntimeError::invalid(format!("no stack called '{name}' here")))?;

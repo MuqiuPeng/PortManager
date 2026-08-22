@@ -632,3 +632,40 @@ async fn a_service_in_no_stack_is_refused_by_name_but_still_started_as_a_depende
         .stop_service(&base.id, std::time::Duration::from_secs(5))
         .await;
 }
+
+/// A stack is declared once for a project and applies to every checkout of it.
+///
+/// It is stored on the project's root, and `run_stack` always read it there
+/// while everything else read it from whichever checkout was asked. So a
+/// worktree could be shown a stack by `stack list` and told by the start rule
+/// that its services were in none — the same question, two answers.
+#[tokio::test]
+async fn a_stack_declared_once_reaches_every_checkout() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let root = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+    let web = declare(&runtime, &root.id, dir.path(), "web", stays_up(), &[], false);
+    runtime
+        .set_stack(&root.id, "dev", vec!["web".to_string()])
+        .unwrap();
+
+    // A second checkout of the same project, with its own copy of the service.
+    let branch = tempfile::tempdir().unwrap();
+    let other = runtime.register_worktree(&project.project.id, branch.path()).unwrap();
+    let elsewhere = declare(&runtime, &other.id, branch.path(), "web", stays_up(), &[], false);
+
+    assert_eq!(
+        runtime.stacks_for(&other.id).unwrap().len(),
+        1,
+        "the checkout cannot see the project's stack"
+    );
+    runtime
+        .require_in_a_stack(&elsewhere.id)
+        .expect("shown a stack but refused a start");
+    let _ = web;
+}
