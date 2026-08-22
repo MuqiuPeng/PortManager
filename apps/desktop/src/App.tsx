@@ -578,26 +578,28 @@ export default function App() {
                     <h1>{project.name}</h1>
                     <span className="path">{project.root_path}</span>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => setPrompt("add-worktree")}
-                    title="Serve another branch of this repository at the same time"
-                  >
-                    + Worktree
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setPromptProject(project.name);
-                      setPrompt("add-service");
-                    }}
-                  >
-                    + Service
-                  </Button>
+                  <span className="actions">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => setPrompt("add-worktree")}
+                      title="Serve another branch of this repository at the same time"
+                    >
+                      + Worktree
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        setPromptProject(project.name);
+                        setPrompt("add-service");
+                      }}
+                    >
+                      + Service
+                    </Button>
+                  </span>
                 </header>
 
                 {(() => {

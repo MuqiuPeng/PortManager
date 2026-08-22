@@ -188,8 +188,21 @@ button {
   overflow: hidden;
 }
 
+/* The name and where it is on the left, what you can add on the right — one
+   row rather than three stacked, so the height goes to the stacks and services
+   below instead of to a header that says the same thing either way. */
 .detail-head {
-  padding: 16px 20px 10px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px 10px;
+}
+
+.detail-head .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .detail-head h1 {
@@ -199,10 +212,13 @@ button {
 }
 
 .path {
+  display: block;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted-foreground);
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .service {
@@ -971,11 +987,25 @@ button {
   font-size: 12px;
 }
 
+/* Mark, then the subject and what is wrong beneath it. Three columns put a
+   file path in a third of a 440px toast, which cannot be done — and the paths
+   are the part that says which checkout, so they cannot be dropped either. */
 .toast-findings li {
   display: grid;
-  grid-template-columns: 12px auto 1fr;
-  gap: 6px;
+  grid-template-columns: 12px 1fr;
+  gap: 2px 6px;
   align-items: baseline;
+}
+
+.toast-findings .finding-subject,
+.toast-findings .finding-message {
+  grid-column: 2;
+  min-width: 0;
+}
+
+/* A path has no spaces to break at, so it is allowed to break anywhere. */
+.finding-message {
+  overflow-wrap: anywhere;
 }
 
 .finding-mark {
