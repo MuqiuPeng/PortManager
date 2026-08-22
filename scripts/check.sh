@@ -22,6 +22,9 @@ cargo check --workspace --exclude runtime-desktop --all-targets \
 echo "==> frontend"
 pnpm --dir apps/desktop test
 
+echo "==> colour tokens"
+scripts/tokens.sh
+
 echo "==> the window speaks to this app"
 scripts/window-handshake.sh
 

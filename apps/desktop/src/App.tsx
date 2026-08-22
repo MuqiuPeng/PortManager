@@ -502,35 +502,6 @@ export default function App() {
       )}
       <header className="titlebar">
         <span className="brand">Local Runtime</span>
-        <nav className="tabs">
-          <button
-            className={tab === "services" ? "tab active" : "tab"}
-            onClick={() => setTab("services")}
-          >
-            Projects
-          </button>
-          <button
-            className={tab === "ports" ? "tab active" : "tab"}
-            onClick={() => setTab("ports")}
-          >
-            Ports
-          </button>
-          <button
-            className={tab === "discover" ? "tab active" : "tab"}
-            onClick={() => {
-              setTab("discover");
-              if (discoveries.length === 0) void scan();
-            }}
-          >
-            Discover
-          </button>
-          <button
-            className={tab === "settings" ? "tab active" : "tab"}
-            onClick={() => setTab("settings")}
-          >
-            Settings
-          </button>
-        </nav>
       </header>
 
       {/* Over the corner rather than in the layout: something failing should

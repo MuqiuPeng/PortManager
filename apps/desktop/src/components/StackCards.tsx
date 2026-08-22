@@ -47,16 +47,18 @@ export function StackCards({
   onNew,
 }: Props) {
   return (
-    <div className="flex flex-wrap items-stretch gap-2">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2">
       <button
         onClick={() => onSelect(null)}
         className={cn(
-          "flex min-w-28 flex-col justify-between rounded-lg border px-3 py-2 text-left transition-colors",
+          "flex h-16 flex-col justify-between rounded-lg border px-3 py-2 text-left transition-colors",
           selected === null ? "border-ring bg-accent" : "hover:bg-accent/50",
         )}
       >
-        <span className="text-sm">All services</span>
-        <span className="font-mono text-[11px] text-muted-foreground">{total}</span>
+        <span className="truncate text-sm">All services</span>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {total} {total === 1 ? "service" : "services"}
+        </span>
       </button>
 
       {stacks.map((stack) => {
@@ -74,7 +76,7 @@ export function StackCards({
           <div
             key={stack.id}
             className={cn(
-              "flex min-w-44 flex-col gap-1 rounded-lg border px-3 py-2 transition-colors",
+              "flex h-16 flex-col justify-between rounded-lg border px-3 py-2 transition-colors",
               chosen ? "border-ring bg-accent" : "hover:bg-accent/50",
             )}
           >
@@ -159,24 +161,26 @@ export function StackCards({
           onClick={() => onSelect(selected === LOOSE ? null : LOOSE)}
           title="No stack names these, so they cannot be started until one does"
           className={cn(
-            "flex min-w-28 flex-col justify-between rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
+            "flex h-16 flex-col justify-between rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
             selected === LOOSE ? "border-ring bg-accent" : "hover:bg-accent/50",
           )}
         >
-          <span className="text-sm text-muted-foreground">Not in a stack</span>
-          <span className="font-mono text-[11px] text-muted-foreground">{loose}</span>
+          <span className="truncate text-sm text-muted-foreground">Not in a stack</span>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {loose} {loose === 1 ? "service" : "services"}
+          </span>
         </button>
       )}
 
-      <Button
-        variant="ghost"
-        size="sm"
-        className="min-w-20 self-stretch border border-dashed"
+      {/* The same shape as the cards beside it: a button of another size in a
+          row of cards reads as another kind of thing, which it is not. */}
+      <button
         disabled={busy}
         onClick={onNew}
+        className="flex h-16 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-accent/50 disabled:opacity-50"
       >
         + Stack
-      </Button>
+      </button>
     </div>
   );
 }

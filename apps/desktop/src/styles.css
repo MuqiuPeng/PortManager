@@ -1,33 +1,11 @@
-/* Light palette is the base; dark redefines only the tokens, so no colour is
-   ever defined solely inside a media query. */
-:root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-alt: #eef0f4;
-  --border: #dcdfe6;
-  --text: #1c1f26;
-  --text-dim: #6b7280;
-  --accent: #2563eb;
-  --live: #10b981;
-  --warn: #f59e0b;
-  --danger: #dc2626;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-}
+/* The palette lives in theme.css, in the names shadcn's components are
+   written against. It used to be defined here too, under names of its own —
+   and two of them collided: `--accent` meant "the blue" here and "a quiet
+   background" there, `--muted` meant nothing here and a background there. Both
+   sheets targeted `:root`, so which meaning won depended on import order.
+   `bg-accent` came out bright blue and a whole line of text came out invisible
+   before that was noticed. One set of names now. */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14161b;
-    --surface: #1b1e25;
-    --surface-alt: #23272f;
-    --border: #2e333d;
-    --text: #e6e8ec;
-    --text-dim: #8b929f;
-    --accent: #60a5fa;
-    --live: #6ee7b7;
-    --warn: #fbbf24;
-    --danger: #f87171;
-  }
-}
 
 * {
   box-sizing: border-box;
@@ -41,8 +19,8 @@ body,
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--background);
+  color: var(--foreground);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -66,7 +44,7 @@ button {
   align-items: center;
   gap: 20px;
   padding: 10px 16px;
-  background: var(--surface);
+  background: var(--card);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -82,9 +60,9 @@ button {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 16px;
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  background: color-mix(in srgb, var(--destructive) 12%, var(--card));
   border-bottom: 1px solid var(--border);
-  color: var(--danger);
+  color: var(--destructive);
   flex-shrink: 0;
 }
 
@@ -100,7 +78,7 @@ button {
   width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--card);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -118,7 +96,7 @@ button {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .project-list {
@@ -141,11 +119,11 @@ button {
 }
 
 .project:hover {
-  background: var(--surface-alt);
+  background: var(--muted);
 }
 
 .project.selected {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
 .project-body {
@@ -164,7 +142,7 @@ button {
 .project-meta,
 .service-meta {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 /* ---- status dots ----------------------------------------------------- */
@@ -173,7 +151,7 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--muted-foreground);
   opacity: 0.45;
   flex-shrink: 0;
 }
@@ -196,7 +174,7 @@ button {
 }
 
 .dot.status-failed {
-  background: var(--danger);
+  background: var(--destructive);
   opacity: 1;
 }
 
@@ -221,9 +199,9 @@ button {
 }
 
 .path {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   word-break: break-all;
 }
 
@@ -234,7 +212,7 @@ button {
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--card);
   cursor: pointer;
 }
 
@@ -247,7 +225,7 @@ button {
 }
 
 .service.selected {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .service-body {
@@ -262,25 +240,27 @@ button {
 }
 
 .service-port {
-  font-family: var(--mono);
-  color: var(--text-dim);
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
   min-width: 56px;
   text-align: right;
 }
 
 .service-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .ghost:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--text-dim);
+  color: var(--foreground);
+  border-color: var(--muted-foreground);
 }
 
 .ghost.danger:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--destructive);
+  border-color: var(--destructive);
 }
 
 /* ---- logs ------------------------------------------------------------ */
@@ -290,7 +270,7 @@ button {
    and a column that grows with the window just gets emptier on the right. */
 .logs {
   border-left: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--card);
   width: min(440px, 40vw);
   min-width: 280px;
   display: flex;
@@ -317,12 +297,12 @@ button {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   border-bottom: 1px solid var(--border);
 }
 
 .logs-service {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
@@ -332,7 +312,7 @@ button {
   flex: 1;
   overflow-y: auto;
   padding: 8px 20px 12px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11.5px;
 }
 
@@ -344,16 +324,16 @@ button {
 }
 
 .log-time {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   flex-shrink: 0;
 }
 
 .log-line.stderr .log-message {
-  color: var(--danger);
+  color: var(--destructive);
 }
 
 .log-line.system .log-message {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 /* ---- ports ----------------------------------------------------------- */
@@ -374,7 +354,7 @@ button {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   padding: 0 12px 6px 0;
   font-weight: 600;
 }
@@ -386,7 +366,7 @@ button {
 }
 
 .mono {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
 }
 
 .ports .path {
@@ -408,25 +388,25 @@ button {
 }
 
 .owner-branch {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .owner-service {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--surface-alt);
+  background: var(--muted);
 }
 
 .owner.unregistered {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   font-style: italic;
 }
 
 .empty {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   padding: 12px 0;
   margin: 0;
 }
@@ -449,7 +429,7 @@ button {
 
 .discovery-sub {
   margin: 2px 0 0;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .discovery-actions {
@@ -465,7 +445,7 @@ button {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--card);
 }
 
 .discovery-item + .discovery-item {
@@ -493,19 +473,19 @@ button {
 }
 
 .badge.port {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   color: var(--live);
   background: color-mix(in srgb, var(--live) 14%, transparent);
 }
 
 .discovery-services {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   margin-top: 2px;
 }
 
 .discovery-added {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   font-size: 11px;
   padding-top: 4px;
 }
@@ -527,7 +507,7 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -554,7 +534,7 @@ button {
   justify-content: center;
   gap: 5px;
   height: 100%;
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
 }
 
@@ -578,13 +558,13 @@ button {
 }
 
 .island-dot.idle {
-  background: var(--text-dim);
+  background: var(--muted-foreground);
   opacity: 0.5;
 }
 
 .island-more {
   font-size: 7px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   line-height: 1;
 }
 
@@ -604,13 +584,13 @@ button {
 
 .panel-count {
   flex: 1;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 
 .panel-error {
   padding: 6px 10px;
-  color: var(--danger);
+  color: var(--destructive);
   font-size: 11px;
   border-bottom: 1px solid var(--border);
 }
@@ -630,7 +610,7 @@ button {
 }
 
 .panel-row:hover {
-  background: var(--surface-alt);
+  background: var(--muted);
 }
 
 .panel-row-body {
@@ -652,16 +632,16 @@ button {
 
 .panel-project {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .panel-row-meta {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .panel-row-actions {
@@ -679,7 +659,7 @@ button {
 
 .icon-button:hover:not(:disabled) {
   background: var(--border);
-  color: var(--text);
+  color: var(--foreground);
 }
 
 .icon-button:disabled {
@@ -694,7 +674,7 @@ button {
 }
 
 .link:hover {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 /* An external row is a real thing running, but not one this app controls. */
@@ -707,7 +687,7 @@ button {
 .dot.external-dot {
   background: var(--live);
   opacity: 1;
-  box-shadow: inset 0 0 0 1.5px var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--card);
 }
 
 /* ---- settings --------------------------------------------------------- */
@@ -729,7 +709,7 @@ button {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .settings-saved {
@@ -749,7 +729,7 @@ button {
 .field > span:first-child {
   width: 120px;
   flex-shrink: 0;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .field.wide > span:first-child {
@@ -767,8 +747,8 @@ button {
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--card);
+  color: var(--foreground);
   font: inherit;
 }
 
@@ -779,7 +759,7 @@ button {
 .field input[type="text"],
 .field input:not([type]) {
   width: 220px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
 }
 
 /* A field that owns its row gives the box the row. */
@@ -789,24 +769,24 @@ button {
 
 .field .unit {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .hint {
   margin: 6px 0 0 140px;
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .hint code {
-  font-family: var(--mono);
-  background: var(--surface-alt);
+  font-family: var(--font-mono);
+  background: var(--muted);
   padding: 1px 4px;
   border-radius: 4px;
 }
 
 .banner.inline {
-  border: 1px solid var(--danger);
+  border: 1px solid var(--destructive);
   border-radius: 6px;
   margin-bottom: 14px;
 }
@@ -819,7 +799,7 @@ button {
 }
 
 .facts dt {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .facts dd {
@@ -833,7 +813,7 @@ button {
   font-size: 10px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--surface-alt);
+  background: var(--muted);
 }
 
 /* ---- editing sheet ----------------------------------------------------- */
@@ -853,7 +833,7 @@ button {
   max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -918,10 +898,10 @@ button {
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--card);
+  color: var(--foreground);
   font: inherit;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11.5px;
   min-width: 0;
 }
@@ -963,14 +943,14 @@ button {
   display: block;
   margin-top: 2px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 /* A step that runs to completion has no steady state to show, so its marker
    is a shape rather than a colour arguing it is up or down. */
 .dot.one-shot {
   background: transparent;
-  border: 1px solid var(--muted);
+  border: 1px solid var(--muted-foreground);
   border-radius: 2px;
 }
 
@@ -999,8 +979,8 @@ button {
 }
 
 .finding-mark {
-  font-family: var(--mono);
-  color: var(--text-dim);
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
 }
 
 .finding-mark.certain {
@@ -1008,12 +988,12 @@ button {
 }
 
 .finding-subject {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
 .finding-message {
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 .toasts {
@@ -1033,8 +1013,8 @@ button {
 
 .toast {
   pointer-events: auto;
-  background: var(--surface);
-  border: 1px solid var(--danger);
+  background: var(--card);
+  border: 1px solid var(--destructive);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
   overflow: hidden;
@@ -1045,7 +1025,7 @@ button {
   align-items: baseline;
   gap: 8px;
   padding: 8px 10px 6px;
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
 }
 
 .toast-title {
@@ -1056,20 +1036,20 @@ button {
 .toast-status {
   flex: 1;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .toast-close:hover {
-  color: var(--text);
+  color: var(--foreground);
 }
 
 .toast-detail {
   margin: 0;
   padding: 8px 10px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
-  color: var(--muted);
+  color: var(--muted-foreground);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 10em;
@@ -1103,7 +1083,7 @@ button {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  background: var(--surface-alt);
+  background: var(--muted);
 }
 
 .stack-name {
@@ -1113,7 +1093,7 @@ button {
 
 .stack-count {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .stack-missing {
@@ -1145,13 +1125,13 @@ button {
 .folder-path {
   flex: 1;
   min-width: 0;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 12px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface-alt);
-  color: var(--text);
+  background: var(--muted);
+  color: var(--foreground);
   /* A long path is worth seeing the end of — that is the part that differs. */
   direction: rtl;
   text-align: left;
@@ -1163,7 +1143,7 @@ button {
 .folder-path.empty {
   direction: ltr;
   font-family: inherit;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 /* One list: chosen on top and numbered, the rest below. */
@@ -1177,7 +1157,7 @@ button {
   gap: 2px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--card);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -1188,13 +1168,13 @@ button {
   gap: 8px;
   padding: 4px 6px;
   border-radius: 4px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
 }
 
 /* A member of the group reads as one; the rest are still on offer. */
 .stack-list li.chosen {
-  background: var(--surface-alt);
-  color: var(--text);
+  background: var(--muted);
+  color: var(--foreground);
 }
 
 .stack-list input[type="checkbox"] {
@@ -1202,9 +1182,9 @@ button {
 }
 
 .step-order {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   min-width: 12px;
   text-align: right;
 }
@@ -1218,7 +1198,7 @@ button {
 }
 
 .hint.problem {
-  color: var(--danger);
+  color: var(--destructive);
 }
 
 /* A group is a graph; this is it drawn. */
@@ -1239,20 +1219,20 @@ button {
 }
 
 .flow-node rect {
-  fill: var(--surface-alt);
+  fill: var(--muted);
   stroke: var(--border);
   stroke-width: 1;
 }
 
 .flow-node text {
   font-size: 11px;
-  fill: var(--text);
-  font-family: var(--mono);
+  fill: var(--foreground);
+  font-family: var(--font-mono);
 }
 
 .flow-node .flow-tag {
   font-size: 9px;
-  fill: var(--text-dim);
+  fill: var(--muted-foreground);
 }
 
 .flow-node[role="button"] {
@@ -1260,7 +1240,7 @@ button {
 }
 
 .flow-node.selected rect {
-  stroke: var(--accent);
+  stroke: var(--primary);
   stroke-width: 2;
 }
 
@@ -1276,7 +1256,7 @@ button {
 
 .flow-node.status-failed rect,
 .flow-node.missing rect {
-  stroke: var(--danger);
+  stroke: var(--destructive);
   stroke-dasharray: 3 3;
 }
 
@@ -1297,25 +1277,25 @@ button {
 .step-after-label,
 .step-after-none {
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 button.chip {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 9px;
   border: 1px solid var(--border);
   background: none;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   cursor: pointer;
 }
 
 button.chip.on {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 button.chip:disabled {
@@ -1338,7 +1318,7 @@ button.chip:disabled {
 
 .panel-caret {
   font-size: 8px;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   margin-right: 4px;
 }
 
@@ -1353,7 +1333,7 @@ button.chip:disabled {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-dim);
+  color: var(--muted-foreground);
   border-top: 1px solid var(--border);
   margin-top: 6px;
 }
