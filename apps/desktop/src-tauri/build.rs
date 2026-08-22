@@ -2,7 +2,37 @@ use std::path::PathBuf;
 
 fn main() {
     stage_sidecar();
+    stage_resources();
     tauri_build::build()
+}
+
+/// Make sure the bundled resources exist before `tauri-build` looks for them.
+///
+/// The MCP server travels as files rather than as a binary, and those files
+/// are a build output — so a clean checkout has none, and `tauri-build` fails
+/// on a declared resource path that is not there. That is right for a bundle
+/// and wrong for `cargo build`, which makes no bundle and had no business
+/// caring: it broke CI, which only type-checks and tests.
+///
+/// So an empty directory, the same way a missing sidecar gets an empty file. A
+/// real build stages the real thing over it first.
+fn stage_resources() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dist = manifest
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("packages")
+        .join("runtime-mcp")
+        .join("dist");
+    println!("cargo:rerun-if-changed={}", dist.display());
+    if dist.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dist);
+    println!(
+        "cargo:warning=no MCP server to bundle; run `pnpm --dir packages/runtime-mcp build` before `tauri build`"
+    );
 }
 
 /// Make sure every sidecar exists before `tauri-build` looks for them.
