@@ -27,16 +27,28 @@ if (!triple) {
   throw new Error("could not determine the host target triple from `rustc -vV`");
 }
 
-console.log(`building runtime-daemon for ${triple}`);
-execFileSync("cargo", ["build", "--release", "-p", "runtime-daemon"], {
-  cwd: workspace,
-  stdio: "inherit",
-});
+// Every program the bundle carries. The daemon and the CLI speak one protocol
+// to each other, so they are built from one tree at one moment and shipped
+// together — an update that moved one without the other is how a CLI ends up
+// talking to a daemon that has stopped understanding it.
+const sidecars = [
+  { crate: "runtime-daemon", bin: "runtime-daemon" },
+  { crate: "runtime-cli", bin: "runtime" },
+];
 
-const built = join(workspace, "target", "release", "runtime-daemon");
-const staged = join(outDir, `runtime-daemon-${triple}`);
+console.log(`building ${sidecars.map((s) => s.bin).join(", ")} for ${triple}`);
+execFileSync(
+  "cargo",
+  ["build", "--release", ...sidecars.flatMap(({ crate }) => ["-p", crate])],
+  { cwd: workspace, stdio: "inherit" },
+);
 
 mkdirSync(outDir, { recursive: true });
-copyFileSync(built, staged);
-chmodSync(staged, 0o755);
-console.log(`staged ${staged}`);
+const suffix = triple.includes("windows") ? ".exe" : "";
+for (const { bin } of sidecars) {
+  const built = join(workspace, "target", "release", `${bin}${suffix}`);
+  const staged = join(outDir, `${bin}-${triple}${suffix}`);
+  copyFileSync(built, staged);
+  chmodSync(staged, 0o755);
+  console.log(`staged ${staged}`);
+}
