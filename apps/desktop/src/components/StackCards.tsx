@@ -1,0 +1,182 @@
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { StackView } from "../types";
+
+/** The selection that means "the ones no stack names". */
+export const LOOSE = " loose";
+
+interface Props {
+  stacks: StackView[];
+  /** How many services this checkout has, for the "everything" card. */
+  total: number;
+  /** How many belong to no stack. Zero hides the card rather than showing nil. */
+  loose: number;
+  selected: string | null;
+  busy: boolean;
+  onSelect: (name: string | null) => void;
+  onRun: (name: string) => void;
+  onStop: (name: string) => void;
+  onEdit: (name: string) => void;
+  onRemove: (name: string) => void;
+  onNew: () => void;
+}
+
+/**
+ * The ways this project is brought up, across the top of it.
+ *
+ * A stack is the unit: what somebody declared this project is started as, and
+ * what the panel will start. So it comes before the services rather than
+ * beside them — the previous arrangement put two navigation columns in front
+ * of the content and left the services the narrowest thing on screen.
+ *
+ * Each card carries its own state and its own start button, which is the
+ * arithmetic declaring a stack removes: five services grouped into one thing
+ * were five rows and five clicks.
+ */
+export function StackCards({
+  stacks,
+  total,
+  loose,
+  selected,
+  busy,
+  onSelect,
+  onRun,
+  onStop,
+  onEdit,
+  onRemove,
+  onNew,
+}: Props) {
+  return (
+    <div className="flex flex-wrap items-stretch gap-2">
+      <button
+        onClick={() => onSelect(null)}
+        className={cn(
+          "flex min-w-28 flex-col justify-between rounded-lg border px-3 py-2 text-left transition-colors",
+          selected === null ? "border-ring bg-accent" : "hover:bg-accent/50",
+        )}
+      >
+        <span className="text-sm">All services</span>
+        <span className="font-mono text-[11px] text-muted-foreground">{total}</span>
+      </button>
+
+      {stacks.map((stack) => {
+        const members = stack.members.length;
+        const allUp = members > 0 && stack.running === members;
+        const someUp = stack.running > 0;
+        const flow = stack.flow ?? [];
+        // A stack of nothing but one-shots is never "up": one that has run is
+        // not running and never will be.
+        const ready = flow.length > 0 && flow.every((node) => node.one_shot);
+        const chosen = selected === stack.name;
+        const missing = stack.missing ?? [];
+
+        return (
+          <div
+            key={stack.id}
+            className={cn(
+              "flex min-w-44 flex-col gap-1 rounded-lg border px-3 py-2 transition-colors",
+              chosen ? "border-ring bg-accent" : "hover:bg-accent/50",
+            )}
+          >
+            <button
+              onClick={() => onSelect(chosen ? null : stack.name)}
+              className="flex items-center gap-2 text-left"
+            >
+              <span
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  allUp ? "bg-live" : someUp ? "bg-warn" : "bg-muted-foreground/40",
+                )}
+                aria-hidden
+              />
+              <span className="flex-1 truncate text-sm">{stack.name}</span>
+              {missing.length > 0 && (
+                <span className="text-warn" title={`missing ${missing.join(", ")}`}>
+                  !
+                </span>
+              )}
+            </button>
+
+            <div className="flex items-center gap-1">
+              <span className="flex-1 font-mono text-[11px] text-muted-foreground">
+                {stack.running}/{members} {ready ? "ready" : "up"}
+              </span>
+              {someUp ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={busy}
+                  onClick={() => onStop(stack.name)}
+                >
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={busy}
+                  onClick={() => onRun(stack.name)}
+                >
+                  Start
+                </Button>
+              )}
+              {/* Only on the one being looked at, and not rendered otherwise:
+                  a hidden button is still there for anything reading the page
+                  or tabbing through it. */}
+              {chosen && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6"
+                    disabled={busy}
+                    onClick={() => onEdit(stack.name)}
+                    title="Change what is in this stack"
+                  >
+                    ✎
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6"
+                    disabled={busy}
+                    onClick={() => onRemove(stack.name)}
+                    title="Delete this stack"
+                  >
+                    &minus;
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {loose > 0 && (
+        <button
+          onClick={() => onSelect(selected === LOOSE ? null : LOOSE)}
+          title="No stack names these, so they cannot be started until one does"
+          className={cn(
+            "flex min-w-28 flex-col justify-between rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
+            selected === LOOSE ? "border-ring bg-accent" : "hover:bg-accent/50",
+          )}
+        >
+          <span className="text-sm text-muted-foreground">Not in a stack</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{loose}</span>
+        </button>
+      )}
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="min-w-20 self-stretch border border-dashed"
+        disabled={busy}
+        onClick={onNew}
+      >
+        + Stack
+      </Button>
+    </div>
+  );
+}

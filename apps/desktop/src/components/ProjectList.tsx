@@ -1,7 +1,13 @@
+import { cn } from "@/lib/utils";
 import type { ProjectView } from "../types";
 import { Button } from "@/components/ui/button";
 
+type View = "services" | "ports" | "discover" | "settings";
+
 interface Props {
+  /** Which view the window is on, so this can show where you are. */
+  current: View;
+  onView: (view: View) => void;
   projects: ProjectView[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -9,7 +15,15 @@ interface Props {
   busy: boolean;
 }
 
-export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Props) {
+export function ProjectList({
+  projects,
+  selectedId,
+  onSelect,
+  onAdd,
+  busy,
+  current,
+  onView,
+}: Props) {
   return (
     <nav className="sidebar">
       <div className="sidebar-head">
@@ -53,6 +67,33 @@ export function ProjectList({ projects, selectedId, onSelect, onAdd, busy }: Pro
           ))}
         </ul>
       )}
+
+      {/* Ports, Discover and Settings are views of the machine, not of a
+          project — they sat in the same tab strip as the project list, which
+          asked the reader to hold two kinds of thing in one row. Down here
+          they are what they are: somewhere else to go. */}
+      <div className="mt-auto flex flex-col gap-0.5 border-t pt-2">
+        {views.map((view) => (
+          <button
+            key={view.id}
+            onClick={() => onView(view.id)}
+            className={cn(
+              "rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+              current === view.id
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:bg-accent/50",
+            )}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
     </nav>
   );
 }
+
+const views = [
+  { id: "ports" as const, label: "Ports" },
+  { id: "discover" as const, label: "Discover" },
+  { id: "settings" as const, label: "Settings" },
+];

@@ -16,7 +16,7 @@ import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
 import { FlowChart } from "./components/FlowChart";
-import { LOOSE, StackList } from "./components/StackList";
+import { LOOSE, StackCards } from "./components/StackCards";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
   Discovery,
@@ -30,6 +30,7 @@ import type {
 } from "./types";
 import { affectsFailures, mergeLogs, servicesFor } from "./types";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type Tab = "services" | "ports" | "discover" | "settings";
 
@@ -215,12 +216,15 @@ export default function App() {
   /** Whether the drawer of services in no stack is open; null means "whatever suits". */
   /** The stack whose services are shown, LOOSE for the unfiled, null for all. */
   const [pickedStack, setPickedStack] = useState<string | null>(null);
+  /** The checkout being looked at. A branch is a view, not more content. */
+  const [branch, setBranch] = useState<string | null>(null);
 
   // A choice belongs to the project it was made in. Carrying it across would
   // filter the next project's list by a stack it does not have, which shows
   // nothing and looks like the project is empty.
   useEffect(() => {
     setPickedStack(null);
+    setBranch(null);
   }, [selectedProject]);
   /** Dismissed one at a time: reading one is not reading the rest. */
   const [dismissed, setDismissed] = useState<string[]>([]);
@@ -552,196 +556,213 @@ export default function App() {
         }}
       />
 
-      {tab === "settings" ? (
-        <main className="ports-pane">
-          <Settings />
-        </main>
-      ) : tab === "discover" ? (
-        <main className="ports-pane">
-          <DiscoveryPanel
-            discoveries={discoveries}
-            scanning={scanning}
-            busy={busy}
-            onAdd={handleAddDiscovered}
-            onAddAll={handleAddAll}
-            onRescan={() => void scan()}
-            onAddByPath={() => setPrompt("scan-folder")}
-          />
-        </main>
-      ) : tab === "ports" ? (
-        <main className="ports-pane">
-          <PortTable ports={ports} />
-        </main>
-      ) : (
-        <div className="body">
-          <ProjectList
-            projects={projects}
-            selectedId={selectedProject}
-            onSelect={setSelectedProject}
-            onAdd={() => {
-              setTab("discover");
-              void scan();
-            }}
-            busy={busy}
-          />
+      <div className="body">
+        <ProjectList
+          projects={projects}
+          selectedId={selectedProject}
+          onSelect={(id) => {
+            setSelectedProject(id);
+            setTab("services");
+          }}
+          onAdd={() => {
+            setTab("discover");
+            void scan();
+          }}
+          busy={busy}
+          current={tab}
+          onView={(view) => {
+            setTab(view);
+            if (view === "discover" && discoveries.length === 0) void scan();
+          }}
+        />
 
+        {tab === "settings" ? (
+          <main className="ports-pane">
+            <Settings />
+          </main>
+        ) : tab === "discover" ? (
+          <main className="ports-pane">
+            <DiscoveryPanel
+              discoveries={discoveries}
+              scanning={scanning}
+              busy={busy}
+              onAdd={handleAddDiscovered}
+              onAddAll={handleAddAll}
+              onRescan={() => void scan()}
+              onAddByPath={() => setPrompt("scan-folder")}
+            />
+          </main>
+        ) : tab === "ports" ? (
+          <main className="ports-pane">
+            <PortTable ports={ports} />
+          </main>
+        ) : (
           <main className="detail">
             {!project ? (
               <p className="empty">Select a project.</p>
             ) : (
               <>
                 <header className="detail-head">
-                  <h1>{project.name}</h1>
-                  <span className="path">{project.root_path}</span>
+                  <div className="min-w-0 flex-1">
+                    <h1>{project.name}</h1>
+                    <span className="path">{project.root_path}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => setPrompt("add-worktree")}
+                    title="Serve another branch of this repository at the same time"
+                  >
+                    + Worktree
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => {
+                      setPromptProject(project.name);
+                      setPrompt("add-service");
+                    }}
+                  >
+                    + Service
+                  </Button>
                 </header>
 
-                <div className="workspaces">
-                  {project.workspaces.map((workspace) => (
-                    <section className="workspace" key={workspace.id}>
-                      <header className="workspace-head">
-                        <span className="branch">
-                          {workspace.git_branch ?? "(detached)"}
-                        </span>
-                        {workspace.worktree && (
-                          <span className="badge">worktree +{workspace.port_offset}</span>
-                        )}
-                        <span className="spacer" />
-                        {!workspace.worktree && (
-                          /* On the primary checkout only: a worktree is added
-                             to the repository, not to a branch of it. */
-                          <Button
-                            variant="outline" size="sm"
-                            disabled={busy}
-                            onClick={() => setPrompt("add-worktree")}
-                            title="Serve another branch of this repository at the same time"
-                          >
-                            + Worktree
-                          </Button>
-                        )}
-                        <Button
-                          variant="outline" size="sm"
-                          disabled={busy}
-                          onClick={() => {
-                            setPromptProject(project.name);
-                            setPrompt("add-service");
-                          }}
-                        >
-                          + Service
-                        </Button>
-                      </header>
+                {(() => {
+                  // One checkout at a time. A branch is a view of this project,
+                  // not more of it: rendering every checkout in full repeated
+                  // the same stack list three times for a repository cloned
+                  // three times, which is what made this look deep.
+                  const checkout =
+                    project.workspaces.find((w) => w.id === branch) ?? project.workspaces[0];
+                  if (!checkout) return <p className="empty">No checkouts.</p>;
 
-                      {/* Stacks on the left, services on the right. A stack
-                          is what somebody declared this is brought up as, so
-                          it is what you choose by; nothing chosen shows every
-                          service, because the list is still one list. */}
-                      <div className="workspace-body">
-                        <StackList
-                          stacks={stacks}
-                          total={workspace.services.length}
-                          loose={
-                            workspace.services.filter(
-                              (service: ServiceView) =>
-                                !stacks.some((stack) => stack.members.includes(service.name)),
-                            ).length
-                          }
-                          selected={pickedStack}
-                          busy={busy}
-                          onSelect={setPickedStack}
-                          onRun={(name) => act(() => api.runStack(project.id, name))}
-                          onStop={(name) => act(() => api.stopStack(project.id, name))}
-                          onEdit={(name) => {
-                            setEditingStack(name);
-                            setPrompt("add-stack");
-                          }}
-                          onRemove={(name) =>
-                            act(async () => {
-                              await api.removeStack(project.id, name);
-                              await reloadStacks();
-                            })
-                          }
-                          onNew={() => {
-                            // New means new: the sheet is the one Edit opens,
-                            // so it would otherwise arrive filled in.
-                            setEditingStack(null);
-                            setPrompt("add-stack");
-                          }}
-                        />
+                  const loose = checkout.services.filter(
+                    (service: ServiceView) =>
+                      !stacks.some((stack) => stack.members.includes(service.name)),
+                  );
+                  const chosen = stacks.find((stack) => stack.name === pickedStack);
+                  const shown = servicesFor(checkout.services, stacks, pickedStack, LOOSE);
 
-                        <div className="workspace-services">
-                          {(() => {
-                            const chosen = stacks.find((stack) => stack.name === pickedStack);
-                            const shown = servicesFor(
-                              workspace.services,
-                              stacks,
-                              pickedStack,
-                              LOOSE,
-                            );
-
-                            return (
-                              <>
-                                {/* The shape of the chosen stack, above its
-                                    members: what waits for what is the reason
-                                    it is one thing rather than several. */}
-                                {chosen && (chosen.flow ?? []).length > 0 && (
-                                  <div className="stack-flow">
-                                    <FlowChart flow={chosen.flow ?? []} />
-                                  </div>
-                                )}
-
-                                {shown.length === 0 ? (
-                                  <p className="empty">
-                                    {workspace.services.length === 0
-                                      ? "No services detected."
-                                      : "Nothing here."}
-                                  </p>
-                                ) : (
-                                  shown.map((service: ServiceView) => serviceRow(service))
-                                )}
-                              </>
-                            );
-                          })()}
+                  return (
+                    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+                      {project.workspaces.length > 1 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {project.workspaces.map((w) => (
+                            <button
+                              key={w.id}
+                              onClick={() => setBranch(w.id)}
+                              title={w.path}
+                              className={cn(
+                                "rounded-md border px-2 py-1 font-mono text-[11px] transition-colors",
+                                w.id === checkout.id
+                                  ? "border-ring bg-accent"
+                                  : "text-muted-foreground hover:bg-accent/50",
+                              )}
+                            >
+                              {w.git_branch ?? "(detached)"}
+                              {w.port_offset > 0 && (
+                                <span className="ml-1 opacity-60">+{w.port_offset}</span>
+                              )}
+                            </button>
+                          ))}
                         </div>
+                      )}
+
+                      <StackCards
+                        stacks={stacks}
+                        total={checkout.services.length}
+                        loose={loose.length}
+                        selected={pickedStack}
+                        busy={busy}
+                        onSelect={setPickedStack}
+                        onRun={(name) => act(() => api.runStack(project.id, name))}
+                        onStop={(name) => act(() => api.stopStack(project.id, name))}
+                        onEdit={(name) => {
+                          setEditingStack(name);
+                          setPrompt("add-stack");
+                        }}
+                        onRemove={(name) =>
+                          act(async () => {
+                            await api.removeStack(project.id, name);
+                            await reloadStacks();
+                          })
+                        }
+                        onNew={() => {
+                          // New means new: the sheet is the one Edit opens.
+                          setEditingStack(null);
+                          setPrompt("add-stack");
+                        }}
+                      />
+
+                      {/* The shape of the chosen stack, above its members:
+                          what waits for what is the reason it is one thing
+                          rather than several. */}
+                      {chosen && (chosen.flow ?? []).length > 0 && (
+                        <div className="overflow-x-auto rounded-lg border p-3">
+                          <FlowChart flow={chosen.flow ?? []} />
+                        </div>
+                      )}
+
+                      <div className="flex flex-col gap-0.5">
+                        {shown.length === 0 ? (
+                          <p className="empty">
+                            {checkout.services.length === 0
+                              ? "No services detected."
+                              : "Nothing here."}
+                          </p>
+                        ) : (
+                          shown.map((service: ServiceView) => serviceRow(service))
+                        )}
                       </div>
 
-                      {(workspace.supervised ?? []).map((entry) => (
-                        <SupervisedRow
-                          entry={entry}
-                          busy={busy}
-                          key={`${entry.supervisor}-${entry.name}`}
-                          onControl={(action) =>
-                            act(() => api.controlSupervised(entry.name, action))
-                          }
-                          onOpen={() => act(() => openExternal(entry.url as string))}
-                        />
-                      ))}
+                      {/* Everything the runtime can see but did not declare.
+                          Only when looking at all of it: they belong to no
+                          stack, so a stack's view is not where they go. */}
+                      {pickedStack === null && (
+                        <>
+                          {(checkout.supervised ?? []).map((entry) => (
+                            <SupervisedRow
+                              entry={entry}
+                              busy={busy}
+                              key={`${entry.supervisor}-${entry.name}`}
+                              onControl={(action) =>
+                                act(() => api.controlSupervised(entry.name, action))
+                              }
+                              onOpen={() => act(() => openExternal(entry.url as string))}
+                            />
+                          ))}
 
-                      {(workspace.containers ?? []).map((container) => (
-                        <ContainerRow
-                          container={container}
-                          busy={busy}
-                          key={container.name}
-                          onControl={(action) =>
-                            act(() => api.controlContainer(container.name, action))
-                          }
-                        />
-                      ))}
+                          {(checkout.containers ?? []).map((container) => (
+                            <ContainerRow
+                              container={container}
+                              busy={busy}
+                              key={container.name}
+                              onControl={(action) =>
+                                act(() => api.controlContainer(container.name, action))
+                              }
+                            />
+                          ))}
 
-                      {(workspace.external ?? []).map((item) => (
-                        <ExternalRow
-                          external={item}
-                          busy={busy}
-                          key={`${item.port}-${item.pid}`}
-                          onTakeControl={() =>
-                            setTakingOver({
-                              port: item.port,
-                              supervisor: item.supervisor,
-                            })
-                          }
-                        />
-                      ))}
-                    </section>
-                  ))}
-                </div>
+                          {(checkout.external ?? []).map((item) => (
+                            <ExternalRow
+                              external={item}
+                              busy={busy}
+                              key={`${item.port}-${item.pid}`}
+                              onTakeControl={() =>
+                                setTakingOver({
+                                  port: item.port,
+                                  supervisor: item.supervisor,
+                                })
+                              }
+                            />
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
 
 
                 <LogPanel
@@ -751,8 +772,8 @@ export default function App() {
               </>
             )}
           </main>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

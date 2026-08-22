@@ -12,7 +12,7 @@ import { mergeLogs, rowAction, servicesFor } from "../types";
 import { ServiceRow } from "../components/ServiceRow";
 import { StackEditor } from "../components/StackEditor";
 import { SupervisedRow } from "../components/SupervisedRow";
-import { LOOSE, StackList } from "../components/StackList";
+import { LOOSE, StackCards } from "../components/StackCards";
 import { affectsFailures } from "../types";
 import type {
   ContainerView,
@@ -340,7 +340,7 @@ describe("an existing group", () => {
 
   it("offers a way in from the stack that is chosen", () => {
     const html = renderToString(
-      <StackList
+      <StackCards
         stacks={[group]}
         total={2}
         loose={0}
@@ -354,14 +354,16 @@ describe("an existing group", () => {
         onNew={() => {}}
       />,
     );
-    expect(html).toContain("Edit");
+    // By its accessible name, not its glyph: the icon can change and
+    // the affordance is what the test is about.
+    expect(html).toContain("Change what is in this stack");
   });
 
   it("does not put three buttons on every stack", () => {
     // The actions belong to the one being looked at. A column of stacks each
     // carrying Start, Edit and Remove is a wall rather than a list.
     const html = renderToString(
-      <StackList
+      <StackCards
         stacks={[group]}
         total={2}
         loose={0}
@@ -376,9 +378,10 @@ describe("an existing group", () => {
       />,
     );
     expect(html).toContain(group.name);
-    // The stack is listed, but its actions are not in the page at all.
-    expect(html).not.toContain(">Edit<");
-    expect(html).not.toContain(">Start<");
+    // Start is always offered — it is what a stack is for. Editing and
+    // removing it are not in the page at all until it is the one chosen.
+    expect(html).not.toContain("Change what is in this stack");
+    expect(html).not.toContain("Delete this stack");
   });
 });
 
