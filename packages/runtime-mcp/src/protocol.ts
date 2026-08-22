@@ -205,6 +205,8 @@ export interface StackView extends Stack {
 }
 
 export interface AdoptOutcome {
+  /** The stack it was put in, so it can be started afterwards. */
+  stack?: string;
   service: ServiceView;
   /** Where the command came from. Never the project's scripts. */
   command_source: "recorded" | "process_argv" | "supervisor";
@@ -297,7 +299,7 @@ export type ResponseBody =
   | { type: "findings"; items: Finding[] }
   | { type: "failures"; items: Failure[] }
   | { type: "stacks"; items: StackView[] }
-  | { type: "task_run"; members: string[] }
+  | { type: "stack_run"; done: string[] }
   | ({ type: "adopted" } & AdoptOutcome)
   | { type: "sessions"; items: AgentSession[] }
   | ({ type: "session" } & AgentSession)

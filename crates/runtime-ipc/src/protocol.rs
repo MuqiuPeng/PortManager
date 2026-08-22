@@ -68,6 +68,13 @@ pub enum Request {
     },
 
     /// All services, or only those of one project.
+    /// Stop tracking a checkout. The directory is left alone.
+    RemoveWorktree {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selector: Option<String>,
+        /// The checkout's path, or its branch.
+        checkout: String,
+    },
     ListServices {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
@@ -160,6 +167,9 @@ pub enum Request {
         /// Declare it even though another supervisor is keeping it alive.
         #[serde(default)]
         force: bool,
+        /// Which stack to put it in. Its own, named after it, when unsaid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stack: Option<String>,
     },
 
     StartService {

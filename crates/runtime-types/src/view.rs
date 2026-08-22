@@ -298,6 +298,15 @@ pub struct AdoptOutcome {
     /// Set when something else is still keeping it alive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supervisor: Option<String>,
+    /// The stack the adopted service was put in.
+    ///
+    /// Adopting exists so a running thing can be started again later, and a
+    /// service in no stack cannot be started by name — so adopting one and
+    /// leaving it outside every stack would undo its own purpose one step
+    /// after it succeeded. Running `adopt` is somebody saying they want this
+    /// managed, which is the declaration the rule asks for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

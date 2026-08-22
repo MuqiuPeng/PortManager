@@ -236,6 +236,7 @@ fn responses() -> Vec<ResponseBody> {
             service: service_view(),
             command_source: CommandSource::ProcessArgv,
             declared: false,
+            stack: Some("dev".to_string()),
             replaced_command: Some("npm run dev".to_string()),
             supervisor: Some("pm2".to_string()),
         }),
@@ -394,7 +395,7 @@ fn every_request_survives_a_round_trip() {
             name: "flip7".to_string(),
             action: "restart".to_string(),
         },
-        Request::AdoptPort { port: 3007, force: true },
+        Request::AdoptPort { port: 3007, force: true, stack: None },
         Request::StartService {
             project: None,
             service: "web".to_string(),

@@ -555,6 +555,16 @@ impl Store {
         })
     }
 
+    /// Forget a checkout. Its services and stacks go with it, by cascade.
+    pub fn delete_workspace(&self, id: &WorkspaceId) -> Result<bool> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute("DELETE FROM workspaces WHERE id = ?1", params![id.as_str()])
+                .map_err(sqlite_err)?;
+            Ok(changed > 0)
+        })
+    }
+
     // ---- instances -----------------------------------------------------
 
     pub fn insert_instance(&self, instance: &RuntimeInstance) -> Result<()> {

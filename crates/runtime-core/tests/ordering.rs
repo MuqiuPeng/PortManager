@@ -706,3 +706,43 @@ async fn a_one_shot_that_has_never_run_is_not_counted_as_up() {
     // than started, which is how a surface words it.
     assert!(view.flow.iter().all(|node| node.one_shot), "{:?}", view.flow);
 }
+
+/// Adopting exists so a running thing can be started again later.
+///
+/// A service in no stack cannot be started by name, so declaring one and
+/// leaving it outside every stack undid this command's purpose one step after
+/// it succeeded — the error even told you to put it in a stack, which is what
+/// adopting was supposed to have arranged. Running `adopt` is somebody saying
+/// they want this managed, which is the declaration the rule asks for.
+#[tokio::test]
+async fn an_adopted_service_can_be_started() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let (service, mut child) = adopted(&dir, &runtime).await;
+
+    if !adoption_is_possible(&runtime, &service) {
+        let _ = child.kill();
+        return;
+    }
+    let port = service.preferred_port.expect("the fixture sets one");
+
+    let outcome = runtime.adopt_port(port, false, None).unwrap();
+    let stack = outcome
+        .stack
+        .expect("adopting left the service in no stack, so it cannot be started");
+    let adopted_id = outcome.service.service.id.clone();
+
+    runtime
+        .require_in_a_stack(&adopted_id)
+        .expect("adopting left the service unstartable, which is what it exists to prevent");
+    assert!(
+        runtime
+            .stacks_for(&outcome.service.service.workspace_id)
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.name == stack),
+        "the stack it reported does not exist"
+    );
+
+    let _ = child.kill();
+}

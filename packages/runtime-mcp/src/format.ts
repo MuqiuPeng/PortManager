@@ -272,6 +272,11 @@ export function formatAdopted(outcome: AdoptOutcome): string {
   ];
   // Where the command came from decides how much to trust it, so say it rather
   // than leave the caller to assume.
+  if (outcome.stack) {
+    // Which stack it is in decides whether it can be started, and being
+    // startable later is what adopting is for.
+    lines.push(`  In stack ${outcome.stack}, so it can be started from here.`);
+  }
   lines.push(
     outcome.command_source === "recorded"
       ? "  Taken from the launch recorded for it."

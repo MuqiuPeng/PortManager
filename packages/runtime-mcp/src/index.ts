@@ -164,6 +164,27 @@ function registerTools(
   );
 
   server.registerTool(
+    "remove_worktree",
+    {
+      title: "Forget a checkout",
+      description:
+        "Stop tracking a checkout of a project. The directory is not touched — this is the runtime forgetting it, not git losing it. Refused for the project's own checkout, which is remove_project, and refused while anything in it is running, since the services go with the registration and the processes would not.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        checkout: z.string().describe("Its path, or its branch."),
+      },
+    },
+    async ({ project, checkout }) =>
+      run("remove_worktree", { selector: project, checkout }, (body) =>
+        body.type === "done"
+          ? body.ok
+            ? `${checkout} is no longer tracked`
+            : `${checkout} was not tracked`
+          : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
     "list_services",
     {
       title: "List services",
@@ -674,6 +695,27 @@ function registerTools(
   );
 
   server.registerTool(
+    "remove_stack",
+    {
+      title: "Remove a stack",
+      description:
+        "Undeclare a stack. Its members are left alone — this removes the grouping, not the services, and nothing running is stopped. A service that ends up in no stack cannot be started by name until it is in one again.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        name: z.string(),
+      },
+    },
+    async ({ project, name }) =>
+      run("remove_stack", { selector: project, name }, (body) =>
+        body.type === "done"
+          ? body.ok
+            ? `${name} is no longer a stack`
+            : `there is no stack called ${name} here`
+          : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
     "run_stack",
     {
       title: "Run a stack",
@@ -686,8 +728,8 @@ function registerTools(
     },
     async ({ project, name }) =>
       run("run_stack", { selector: project, name }, (body) =>
-        body.type === "task_run"
-          ? body.members.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+        body.type === "stack_run"
+          ? body.done.map((step) => `* ${step}`).join("\n") || "Nothing to do."
           : unexpected(body),
       ),
   );
@@ -705,8 +747,8 @@ function registerTools(
     },
     async ({ project, name }) =>
       run("stop_stack", { selector: project, name }, (body) =>
-        body.type === "task_run"
-          ? body.members.map((step) => `* ${step}`).join("\n") || "Nothing to do."
+        body.type === "stack_run"
+          ? body.done.map((step) => `* ${step}`).join("\n") || "Nothing to do."
           : unexpected(body),
       ),
   );
@@ -716,17 +758,23 @@ function registerTools(
     {
       title: "Take control of a port",
       description:
-        "Declare whatever is already listening on a port as a service, so it can be stopped and started from here afterwards. The command is read off the running process, never guessed from package.json — a project whose dev and start scripts share a build directory is left unable to boot if it is adopted under the wrong one. Nothing is stopped or restarted. Refuses when another supervisor (PM2, systemd) is keeping the service alive, because taking it over means removing it from there, which usually changes what starts at boot; pass force to declare it anyway.",
+        "Declare whatever is already listening on a port as a service, so it can be stopped and started from here afterwards. The command is read off the running process, never guessed from package.json — a project whose dev and start scripts share a build directory is left unable to boot if it is adopted under the wrong one. It is put in a stack so that it can be, since a service in no stack cannot be started by name. Nothing is stopped or restarted. Refuses when another supervisor (PM2, systemd) is keeping the service alive, because taking it over means removing it from there, which usually changes what starts at boot; pass force to declare it anyway.",
       inputSchema: {
         port: z.number().int().min(1).max(65535),
+        stack: z
+          .string()
+          .optional()
+          .describe(
+            "Which stack to put it in, so it can be started afterwards. Its own, named after it, when unsaid.",
+          ),
         force: z
           .boolean()
           .optional()
           .describe("Declare it even though another supervisor keeps it alive."),
       },
     },
-    async ({ port, force }) =>
-      run("adopt_port", { port, force: force ?? false }, (body) =>
+    async ({ port, stack, force }) =>
+      run("adopt_port", { port, stack: stack ?? null, force: force ?? false }, (body) =>
         body.type === "adopted" ? formatAdopted(body) : unexpected(body),
       ),
   );

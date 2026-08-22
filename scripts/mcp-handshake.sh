@@ -31,4 +31,25 @@ if [ -n "$missing" ]; then
   echo "  the MCP server sends requests this daemon does not accept:$missing"
   exit 1
 fi
-echo "  every request the MCP server sends is one the daemon accepts"
+
+# And the replies. A request name that matches is only half of it: the server
+# also decides what to do by the `type` on the answer, and a rename left one of
+# those pointing at a tag the daemon stopped sending — so the call succeeded
+# and the tool reported that it had got something unexpected.
+emitted=$(sed -n '/pub enum ResponseBody/,/^}/p' crates/runtime-ipc/src/protocol.rs |
+  grep -oE '^\s{4}[A-Z][A-Za-z]+' | tr -d ' ' |
+  sed 's/\([a-z0-9]\)\([A-Z]\)/\1_\2/g' | tr 'A-Z' 'a-z' | sort -u)
+expected=$(grep -oE 'body\.type === "[a-z_]+"' "$built" | sed 's/.*"\(.*\)"/\1/' | sort -u)
+
+stale=""
+for name in $expected; do
+  echo "$emitted" | grep -qx "$name" || stale="$stale $name"
+done
+
+if [ -n "$stale" ]; then
+  echo "  the MCP server waits for replies the daemon never sends:$stale"
+  exit 1
+fi
+
+echo "  every request the MCP server sends is one the daemon accepts, and every"
+echo "  reply it waits for is one the daemon sends"

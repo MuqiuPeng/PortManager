@@ -362,6 +362,63 @@ impl Runtime {
             }))
     }
 
+    /// Stop tracking a checkout.
+    ///
+    /// The directory is not touched — this is the runtime forgetting a
+    /// checkout, not git losing one. Removing the worktree itself is `git
+    /// worktree remove`, and doing it from here would mean deleting somebody's
+    /// files because they asked to tidy a list.
+    ///
+    /// Refused for the project's own root: a project without its root is not a
+    /// project with one fewer checkout, it is a project with nowhere to be, and
+    /// what that asks for is `project remove`.
+    ///
+    /// Refused while anything in it is running, because the services go with
+    /// the registration and the processes would not — they would carry on with
+    /// nothing left that knows how to stop them.
+    pub fn remove_workspace(&self, workspace_id: &WorkspaceId) -> Result<bool> {
+        let workspace = self.require_workspace(workspace_id)?;
+        let root = self.root_checkout(&workspace.project_id)?;
+        if root.id == workspace.id {
+            let project = self
+                .store
+                .get_project(&workspace.project_id)?
+                .map(|project| project.name)
+                .unwrap_or_default();
+            return Err(RuntimeError::invalid(format!(
+                "this is {project}'s own checkout, not one of its worktrees; remove the project instead"
+            )));
+        }
+
+        let owners = self.port_owners()?;
+        let live: Vec<String> = self
+            .store
+            .list_services(&workspace.id)?
+            .into_iter()
+            .filter(|service| {
+                self.service_view_with(service, &owners)
+                    .map(|view| view.status.is_live())
+                    .unwrap_or(false)
+            })
+            .map(|service| service.name)
+            .collect();
+        if !live.is_empty() {
+            return Err(RuntimeError::invalid(format!(
+                "still running here: {}; stop them before forgetting the checkout they belong to",
+                live.join(", ")
+            )));
+        }
+
+        let removed = self.store.delete_workspace(&workspace.id)?;
+        if removed {
+            self.events.publish(RuntimeEvent::WorkspaceChanged {
+                project_id: workspace.project_id.clone(),
+                workspace_id: workspace.id.clone(),
+            });
+        }
+        Ok(removed)
+    }
+
     pub fn register_worktree(&self, project_id: &ProjectId, path: &Path) -> Result<Workspace> {
         let workspace = self.register_workspace(project_id, path)?;
         if workspace.worktree {
@@ -1790,7 +1847,49 @@ impl Runtime {
     /// Nothing is stopped or started here. Adopting is about being *able* to,
     /// and a service that is serving traffic should not go down because someone
     /// asked the runtime to learn about it.
-    pub fn adopt_port(&self, port: u16, force: bool) -> Result<AdoptOutcome> {
+    /// Make sure a service adopting has touched can be started afterwards.
+    ///
+    /// Whichever stack already names it, or one made for it. Adopting exists so
+    /// a running thing can be started again later, and a service in no stack
+    /// cannot be started by name — so every path out of `adopt_port` has to
+    /// leave it in one, not just the path that declares a new service. The
+    /// first version of this only covered that path, and the test that calls
+    /// `adopt_port` for real failed on the very case it was written for: a
+    /// service already declared, being corrected.
+    fn stack_for_adopted(
+        &self,
+        workspace_id: &WorkspaceId,
+        name: &str,
+        asked_for: Option<String>,
+    ) -> Result<String> {
+        let stacks = self.stacks_for(workspace_id)?;
+        if asked_for.is_none() {
+            if let Some(already) = stacks
+                .iter()
+                .find(|stack| stack.members.iter().any(|member| member == name))
+            {
+                return Ok(already.name.clone());
+            }
+        }
+        let stack = asked_for.unwrap_or_else(|| name.to_string());
+        let mut members = stacks
+            .into_iter()
+            .find(|candidate| candidate.name == stack)
+            .map(|candidate| candidate.members)
+            .unwrap_or_default();
+        if !members.iter().any(|member| member == name) {
+            members.push(name.to_string());
+        }
+        self.set_stack(workspace_id, &stack, members)?;
+        Ok(stack)
+    }
+
+    pub fn adopt_port(
+        &self,
+        port: u16,
+        force: bool,
+        stack: Option<String>,
+    ) -> Result<AdoptOutcome> {
         let owners = self.port_owners()?;
         let Some(owner) = owners.iter().find(|owner| owner.port == port) else {
             return Err(RuntimeError::invalid(format!("nothing is listening on {port}")));
@@ -1908,6 +2007,7 @@ impl Runtime {
                 .collect();
             if missing.is_empty() {
                 return Ok(AdoptOutcome {
+                    stack: Some(self.stack_for_adopted(&existing.workspace_id, &existing.name, stack)?),
                     service: self.service_view(existing)?,
                     command_source: source,
                     declared: false,
@@ -1923,6 +2023,7 @@ impl Runtime {
             self.store.upsert_service(&corrected)?;
             self.announce_service(&corrected, false);
             return Ok(AdoptOutcome {
+                stack: Some(self.stack_for_adopted(&corrected.workspace_id, &corrected.name, stack.clone())?),
                 service: self.service_view(&corrected)?,
                 command_source: source,
                 declared: false,
@@ -1965,6 +2066,7 @@ impl Runtime {
             self.store.upsert_service(&corrected)?;
             self.announce_service(&corrected, false);
             return Ok(AdoptOutcome {
+                stack: Some(self.stack_for_adopted(&corrected.workspace_id, &corrected.name, stack.clone())?),
                 service: self.service_view(&corrected)?,
                 command_source: source,
                 declared: false,
@@ -1997,12 +2099,23 @@ impl Runtime {
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);
 
+        // Into a stack, because that is what adopting is for. A service in no
+        // stack cannot be started by name, and "so it can be started again
+        // later" is the whole of this command's purpose — declaring one and
+        // leaving it unstartable would undo that one step after succeeding.
+        //
+        // Its own, named after it, unless the caller said which. Nothing is
+        // invented by this: running `adopt` is somebody saying they want this
+        // managed, which is the declaration the rule asks for.
+        let stack = self.stack_for_adopted(&workspace.id, &service.name, stack)?;
+
         Ok(AdoptOutcome {
             service: self.service_view(&service)?,
             command_source: source,
             declared: true,
             replaced_command: None,
             supervisor: owner.supervisor.clone(),
+            stack: Some(stack),
         })
     }
 

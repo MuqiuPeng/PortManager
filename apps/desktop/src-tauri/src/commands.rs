@@ -224,7 +224,7 @@ pub async fn adopt_port(
     port: u16,
     force: bool,
 ) -> CmdResult<AdoptOutcome> {
-    match call(&state, Request::AdoptPort { port, force }).await? {
+    match call(&state, Request::AdoptPort { port, force, stack: None }).await? {
         ResponseBody::Adopted(outcome) => Ok(outcome),
         other => Err(unexpected(&other)),
     }

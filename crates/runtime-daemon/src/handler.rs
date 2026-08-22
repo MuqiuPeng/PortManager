@@ -99,6 +99,22 @@ impl Dispatcher {
 
             // ---- services ----------------------------------------------
 
+            Request::RemoveWorktree { selector, checkout } => {
+                let project = runtime.resolve_project(selector.as_deref().unwrap_or_default())?;
+                let workspace = runtime
+                    .store()
+                    .list_workspaces(&project.id)?
+                    .into_iter()
+                    .find(|candidate| {
+                        candidate.path.to_string_lossy() == checkout
+                            || candidate.git_branch.as_deref() == Some(checkout.as_str())
+                    })
+                    .ok_or_else(|| RuntimeError::not_found("checkout", &checkout))?;
+                Ok(ResponseBody::Done {
+                    ok: runtime.remove_workspace(&workspace.id)?,
+                })
+            }
+
             Request::ListServices { project } => {
                 let views = match project {
                     Some(selector) => {
@@ -241,8 +257,8 @@ impl Dispatcher {
                 items: runtime.failures(if detail_lines == 0 { 8 } else { detail_lines })?,
             }),
 
-            Request::AdoptPort { port, force } => {
-                Ok(ResponseBody::Adopted(runtime.adopt_port(port, force)?))
+            Request::AdoptPort { port, force, stack } => {
+                Ok(ResponseBody::Adopted(runtime.adopt_port(port, force, stack)?))
             }
 
             Request::StartService {

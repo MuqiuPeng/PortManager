@@ -179,6 +179,9 @@ enum Command {
         /// Declare it even though another supervisor is keeping it alive.
         #[arg(long)]
         force: bool,
+        /// Which stack to put it in. Its own, named after it, when unsaid.
+        #[arg(long)]
+        stack: Option<String>,
     },
 
     /// Show what is broken right now, and what each one said.
@@ -365,6 +368,11 @@ enum WorktreeCommand {
     List { selector: Option<String> },
     /// Register a checkout that git does not report yet.
     Add { path: PathBuf },
+    /// Stop tracking a checkout. The directory itself is left alone.
+    Remove {
+        /// Its path, or its branch.
+        checkout: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -467,8 +475,8 @@ async fn run(cli: Cli) -> Result<String> {
             client.call(Request::ControlSupervised { name, action }).await?
         }
 
-        Command::Adopt { port, force } => {
-            client.call(Request::AdoptPort { port, force }).await?
+        Command::Adopt { port, force, stack } => {
+            client.call(Request::AdoptPort { port, force, stack }).await?
         }
 
         Command::Scan { path, add } => {
@@ -782,6 +790,15 @@ async fn run(cli: Cli) -> Result<String> {
                 .await?
         }
 
+        Command::Worktree(WorktreeCommand::Remove { checkout }) => {
+            client
+                .call(Request::RemoveWorktree {
+                    selector: project,
+                    checkout,
+                })
+                .await?
+        }
+
         Command::Worktree(WorktreeCommand::List { selector }) => {
             let selector = selector
                 .or(project)
@@ -949,6 +966,12 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
                     "  taken from the supervisor, which holds what it runs next\n"
                 }
             });
+            // Which stack it is in, because that is what decides whether it
+            // can be started — and being startable later is what adopting is
+            // for.
+            if let Some(stack) = &outcome.stack {
+                out.push_str(&format!("  in stack {stack}, so it can be started from here\n"));
+            }
             if let Some(supervisor) = &outcome.supervisor {
                 out.push_str(&format!(
                     "  still kept alive by {supervisor}: starting it here will fight with it\n"
