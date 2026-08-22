@@ -62,13 +62,15 @@ export function StackCards({
       </button>
 
       {stacks.map((stack) => {
-        const members = stack.members.length;
-        const allUp = members > 0 && stack.running === members;
-        const someUp = stack.running > 0;
         const flow = stack.flow ?? [];
-        // A stack of nothing but one-shots is never "up": one that has run is
-        // not running and never will be.
-        const ready = flow.length > 0 && flow.every((node) => node.one_shot);
+        // A one-shot has no steady state, so it is no part of how much of this
+        // is up: it is run, not started. A stack of nothing but one-shots has
+        // no up-ness at all — which is why this one used to show a live dot and
+        // a Stop button for a migration that had never been executed.
+        const stays = flow.filter((node) => !node.one_shot).length;
+        const oneShots = flow.length - stays;
+        const allUp = stays > 0 && stack.running === stays;
+        const someUp = stack.running > 0;
         const chosen = selected === stack.name;
         const missing = stack.missing ?? [];
 
@@ -100,8 +102,10 @@ export function StackCards({
             </button>
 
             <div className="flex items-center gap-1">
-              <span className="flex-1 font-mono text-[11px] text-muted-foreground">
-                {stack.running}/{members} {ready ? "ready" : "up"}
+              <span className="flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                {stays === 0
+                  ? `${oneShots} to run`
+                  : `${stack.running}/${stays} up${oneShots > 0 ? ` +${oneShots}` : ""}`}
               </span>
               {someUp ? (
                 <Button
@@ -120,8 +124,9 @@ export function StackCards({
                   className="h-6 px-2 text-[11px]"
                   disabled={busy}
                   onClick={() => onRun(stack.name)}
+                  title={stays === 0 ? "Run it once, now" : undefined}
                 >
-                  Start
+                  {stays === 0 ? "Run" : "Start"}
                 </Button>
               )}
               {/* Only on the one being looked at, and not rendered otherwise:

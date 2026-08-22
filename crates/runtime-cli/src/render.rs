@@ -120,7 +120,8 @@ pub fn projects(views: &[ProjectView]) -> String {
 /// A group's own header: the unit somebody declared, and how it is made.
 pub fn stack_header(view: &StackView) -> String {
     let total = view.stack.members.len();
-    let mark = if view.running == total && total > 0 {
+    let stays = view.flow.iter().filter(|node| !node.one_shot).count();
+    let mark = if stays > 0 && view.running == stays {
         "\u{25cf}"
     } else if view.running > 0 {
         "\u{25d0}"
@@ -132,19 +133,25 @@ pub fn stack_header(view: &StackView) -> String {
     } else {
         format!("  ! missing {}", view.missing.join(", "))
     };
-    // "up" is wrong for a stack made only of one-shots: one that has run is
-    // not running, and never will be. Counting it as up is right — otherwise a
-    // migration that succeeded leaves the stack permanently short — but saying
-    // "up" about a stopped process is not.
-    let word = if view.flow.iter().all(|node| node.one_shot) && total > 0 {
-        "ready"
+    // A one-shot has no steady state, so it is not part of "how much of this
+    // is up" — it is counted separately, as a thing that is run rather than a
+    // thing that stays. A stack of nothing but one-shots has no up-ness at all
+    // and says so.
+    let one_shots = view.flow.iter().filter(|node| node.one_shot).count();
+    let stays_up = total.saturating_sub(one_shots);
+    let ran = if one_shots == 0 {
+        String::new()
+    } else if one_shots == 1 {
+        ", 1 one-shot".to_string()
     } else {
-        "up"
+        format!(", {one_shots} one-shots")
     };
-    format!(
-        "{mark} {}  {}/{} {word}{missing}",
-        view.stack.name, view.running, total
-    )
+    let head = if stays_up == 0 {
+        format!("{one_shots} to run")
+    } else {
+        format!("{}/{stays_up} up{ran}", view.running)
+    };
+    format!("{mark} {}  {head}{missing}", view.stack.name)
 }
 
 /// A group's shape: one line per level, members that can start together on it.

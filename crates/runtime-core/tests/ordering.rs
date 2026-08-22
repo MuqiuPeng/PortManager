@@ -669,3 +669,40 @@ async fn a_stack_declared_once_reaches_every_checkout() {
         .expect("shown a stack but refused a start");
     let _ = web;
 }
+
+/// A stack of one-shots is not "up" before it has ever been run.
+///
+/// The count of what is running used to include every one-shot, on the
+/// reasoning that a migration which has finished leaves nothing behind. But
+/// the test was "is a one-shot", not "has run", so a stack whose only member
+/// was a migration reported itself fully up the moment it was declared — and
+/// the window drew a live dot and a Stop button for a process that had never
+/// existed, which is what a stop cannot do anything about.
+#[tokio::test]
+async fn a_one_shot_that_has_never_run_is_not_counted_as_up() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    declare(&runtime, &workspace.id, dir.path(), "migrate", &creates(Path::new("done")), &[], true);
+    runtime
+        .set_stack(&workspace.id, "setup", vec!["migrate".to_string()])
+        .unwrap();
+
+    let view = runtime
+        .stack_views(&workspace.id)
+        .unwrap()
+        .into_iter()
+        .find(|stack| stack.stack.name == "setup")
+        .expect("no such stack");
+
+    assert_eq!(view.running, 0, "a migration that never ran was counted as up");
+    // And it is still identifiable as the kind of thing that is run rather
+    // than started, which is how a surface words it.
+    assert!(view.flow.iter().all(|node| node.one_shot), "{:?}", view.flow);
+}

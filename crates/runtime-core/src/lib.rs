@@ -1315,11 +1315,19 @@ impl Runtime {
                 }
             }
 
-            // A one-shot is not "running" and never will be, so counting it as
-            // missing would leave a working group permanently short.
+            // What is actually up. A one-shot used to be counted here on the
+            // grounds that a migration which has run leaves nothing running —
+            // but the test was `one_shot`, not "has run", so a stack whose only
+            // member was a one-shot reported itself fully up before it had ever
+            // been executed, showed a live dot, and offered a Stop that had
+            // nothing to stop.
+            //
+            // One-shots are told apart in the flow instead, where each member
+            // says whether it is one, so a surface can say "ran" about the
+            // thing that ran and "up" about the thing that is up.
             let running = services
                 .iter()
-                .filter(|view| view.status.is_live() || view.service.one_shot)
+                .filter(|view| view.status.is_live())
                 .count();
 
             let flow = flow_of(&stack, &services, &missing);
