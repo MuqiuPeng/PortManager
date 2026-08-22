@@ -59,19 +59,19 @@ export const api = {
   registerWorktree: (selector: string, path: string) =>
     invoke<Workspace>("register_worktree", { selector, path }),
 
-  listStacks: (project: string) => invoke<StackView[]>("list_tasks", { project }),
+  listStacks: (project: string) => invoke<StackView[]>("list_stacks", { project }),
 
-  setStack: (project: string, name: string, steps: string[]) =>
-    invoke<StackView[]>("set_task", { project, name, steps }),
+  setStack: (project: string, name: string, members: string[]) =>
+    invoke<StackView[]>("set_stack", { project, name, members }),
 
   removeStack: (project: string, name: string) =>
-    invoke<boolean>("remove_task", { project, name }),
+    invoke<boolean>("remove_stack", { project, name }),
 
   runStack: (project: string, name: string) =>
-    invoke<string[]>("run_task", { project, name }),
+    invoke<string[]>("run_stack", { project, name }),
 
   stopStack: (project: string, name: string) =>
-    invoke<string[]>("stop_task", { project, name }),
+    invoke<string[]>("stop_stack", { project, name }),
 
   updateService: (service: string, patch: ServicePatch) =>
     invoke<ServiceView>("update_service", { service, patch }),

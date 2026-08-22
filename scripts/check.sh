@@ -22,6 +22,9 @@ cargo check --workspace --exclude runtime-desktop --all-targets \
 echo "==> frontend"
 pnpm --dir apps/desktop test
 
+echo "==> the window speaks to this app"
+scripts/window-handshake.sh
+
 echo "==> mcp server"
 # Built, not merely type-checked. What is registered with an agent is
 # `dist/`, and `tsc --noEmit` never writes it — so a rename that landed in

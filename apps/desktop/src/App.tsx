@@ -272,10 +272,15 @@ export default function App() {
       try {
         const found = await api.listStacks(project.id);
         if (!cancelled) setTasks(found);
-      } catch {
-        // A project whose daemon cannot answer still renders; the services
-        // above will be showing the same failure.
-        if (!cancelled) setTasks([]);
+      } catch (err) {
+        // A project whose daemon cannot answer still renders — but say so
+        // rather than showing an empty list. Swallowing this is how the window
+        // came to invoke a command that no longer existed and look, for a day,
+        // like a project with no stacks in it.
+        if (!cancelled) {
+          setTasks([]);
+          setError(errorMessage(err));
+        }
       }
     })();
     return () => {
