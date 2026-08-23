@@ -275,6 +275,7 @@ impl Dispatcher {
                 // through the runtime directly and never reach here.
                 runtime.require_in_a_stack(&service.id)?;
                 let options = StartOptions {
+                    dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
                     port,
@@ -324,6 +325,7 @@ impl Dispatcher {
                 // starting it and answers to the same rule.
                 runtime.require_in_a_stack(&service.id)?;
                 let options = StartOptions {
+                    dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
                     port: None,
