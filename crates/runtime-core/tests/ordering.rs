@@ -870,7 +870,12 @@ async fn any_port_is_chosen_at_each_start_and_not_written_down() {
         .unwrap()
         .remove(0);
 
-    let serves = format!("{} -m http.server $PORT --bind 127.0.0.1", python());
+    // How a shell spells a variable, which is not the same shell on both
+    // platforms: `cmd.exe` reads `%PORT%` and would treat `$PORT` as a literal
+    // argument, so the server would bind nothing and the test would blame the
+    // allocator.
+    let port_var = if cfg!(windows) { "%PORT%" } else { "$PORT" };
+    let serves = format!("{} -m http.server {port_var} --bind 127.0.0.1", python());
     let mut service = declare(&runtime, &workspace.id, dir.path(), "web", &serves, &[], false);
     service.preferred_port = Some(runtime_types::ANY_PORT);
     runtime.store().upsert_service(&service).unwrap();
