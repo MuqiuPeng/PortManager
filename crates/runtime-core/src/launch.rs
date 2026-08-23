@@ -61,7 +61,7 @@ impl LaunchLog {
             // same: on macOS a shell in `/tmp/x` is reported by the process
             // table as `/private/tmp/x`, and comparing the two as text would
             // quietly fail to match every launch under a symlinked path.
-            cwd: std::fs::canonicalize(&cwd).unwrap_or(cwd),
+            cwd: crate::strip_verbatim(std::fs::canonicalize(&cwd).unwrap_or(cwd)),
             source,
             session,
             observed_at: Utc::now(),
@@ -177,8 +177,9 @@ pub fn explains(entry: &LaunchObservation, process_cwd: Option<&Path>, started: 
 
     // `cd frontend && pnpm dev` runs deeper than the directory it was announced
     // from, and a package in a monorepo runs deeper still.
-    let process_cwd = std::fs::canonicalize(process_cwd)
-        .unwrap_or_else(|_| process_cwd.to_path_buf());
+    let process_cwd = crate::strip_verbatim(
+        std::fs::canonicalize(process_cwd).unwrap_or_else(|_| process_cwd.to_path_buf()),
+    );
     process_cwd.starts_with(&entry.cwd)
 }
 

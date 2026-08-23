@@ -511,7 +511,14 @@ impl Dispatcher {
         let project = self.runtime.resolve_project(selector)?;
         let workspaces = self.runtime.store().list_workspaces(&project.id)?;
 
-        if let Ok(path) = std::fs::canonicalize(std::path::Path::new(selector)) {
+        // `canonicalize` alone is not comparable with a stored path on
+        // Windows: it returns the extended-length form and the registry stores
+        // the plain one, so `starts_with` never matched and every path selector
+        // fell through to the root checkout — sending work aimed at a worktree
+        // to the primary instead.
+        if let Ok(path) = std::fs::canonicalize(std::path::Path::new(selector))
+            .map(runtime_core::strip_verbatim)
+        {
             if let Some(found) = workspaces
                 .iter()
                 .filter(|workspace| path.starts_with(&workspace.path))
