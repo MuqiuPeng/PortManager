@@ -20,15 +20,20 @@ export function PortTable({ ports }: Props) {
       <thead>
         <tr>
           <th>Port</th>
+          <th>Proto</th>
           <th>Owner</th>
           <th>PID</th>
           <th>Working directory</th>
         </tr>
       </thead>
       <tbody>
+        {/* The protocol is part of a row's identity: one number can be held by
+            both a TCP and a UDP socket, and keying without it collapses the two
+            into a single row. */}
         {ports.map((port) => (
-          <tr key={`${port.port}-${port.pid}`}>
+          <tr key={`${port.port}-${port.protocol}-${port.pid}`}>
             <td className="mono">{port.port}</td>
+            <td className="mono">{port.protocol}</td>
             <td>
               {port.project_name ? (
                 <span className="owner">

@@ -202,6 +202,8 @@ export interface Discovery {
 
 export interface PortOwner {
   port: number;
+  /** One number can be held by both a TCP and a UDP socket. */
+  protocol: "tcp" | "udp";
   pid: number;
   executable?: string;
   cwd?: string;

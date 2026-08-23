@@ -98,7 +98,11 @@ impl<'a> PortResolver<'a> {
             });
         };
 
-        let process = self.adapter.process().process_info(pid)?;
+        let process = self
+            .process_table()?
+            .iter()
+            .find(|candidate| candidate.pid == pid)
+            .cloned();
         let mut owner = PortOwner {
             port,
             protocol: binding.protocol,
@@ -125,14 +129,17 @@ impl<'a> PortResolver<'a> {
         // call sites so that every path producing a `PortOwner` carries it:
         // `check_port` and the whole-machine scan are different code, and a
         // fact known by only one of them is a fact the caller cannot rely on.
-        if let Ok(processes) = self.adapter.process().list_processes() {
-            owner.supervisor = crate::supervisors::detect(pid, &processes, |candidate| {
-                self.adapter
-                    .process()
-                    .process_info(candidate)
-                    .ok()
-                    .flatten()
-                    .map(|info| info.command_string())
+        // Both the table and the command lines come from the one snapshot this
+        // resolver already holds. Asking the OS again per candidate is what made
+        // listing the ports on a busy machine take the better part of a minute:
+        // `process_info` enumerates every process to answer about one, and
+        // supervisor detection asks about several per socket.
+        if let Ok(processes) = self.process_table() {
+            owner.supervisor = crate::supervisors::detect(pid, processes, |candidate| {
+                processes
+                    .iter()
+                    .find(|process| process.pid == candidate)
+                    .map(|process| process.command_string())
             })
             .map(|found| found.kind);
         }
