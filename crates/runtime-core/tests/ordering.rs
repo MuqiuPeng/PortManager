@@ -18,7 +18,13 @@ use tempfile::TempDir;
 /// the spawn path, which is where the platforms actually differ.
 fn stays_up() -> &'static str {
     if cfg!(windows) {
-        "ping -n 60 127.0.0.1"
+        // `ping` sends one a second, so the count is the service's lifetime.
+        // Sixty was not enough. These tests run in parallel, each spawning
+        // services and resolving every listening socket on the machine, and on
+        // Windows that takes minutes — so the service exited on its own part
+        // way through and the assertions read a dead dependency as one that had
+        // been restarted. The number only has to outlast the run.
+        "ping -n 600 127.0.0.1"
     } else {
         "sleep 30"
     }

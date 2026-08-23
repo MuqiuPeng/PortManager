@@ -613,8 +613,9 @@ async fn a_command_that_fails_immediately_is_reported_as_a_failure() {
 
 #[tokio::test]
 async fn a_service_that_starts_and_keeps_running_is_not_reported_as_failed() {
-    let config = r#"{ "name": "fine", "services": { "web": { "command": "sleep 30" } } }"#;
-    let dir = repo(&[(".runtime.json", config)]);
+    let config = r#"{ "name": "fine", "services": { "web": { "command": "CMD" } } }"#
+        .replace("CMD", stays_up());
+    let dir = repo(&[(".runtime.json", config.as_str())]);
 
     let runtime = Runtime::in_memory().unwrap();
     let view = runtime.add_project(dir.path(), None).unwrap();
@@ -1105,7 +1106,7 @@ async fn taking_over_something_stopped_just_starts_it() {
     let dir = repo(&[(
         ".runtime.json",
         r#"{ "name": "app", "services": { "web": { "command": "CMD" } } }"#
-            .replace("CMD", if cfg!(windows) { "ping -n 30 127.0.0.1" } else { "sleep 30" })
+            .replace("CMD", stays_up())
             .as_str(),
     )]);
     let runtime = Runtime::in_memory().unwrap();
@@ -1212,6 +1213,20 @@ async fn a_path_selector_names_the_checkout_it_points_inside() {
         .resolve_service_in(Some(&project), Some(&other), "web")
         .unwrap();
     assert_eq!(picked.workspace_id, other.id, "the path did not narrow anything");
+}
+
+/// A command that starts and keeps running for longer than the suite does.
+///
+/// Windows has no `sleep`, so a hardcoded one fails to start at all — which
+/// makes a test about a service that keeps running fail for the one reason it
+/// is not testing. `ping` sends one a second, so the count is the lifetime, and
+/// it only has to outlast the run: this file takes ten minutes on Windows.
+fn stays_up() -> &'static str {
+    if cfg!(windows) {
+        "ping -n 600 127.0.0.1"
+    } else {
+        "sleep 600"
+    }
 }
 
 /// The spelling the registry stores a path under.
