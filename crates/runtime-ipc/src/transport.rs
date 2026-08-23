@@ -137,12 +137,39 @@ mod imp {
         }
     }
 
+    /// `ERROR_PIPE_BUSY`. Every instance is taken; the daemon has not yet
+    /// created the next one.
+    const BUSY: i32 = 231;
+
     pub async fn connect(path: &Path) -> Result<Connection> {
         let name = path.to_string_lossy().to_string();
-        let client = ClientOptions::new().open(&name).map_err(|err| {
-            RuntimeError::io(format!("cannot reach the daemon at {name}: {err}"))
-        })?;
-        Ok(Connection::new(client))
+
+        // A named pipe serves one client per instance, and the daemon creates
+        // the next only once the current one has been taken. Two clients that
+        // arrive together — the desktop app opens one connection for requests
+        // and a second for the event stream — mean one of them arrives in that
+        // gap and is told the pipe is busy.
+        //
+        // That is "wait your turn", not "nobody is listening", and reporting it
+        // as the latter sends the caller off to start a daemon that is already
+        // running.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match ClientOptions::new().open(&name) {
+                Ok(client) => return Ok(Connection::new(client)),
+                Err(err)
+                    if err.raw_os_error() == Some(BUSY)
+                        && std::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                Err(err) => {
+                    return Err(RuntimeError::io(format!(
+                        "cannot reach the daemon at {name}: {err}"
+                    )))
+                }
+            }
+        }
     }
 }
 

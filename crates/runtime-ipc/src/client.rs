@@ -233,14 +233,19 @@ fn which(name: &str) -> Option<PathBuf> {
 pub async fn wait_for_daemon(timeout: Duration) -> Result<Client> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if let Ok(client) = Client::connect_default().await {
-            return Ok(client);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(RuntimeError::io(format!(
-                "the daemon did not come up within {}s; run `runtime-daemon` directly to see why",
-                timeout.as_secs()
-            )));
+        match Client::connect_default().await {
+            Ok(client) => return Ok(client),
+            // Reported rather than discarded: "it did not come up" describes
+            // the symptom, and why the connection was refused is the only part
+            // of it a reader can act on.
+            Err(err) if tokio::time::Instant::now() >= deadline => {
+                return Err(RuntimeError::io(format!(
+                    "the daemon did not come up within {}s ({err}); \
+                     run `runtime-daemon` directly to see why",
+                    timeout.as_secs()
+                )))
+            }
+            Err(_) => {}
         }
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
