@@ -8,6 +8,7 @@
 //!
 //! A directory walk is offered as well, for projects that happen to be stopped.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -115,6 +116,33 @@ pub struct Discovery {
     pub registered: bool,
 }
 
+/// Git answers for one discovery pass.
+///
+/// `git::info` is six `git` invocations, and a pass asks about the same
+/// directory over and over: once for every listening socket that resolves into
+/// it, and again when its root is described. Sockets are many and roots are
+/// few, so almost all of that is the same question.
+///
+/// It matters beyond the scan's own runtime. Spawning git in a tight loop keeps
+/// the process table churning, and on Windows reading that table means opening
+/// every process in it — so a scan made *unrelated* work slow, including work
+/// in other processes entirely.
+#[derive(Default)]
+struct GitAnswers {
+    seen: std::collections::HashMap<PathBuf, Option<git::GitInfo>>,
+}
+
+impl GitAnswers {
+    fn info(&mut self, path: &Path) -> Option<git::GitInfo> {
+        if let Some(answer) = self.seen.get(path) {
+            return answer.clone();
+        }
+        let answer = git::info(path);
+        self.seen.insert(path.to_path_buf(), answer.clone());
+        answer
+    }
+}
+
 /// Find projects without being told where they are.
 ///
 /// `roots` adds directory trees to walk; discovery from running processes
@@ -126,15 +154,20 @@ pub fn discover(
     roots: &[PathBuf],
 ) -> Result<Vec<Discovery>> {
     let mut found: BTreeMap<PathBuf, Discovery> = BTreeMap::new();
+    let mut git_answers = GitAnswers::default();
 
     // A compose file's directory with containers running out of it is a project
     // by the same standard as a directory with a process running out of it.
-    let running = roots_from_running_processes(adapter)?
+    let running = roots_from_running_processes(adapter, &mut git_answers)?
         .into_iter()
-        .chain(docker.project_roots());
+        .chain(docker.project_roots())
+        .collect::<Vec<_>>();
 
     for (root, ports) in running {
-        let entry = found.entry(root.clone()).or_insert_with(|| describe(&root));
+        let entry = match found.entry(root.clone()) {
+            Entry::Occupied(seen) => seen.into_mut(),
+            Entry::Vacant(slot) => slot.insert(describe(&root, &mut git_answers)),
+        };
         entry.running = true;
         for port in ports {
             if !entry.ports.contains(&port) {
@@ -150,7 +183,9 @@ pub fn discover(
         // it would inherit the prefix.
         let root = strip_verbatim(root.clone());
         for candidate in walk(&root, MAX_SCAN_DEPTH) {
-            found.entry(candidate.clone()).or_insert_with(|| describe(&candidate));
+            if let Entry::Vacant(slot) = found.entry(candidate.clone()) {
+                slot.insert(describe(&candidate, &mut git_answers));
+            }
         }
     }
 
@@ -186,20 +221,29 @@ pub fn discover(
 /// Map every listening socket back to a project root.
 fn roots_from_running_processes(
     adapter: &dyn PlatformAdapter,
+    git_answers: &mut GitAnswers,
 ) -> Result<BTreeMap<PathBuf, Vec<u16>>> {
     let mut roots: BTreeMap<PathBuf, Vec<u16>> = BTreeMap::new();
+
+    // One reading of the process table for the whole pass. Asking about a
+    // single pid enumerates every process on Windows — sysinfo reads the lot
+    // and filters — so asking once per listening socket walked the table a
+    // hundred times over, and that was four fifths of a scan.
+    let processes = adapter.process().list_processes()?;
+    let by_pid: std::collections::HashMap<u32, &runtime_adapter::ProcessInfo> =
+        processes.iter().map(|process| (process.pid, process)).collect();
 
     for binding in adapter.port().listening_ports()? {
         let Some(pid) = binding.primary_pid() else {
             continue;
         };
-        let Some(process) = adapter.process().process_info(pid)? else {
+        let Some(process) = by_pid.get(&pid) else {
             continue;
         };
-        let Some(cwd) = process.cwd else {
+        let Some(cwd) = process.cwd.clone() else {
             continue;
         };
-        let Some(root) = project_root_for(&cwd) else {
+        let Some(root) = project_root_in(&cwd, git_answers) else {
             continue;
         };
         roots.entry(root).or_default().push(binding.port);
@@ -212,12 +256,16 @@ fn roots_from_running_processes(
 /// The git root wins when there is one, because that is the boundary a
 /// developer thinks in; otherwise the nearest directory with a build manifest.
 pub fn project_root_for(cwd: &Path) -> Option<PathBuf> {
+    project_root_in(cwd, &mut GitAnswers::default())
+}
+
+fn project_root_in(cwd: &Path, git_answers: &mut GitAnswers) -> Option<PathBuf> {
     if is_system_path(cwd) {
         return None;
     }
 
     // A repository answers this exactly, including for worktrees.
-    if let Some(info) = git::info(cwd) {
+    if let Some(info) = git_answers.info(cwd) {
         return (!is_system_path(&info.main_root)).then_some(info.main_root);
     }
 
@@ -234,7 +282,7 @@ pub fn project_root_for(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-fn describe(root: &Path) -> Discovery {
+fn describe(root: &Path, git_answers: &mut GitAnswers) -> Discovery {
     let detection = detect::detect(root);
     let mut markers: Vec<String> = MARKERS
         .iter()
@@ -242,7 +290,7 @@ fn describe(root: &Path) -> Discovery {
         .map(|marker| (*marker).to_string())
         .collect();
 
-    let git = git::info(root);
+    let git = git_answers.info(root);
     if git.is_some() {
         markers.insert(0, "git".to_string());
     }
