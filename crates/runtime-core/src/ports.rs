@@ -5,10 +5,12 @@
 //! allocation is a lease taken before the process starts, which is what lets a
 //! conflict be reported before a failed boot rather than after.
 
+use std::cell::OnceCell;
 use std::path::Path;
 
 use chrono::{Duration, Utc};
 use runtime_adapter::port::PortBinding;
+use runtime_adapter::process::ProcessInfo;
 use runtime_adapter::PlatformAdapter;
 use runtime_types::{
     ConflictPolicy, PortLease, PortLeaseStatus, PortOwner, PortReservation, PortStatus, Project,
@@ -28,6 +30,13 @@ pub struct PortResolver<'a> {
     store: &'a Store,
     adapter: &'a dyn PlatformAdapter,
     docker: &'a Docker,
+    /// The process table, read at most once per resolver.
+    ///
+    /// `list_ports` resolves every listening socket through this type, and the
+    /// ancestor walk each one needs was reading the whole table again — once
+    /// per socket, hundreds of times over, for a table that does not change
+    /// meaningfully during a single listing.
+    processes: OnceCell<Vec<ProcessInfo>>,
 }
 
 impl<'a> PortResolver<'a> {
@@ -36,6 +45,7 @@ impl<'a> PortResolver<'a> {
             store,
             adapter,
             docker,
+            processes: OnceCell::new(),
         }
     }
 
@@ -210,10 +220,19 @@ impl<'a> PortResolver<'a> {
     /// Built from a single process-table snapshot rather than repeated
     /// per-pid lookups, which on macOS would mean one megabyte-sized `sysctl`
     /// per generation.
+    /// The process table for this resolver, read once and reused.
+    fn process_table(&self) -> Result<&[ProcessInfo]> {
+        if let Some(processes) = self.processes.get() {
+            return Ok(processes);
+        }
+        let processes = self.adapter.process().list_processes()?;
+        Ok(self.processes.get_or_init(|| processes))
+    }
+
     fn ancestors(&self, pid: u32) -> Result<Vec<u32>> {
         const MAX_DEPTH: usize = 16;
 
-        let processes = self.adapter.process().list_processes()?;
+        let processes = self.process_table()?;
         let mut chain = vec![pid];
         let mut current = pid;
         for _ in 0..MAX_DEPTH {
