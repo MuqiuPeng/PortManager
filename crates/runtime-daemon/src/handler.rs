@@ -243,10 +243,10 @@ impl Dispatcher {
                 Ok(ResponseBody::StackRun { done: runtime.stop_stack(&workspace.id, &name).await? })
             }
 
-            Request::RunStack { selector, name } => {
+            Request::RunStack { selector, name, free_ports } => {
                 // Where it runs, not where it is declared.
                 let workspace = self.workspace_to_run_in(&selector)?;
-                Ok(ResponseBody::StackRun { done: runtime.run_stack(&workspace.id, &name).await? })
+                Ok(ResponseBody::StackRun { done: runtime.run_stack_freeing_ports(&workspace.id, &name, free_ports).await? })
             }
 
             Request::Diagnose => Ok(ResponseBody::Findings { items: runtime.diagnose()? }),

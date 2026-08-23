@@ -326,7 +326,7 @@ pub async fn run_stack(
     project: String,
     name: String,
 ) -> CmdResult<Vec<String>> {
-    match call(&state, Request::RunStack { selector: project, name }).await? {
+    match call(&state, Request::RunStack { selector: project, name, free_ports: false }).await? {
         ResponseBody::StackRun { done } => Ok(done),
         other => Err(unexpected(&other)),
     }

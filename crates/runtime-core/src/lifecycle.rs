@@ -347,6 +347,26 @@ impl Runtime {
     /// than carrying on: the later steps are there because the earlier ones
     /// were supposed to have worked.
     pub async fn run_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<Vec<String>> {
+        self.run_stack_freeing_ports(workspace_id, name, false).await
+    }
+
+    /// Run a stack, optionally clearing whatever holds a port it declared.
+    ///
+    /// The second door through "the runtime does not terminate what it did not
+    /// start". Like the first — `take_over` — it is opened by somebody saying
+    /// so about a particular thing, never by anything automatic: a stack run
+    /// stops at the conflict and reports who holds the port, and this is what
+    /// the answer to that report calls.
+    ///
+    /// A supervisor's process is still refused. Stopping it here is undone the
+    /// moment that supervisor notices, and losing that race quietly is worse
+    /// than not starting.
+    pub async fn run_stack_freeing_ports(
+        &self,
+        workspace_id: &WorkspaceId,
+        name: &str,
+        free_ports: bool,
+    ) -> Result<Vec<String>> {
         // The definition lives on the project's root checkout; the services it
         // names are resolved in whichever checkout this is being run in.
         let stack = self
@@ -410,7 +430,32 @@ impl Runtime {
                 continue;
             }
 
-            let outcome = self.start_service(&service.id, StartOptions::default()).await?;
+            // A port somebody wrote down is a port they meant. Moving the
+            // service to the next free one keeps the start succeeding and
+            // makes the number they wrote a suggestion — and it was usually
+            // written because something else has it hardcoded: a proxy, a
+            // callback URL, a colleague's notes.
+            //
+            // So a declared port that is taken stops here and says who has it.
+            // A member with no port declared still takes the next free one,
+            // because nobody said which it should be.
+            let options = StartOptions {
+                conflict_policy: service.preferred_port.map(|_| ConflictPolicy::Ask),
+                ..StartOptions::default()
+            };
+            let outcome = match self.start_service(&service.id, options.clone()).await {
+                Ok(outcome) => outcome,
+                // `start_service` refuses an `Ask` conflict and names the
+                // holder, in the words every surface uses. Answering that
+                // refusal is what `free_ports` is: clear the port and try the
+                // one member again.
+                Err(RuntimeError::PortConflict { port, holder }) if free_ports => {
+                    self.clear_port_for(&service.id, port, &holder).await?;
+                    self.start_service(&service.id, StartOptions::default()).await?
+                }
+                Err(err) => return Err(err),
+            };
+
             self.wait_until_healthy(&service.id, DEPENDENCY_TIMEOUT).await?;
             done.push(if outcome.reused {
                 format!("{step} (already up)")
@@ -1472,3 +1517,56 @@ async fn drain_and_stop(supervisor: &crate::supervisor::Supervisor, service_id: 
 fn file_len(path: &std::path::Path) -> u64 {
     std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
+
+impl Runtime {
+    /// End whatever holds a port, so a service that declared it can have it.
+    async fn clear_port_for(&self, wanted_by: &ServiceId, port: u16, holder: &str) -> Result<()> {
+        let owner = self
+            .port_owners()?
+            .into_iter()
+            .find(|owner| owner.port == port)
+            .ok_or_else(|| {
+                RuntimeError::invalid(format!("nothing holds {port} any more"))
+            })?;
+        if let Some(supervisor) = &owner.supervisor {
+            return Err(RuntimeError::NotPermitted {
+                pid: owner.pid,
+                reason: format!(
+                    "{supervisor} keeps port {port} alive and would take it back; switch it off there, or drive {supervisor} through `supervised`"
+                ),
+            });
+        }
+        let process = self.adapter().process();
+        let info = process.process_info(owner.pid)?.ok_or_else(|| {
+            RuntimeError::invalid(format!("pid {} is already gone", owner.pid))
+        })?;
+        self.logs_arc().append(
+            wanted_by,
+            LogStream::System,
+            format!("clearing port {port}, held by {holder}"),
+        )?;
+
+        let identity = info.identity();
+        process.terminate_tree(&identity, TerminationMode::Graceful)?;
+        let deadline = tokio::time::Instant::now() + GRACEFUL_PORT_WAIT;
+        let mut forced = false;
+        while process.is_alive(&identity)? {
+            if tokio::time::Instant::now() >= deadline {
+                if forced {
+                    return Err(RuntimeError::internal(format!(
+                        "pid {} survived a forced termination",
+                        identity.pid
+                    )));
+                }
+                process.terminate_tree(&identity, TerminationMode::Forceful)?;
+                forced = true;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        self.invalidate_port_owners();
+        Ok(())
+    }
+}
+
+/// How long something asked to give up a port gets before it is made to.
+const GRACEFUL_PORT_WAIT: Duration = Duration::from_secs(8);

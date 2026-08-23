@@ -389,7 +389,7 @@ fn every_request_survives_a_round_trip() {
             members: vec!["migrate".to_string(), "api".to_string()],
         },
         Request::RemoveStack { selector: ".".to_string(), name: "dev".to_string() },
-        Request::RunStack { selector: ".".to_string(), name: "dev".to_string() },
+        Request::RunStack { selector: ".".to_string(), name: "dev".to_string(), free_ports: false },
         Request::StopStack { selector: ".".to_string(), name: "dev".to_string() },
         Request::ControlSupervised {
             name: "flip7".to_string(),

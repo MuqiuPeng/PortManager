@@ -794,3 +794,50 @@ async fn a_member_is_refused_alone_and_started_by_its_stack() {
         .stop_service(&base.id, std::time::Duration::from_secs(5))
         .await;
 }
+
+/// A port somebody wrote down is a port they meant.
+///
+/// Moving the service to the next free one keeps the start succeeding and
+/// turns the number they wrote into a suggestion — and it is usually written
+/// down because something else has it fixed: a proxy, a callback URL, a
+/// colleague's notes. So a declared port that is taken stops the run and names
+/// the holder, and a member with no port declared still takes the next free
+/// one, because nobody said which it should be.
+#[tokio::test]
+async fn a_declared_port_that_is_taken_stops_the_run() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    // A port held by something outside the runtime, for the length of the test.
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+
+    let mut service = declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
+    service.preferred_port = Some(port);
+    runtime.store().upsert_service(&service).unwrap();
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+
+    let refused = runtime.run_stack(&workspace.id, "dev").await.unwrap_err();
+    match refused {
+        runtime_types::RuntimeError::PortConflict { port: reported, holder } => {
+            assert_eq!(reported, port);
+            assert!(!holder.is_empty(), "the holder was not named");
+        }
+        other => panic!("expected a port conflict, got {other:?}"),
+    }
+
+    // Nothing was started, so nothing is left running behind the refusal.
+    assert!(
+        !runtime.service_view(&service).unwrap().status.is_live(),
+        "the member started anyway"
+    );
+    drop(held);
+}

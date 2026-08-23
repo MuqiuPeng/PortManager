@@ -212,7 +212,15 @@ enum StackCommand {
     /// Remove a stack. Nothing running is touched.
     Remove { name: String },
     /// Bring up every step in order.
-    Run { name: String },
+    Run {
+        name: String,
+        /// Terminate whatever holds a port this stack declared.
+        ///
+        /// A run stops at a conflict and names the holder; this is how to
+        /// answer that with "take it".
+        #[arg(long)]
+        free_ports: bool,
+    },
     /// Stop everything it started, in the reverse order.
     Stop { name: String },
 }
@@ -462,8 +470,8 @@ async fn run(cli: Cli) -> Result<String> {
                 StackCommand::Remove { name } => {
                     client.call(Request::RemoveStack { selector, name }).await?
                 }
-                StackCommand::Run { name } => {
-                    client.call(Request::RunStack { selector, name }).await?
+                StackCommand::Run { name, free_ports } => {
+                    client.call(Request::RunStack { selector, name, free_ports }).await?
                 }
                 StackCommand::Stop { name } => {
                     client.call(Request::StopStack { selector, name }).await?

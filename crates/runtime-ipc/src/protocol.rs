@@ -146,7 +146,17 @@ pub enum Request {
     },
     RemoveStack { selector: String, name: String },
     /// Bring up every step in order, each with its own dependencies.
-    RunStack { selector: String, name: String },
+    RunStack {
+        selector: String,
+        name: String,
+        /// Clear whatever holds a port this stack declared, and carry on.
+        ///
+        /// Said by somebody who has been shown who holds it: a run stops at
+        /// the conflict and reports the holder, and this is what the answer to
+        /// that report sets. Nothing automatic sets it.
+        #[serde(default)]
+        free_ports: bool,
+    },
     /// Stop everything it started, in the reverse of the order it started.
     StopStack { selector: String, name: String },
 
