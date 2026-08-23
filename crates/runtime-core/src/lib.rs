@@ -2049,7 +2049,19 @@ impl Runtime {
         }) {
             let replaced = existing.command.clone();
             let mut corrected = existing;
-            corrected.command = command;
+            // A script keeps its script. `pnpm run dev:local` and the argv of
+            // the process it spawned describe the same running service, and
+            // only one of them starts it: the argv is what the package manager
+            // ran *after* setting up an environment, and on its own it exits
+            // immediately. Replacing the first with the second reads as making
+            // the definition more accurate and leaves it unable to boot, which
+            // is what happened to a service here.
+            //
+            // The port and the environment are still corrected — those are
+            // facts about the run, and the run is what this reads.
+            if !runs_through_a_script(&replaced) {
+                corrected.command = command;
+            }
             corrected.cwd = cwd;
             corrected.preferred_port = Some(port);
             // Mode variables replace whatever was there; anything else the
@@ -2727,8 +2739,55 @@ fn normalise_remote(url: &str) -> String {
     rest.replacen(':', "/", 1).to_lowercase()
 }
 
+/// Whether a command hands off to a package manager or task runner.
+///
+/// What such a command starts is not what it is: the process that ends up
+/// holding the port is whatever the script ran, with an environment the script
+/// set up. Its argv describes that process accurately and cannot reproduce it.
+fn runs_through_a_script(command: &str) -> bool {
+    const RUNNERS: [&str; 8] = ["npm", "pnpm", "yarn", "bun", "make", "just", "task", "cargo"];
+    let mut words = command.split_whitespace();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let stem = std::path::Path::new(first)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    RUNNERS.contains(&stem.as_str())
+}
+
 #[cfg(test)]
 mod tests {
+    /// A command that hands off to a package manager keeps its own text.
+    ///
+    /// `pnpm run dev:local` and the argv of the process it spawned describe one
+    /// running service, and only the first starts it — the second is what the
+    /// script ran after setting up an environment, and on its own it exits at
+    /// once. Adopting replaced the first with the second, which reads as making
+    /// the definition more accurate and left the service unable to boot.
+    #[test]
+    fn a_script_is_not_replaced_by_what_it_ran() {
+        for script in [
+            "pnpm run dev:local",
+            "npm run dev",
+            "yarn dev",
+            "/opt/homebrew/bin/pnpm run dev",
+            "cargo run --bin api",
+            "make serve",
+        ] {
+            assert!(super::runs_through_a_script(script), "{script}");
+        }
+        for direct in [
+            "/usr/bin/python3 -m http.server 8000",
+            "node server.mjs",
+            "./target/release/api",
+            "",
+        ] {
+            assert!(!super::runs_through_a_script(direct), "{direct}");
+        }
+    }
+
     /// A worker a runtime forked for itself is not how the service starts.
     ///
     /// Its argv has a real interpreter at the front and real arguments after

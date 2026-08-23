@@ -152,6 +152,18 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
             <span className="unit">blank if it has none</span>
           </label>
 
+          {/* What setting this actually does, because on its own the field
+              reads as "make it serve here" and it is not. A service that hard
+              codes its port, or reads one under another name, ignores this —
+              and then the window shows the port that was asked for while the
+              service is on another, which is exactly as confusing as it
+              sounds. The health check says so once it is running. */}
+          <p className="hint">
+            Passed to the service as <code>$PORT</code>, and reserved so nothing
+            else takes it. A service that hardcodes its port, or reads a
+            different variable, will not move — check its health after saving.
+          </p>
+
           <label className="field wide">
             <span>Type</span>
             <select value={type} onChange={(event) => setType(event.target.value as ServiceType)}>

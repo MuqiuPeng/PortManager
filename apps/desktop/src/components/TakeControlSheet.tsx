@@ -5,7 +5,8 @@ interface Props {
   supervisor?: string;
   busy: boolean;
   onCancel: () => void;
-  onConfirm: (force: boolean) => void;
+  /** `restart` stops what is running and starts it here instead. */
+  onConfirm: (force: boolean, restart: boolean) => void;
 }
 
 /**
@@ -38,8 +39,15 @@ export function TakeControlSheet({
 
         <div className="sheet-body">
           <p>
-            The runtime will write down how this is running, so it can start it
-            again later. Nothing is stopped now.
+            <strong>Take over</strong> stops what is running and starts it here
+            instead, so it can be stopped and restarted from this window. There
+            is a moment where the port is free.
+          </p>
+
+          <p>
+            <strong>Just record it</strong> writes down how it is running and
+            leaves it alone. It stays outside the runtime — this window can show
+            it, and cannot stop it.
           </p>
 
           <p className="hint">
@@ -65,13 +73,27 @@ export function TakeControlSheet({
           <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <button
-            className={supervisor ? "ghost" : "ghost primary"}
-            onClick={() => onConfirm(Boolean(supervisor))}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onConfirm(Boolean(supervisor), false)}
             disabled={busy}
           >
-            {supervisor ? "Declare it anyway" : "Declare it"}
-          </button>
+            Just record it
+          </Button>
+          {/* Not offered when another supervisor holds it: stopping it here is
+              undone the moment that supervisor notices, and the runtime can
+              drive it directly instead. */}
+          {!supervisor && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => onConfirm(false, true)}
+              disabled={busy}
+            >
+              Take over
+            </Button>
+          )}
         </div>
       </div>
     </div>

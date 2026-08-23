@@ -90,6 +90,9 @@ export const api = {
   startService: (service: string) =>
     invoke<StartOutcome>("start_service", { service }),
 
+  takeOverService: (service: string) =>
+    invoke<ServiceView>("take_over_service", { service }),
+
   stopService: (service: string) =>
     invoke<ServiceView>("stop_service", { service }),
 

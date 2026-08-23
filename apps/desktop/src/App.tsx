@@ -485,10 +485,16 @@ export default function App() {
           supervisor={takingOver.supervisor}
           busy={busy}
           onCancel={() => setTakingOver(null)}
-          onConfirm={(force) => {
+          onConfirm={(force, restart) => {
             const { port } = takingOver;
             setTakingOver(null);
-            void act(() => api.adoptPort(port, force));
+            void act(async () => {
+              // Declared first either way: taking over needs a service to take
+              // over, and adopting is what reads the command off the running
+              // process rather than guessing it from package.json.
+              const adopted = await api.adoptPort(port, force);
+              if (restart) await api.takeOverService(adopted.service.id);
+            });
           }}
         />
       )}
