@@ -66,6 +66,19 @@ pub struct Service {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// What port it wants, in the three states a socket already has names for.
+    ///
+    /// `None` — it does not listen. A worker, a migration; giving one a port
+    /// and then checking whether anything answers on it marks a healthy
+    /// process unhealthy.
+    ///
+    /// `Some(0)` — any free one, chosen at each start. Port zero means exactly
+    /// this to `bind`, so it is not a sentinel invented here. Nothing is
+    /// written back: the point of asking for any is that next time it can be
+    /// another, which is what makes it safe when the last one gets taken.
+    ///
+    /// `Some(n)` — that one. Written down because something else has it fixed,
+    /// so a run stops rather than quietly using a different number.
     pub preferred_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_check: Option<HealthCheck>,
@@ -116,6 +129,9 @@ pub struct Stack {
     /// start in any order at all.
     pub members: Vec<String>,
 }
+
+/// The port that means "any free one" — what `bind` has always taken it as.
+pub const ANY_PORT: u16 = 0;
 
 /// Who asked for a service to start. Drives ownership display and kill safety.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

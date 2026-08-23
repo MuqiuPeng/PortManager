@@ -17,10 +17,16 @@ use tempfile::TempDir;
 /// gating the tests instead would give up exactly what the Windows run is for:
 /// the spawn path, which is where the platforms actually differ.
 fn stays_up() -> &'static str {
+    // Long enough that it cannot expire mid-suite. It used to be thirty
+    // seconds, which was fine until the suite grew past that: a stand-in for
+    // "still running" that stops running on its own reports whatever the test
+    // was about as broken, and the failure names the assertion rather than the
+    // clock. Every test kills these itself, so the number only has to be
+    // bigger than the slowest run.
     if cfg!(windows) {
-        "ping -n 60 127.0.0.1"
+        "ping -n 1200 127.0.0.1"
     } else {
-        "sleep 30"
+        "sleep 1200"
     }
 }
 
@@ -840,4 +846,54 @@ async fn a_declared_port_that_is_taken_stops_the_run() {
         "the member started anyway"
     );
     drop(held);
+}
+
+/// Port zero means "any free one", chosen again at every start.
+///
+/// Three states, and a socket already has names for all of them: no port at
+/// all for something that does not listen, a fixed number for something that
+/// must have it, and zero for whatever is free. Nothing is written back — the
+/// point of asking for any is that the next run can have another, which is
+/// what keeps it working when this one gets taken.
+///
+/// Tested with a service that reads `$PORT`, because that is the only kind for
+/// which asking for any port means anything: the runtime chooses and tells,
+/// and a service that ignores the telling would be listening somewhere else.
+#[tokio::test]
+async fn any_port_is_chosen_at_each_start_and_not_written_down() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let serves = format!("{} -m http.server $PORT --bind 127.0.0.1", python());
+    let mut service = declare(&runtime, &workspace.id, dir.path(), "web", &serves, &[], false);
+    service.preferred_port = Some(runtime_types::ANY_PORT);
+    runtime.store().upsert_service(&service).unwrap();
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+
+    runtime.run_stack(&workspace.id, "dev").await.unwrap();
+    let chosen = runtime
+        .service_view(&service)
+        .unwrap()
+        .actual_port
+        .expect("no port was chosen for a service that asked for any");
+    assert!(chosen > 0, "zero is the request, not an answer");
+
+    // The request is still "any": nothing was written back, so the next start
+    // is free to land somewhere else.
+    let stored = runtime.require_service(&service.id).unwrap();
+    assert_eq!(
+        stored.preferred_port,
+        Some(runtime_types::ANY_PORT),
+        "the chosen port was written down as if it had been asked for"
+    );
+
+    runtime.stop_stack(&workspace.id, "dev").await.unwrap();
 }

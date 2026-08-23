@@ -613,7 +613,7 @@ async fn a_command_that_fails_immediately_is_reported_as_a_failure() {
 
 #[tokio::test]
 async fn a_service_that_starts_and_keeps_running_is_not_reported_as_failed() {
-    let config = r#"{ "name": "fine", "services": { "web": { "command": "sleep 30" } } }"#;
+    let config = r#"{ "name": "fine", "services": { "web": { "command": "sleep 1200" } } }"#;
     let dir = repo(&[(".runtime.json", config)]);
 
     let runtime = Runtime::in_memory().unwrap();
@@ -1105,7 +1105,7 @@ async fn taking_over_something_stopped_just_starts_it() {
     let dir = repo(&[(
         ".runtime.json",
         r#"{ "name": "app", "services": { "web": { "command": "CMD" } } }"#
-            .replace("CMD", if cfg!(windows) { "ping -n 30 127.0.0.1" } else { "sleep 30" })
+            .replace("CMD", if cfg!(windows) { "ping -n 1200 127.0.0.1" } else { "sleep 1200" })
             .as_str(),
     )]);
     let runtime = Runtime::in_memory().unwrap();
