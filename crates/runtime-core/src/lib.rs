@@ -2509,7 +2509,10 @@ fn canonicalize(path: &Path) -> Result<PathBuf> {
 /// is how every service is launched — and nothing else reports paths that way,
 /// so a root stored in that shape matches neither a process working directory
 /// nor `git rev-parse` output.
-pub(crate) fn strip_verbatim(path: PathBuf) -> PathBuf {
+/// Public because it is part of the contract rather than an internal tidy-up:
+/// this is the spelling a path is *stored* under, so anything looking a
+/// workspace up by path has to ask the same question the registry answered.
+pub fn strip_verbatim(path: PathBuf) -> PathBuf {
     if !cfg!(windows) {
         return path;
     }

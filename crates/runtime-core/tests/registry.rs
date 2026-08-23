@@ -1214,8 +1214,13 @@ async fn a_path_selector_names_the_checkout_it_points_inside() {
     assert_eq!(picked.workspace_id, other.id, "the path did not narrow anything");
 }
 
+/// The spelling the registry stores a path under.
+///
+/// `std::fs::canonicalize` alone is not it on Windows, where it returns an
+/// extended-length path and the registry stores the plain form. Looking a
+/// workspace up by the raw result finds nothing.
 fn canonical(path: &std::path::Path) -> std::path::PathBuf {
-    std::fs::canonicalize(path).unwrap()
+    runtime_core::strip_verbatim(std::fs::canonicalize(path).unwrap())
 }
 
 /// When two checkouts share a branch, saying so must say which is which.
