@@ -341,12 +341,15 @@ fn launcher(binary: &PathBuf) -> Command {
         })
         .unwrap_or(false);
 
-    if cfg!(windows) && is_script {
+    let mut command = if cfg!(windows) && is_script {
         let mut command = Command::new("cmd");
         command.arg("/C").arg(binary);
-        return command;
-    }
-    Command::new(binary)
+        command
+    } else {
+        Command::new(binary)
+    };
+    runtime_adapter::without_a_console(&mut command);
+    command
 }
 
 /// Run a pm2 command with a deadline, draining output as it goes.

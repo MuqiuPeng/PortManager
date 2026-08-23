@@ -37,6 +37,8 @@ use runtime_types::{
 };
 
 use crate::docker::Docker;
+pub use runtime_adapter::without_a_console;
+
 use crate::events::{EventBus, RuntimeEvent};
 use crate::logs::LogStore;
 use crate::ports::PortResolver;

@@ -69,3 +69,26 @@ fn append_command_line(command: &mut Command, command_line: &str) {
 fn append_command_line(command: &mut Command, command_line: &str) {
     command.arg(command_line);
 }
+
+/// Run a short-lived helper without giving it a console window.
+///
+/// Windows hands a console-subsystem child a console of its own whenever the
+/// parent has none — and the daemon is started detached precisely so that it
+/// has none. Every helper the runtime shells out to (git, docker, pm2) would
+/// otherwise flash a black rectangle on the desktop, and discovery runs them
+/// in the hundreds: once per candidate directory, across every directory a
+/// scan reaches.
+///
+/// Services are exempt on purpose. They go through [`SpawnProvider::prepare`],
+/// which applies this alongside the process group they need, so that a service
+/// can still be sent Ctrl+Break.
+pub fn without_a_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}

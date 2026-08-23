@@ -15,7 +15,7 @@ pub use desktop::{
 };
 pub use port::{PortBinding, PortProvider, Protocol};
 pub use process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
-pub use spawn::SpawnProvider;
+pub use spawn::{without_a_console, SpawnProvider};
 
 /// Everything the runtime needs from one operating system.
 pub trait PlatformAdapter: Send + Sync + 'static {

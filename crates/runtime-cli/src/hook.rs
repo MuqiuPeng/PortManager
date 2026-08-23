@@ -246,18 +246,20 @@ fn write_settings(
 /// HTTP endpoint, because a port manager that needs a port of its own to be
 /// reachable has an obvious failure mode on the day it is most needed.
 pub fn install_mcp(command: &str) -> Result<String, String> {
-    let output = std::process::Command::new("claude")
-        .args([
-            "mcp",
-            "add",
-            "--scope",
-            "user",
-            "--transport",
-            "stdio",
-            "localruntime",
-            "--",
-            command,
-        ])
+    let mut claude = std::process::Command::new("claude");
+    claude.args([
+        "mcp",
+        "add",
+        "--scope",
+        "user",
+        "--transport",
+        "stdio",
+        "localruntime",
+        "--",
+        command,
+    ]);
+    runtime_core::without_a_console(&mut claude);
+    let output = claude
         .output()
         .map_err(|err| format!("could not run `claude`: {err}"))?;
 
