@@ -32,35 +32,58 @@ pub struct WorktreeEntry {
 
 /// Read git state for a directory, or `None` when it is not a repository.
 pub fn info(path: &Path) -> Option<GitInfo> {
-    let root = git_path(&run(path, &["rev-parse", "--show-toplevel"])?);
-
+    // One invocation for all three paths, in the order asked for. `rev-parse`
+    // answers as many questions as it is given, and discovery asks about every
+    // directory it walks — six processes per directory is what made a scan slow
+    // enough to be felt outside it.
+    //
     // `--git-dir` points into `.git/worktrees/<name>` for a linked worktree,
     // while `--git-common-dir` always points at the primary `.git`. Comparing
     // them is the cheapest reliable worktree test.
-    let git_dir = run(path, &["rev-parse", "--absolute-git-dir"]);
-    let common_dir = run(path, &["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    let is_worktree = match (&git_dir, &common_dir) {
-        (Some(a), Some(b)) => a != b,
-        _ => false,
-    };
+    let paths = run(
+        path,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+            "--show-toplevel",
+        ],
+    )?;
+    let mut lines = paths.lines();
+    let git_dir = lines.next()?.trim().to_string();
+    let common_dir = lines.next()?.trim().to_string();
+    let root = git_path(lines.next()?.trim());
 
+    let is_worktree = git_dir != common_dir;
     let main_root = if is_worktree {
-        common_dir
-            .as_deref()
-            .map(git_path)
-            .and_then(|dir| dir.parent().map(Path::to_path_buf))
+        git_path(&common_dir)
+            .parent()
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| root.clone())
     } else {
         root.clone()
     };
 
-    let branch = run(path, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD");
+    // The plain rev comes first: `--abbrev-ref` applies to every rev after it,
+    // so asking the other way round returns the branch name twice.
+    let revs = run(path, &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"]);
+    let mut commit = None;
+    let mut branch = None;
+    if let Some(revs) = revs.as_deref() {
+        let mut lines = revs.lines();
+        commit = lines.next().map(|line| line.trim().to_string());
+        branch = lines
+            .next()
+            .map(|line| line.trim().to_string())
+            .filter(|name| name != "HEAD");
+    }
 
     Some(GitInfo {
         root,
         main_root,
         branch,
-        commit: run(path, &["rev-parse", "HEAD"]),
+        commit,
         is_worktree,
         remote_url: run(path, &["remote", "get-url", "origin"]),
     })
