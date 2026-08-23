@@ -746,3 +746,51 @@ async fn an_adopted_service_can_be_started() {
 
     let _ = child.kill();
 }
+
+/// A service is started as part of its stack, never on its own.
+///
+/// The unit somebody declared is the unit that runs. Bringing one member up by
+/// hand leaves the rest down while every list reads as though the stack is
+/// partly up, and taking one down out from under the others is the same thing
+/// backwards.
+///
+/// What this must not break is the reason a member comes up at all: the stack
+/// starting it, and anything it depends on being brought up first. Those go
+/// through the runtime rather than through a request naming a service, which
+/// is the distinction the rule is drawn on.
+#[tokio::test]
+async fn a_member_is_refused_alone_and_started_by_its_stack() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let base = declare(&runtime, &workspace.id, dir.path(), "base", stays_up(), &[], false);
+    let front = declare(&runtime, &workspace.id, dir.path(), "front", stays_up(), &["base"], false);
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["front".to_string()])
+        .unwrap();
+
+    for verb in ["started", "stopped", "restarted"] {
+        let refused = runtime.refuse_alone(&front.id, verb).unwrap_err().to_string();
+        assert!(refused.contains("dev"), "{verb}: {refused}");
+        assert!(refused.contains("not one at a time"), "{verb}: {refused}");
+    }
+
+    // And the stack brings it up, along with what it depends on.
+    let done = runtime.run_stack(&workspace.id, "dev").await.unwrap();
+    assert_eq!(done, vec!["front".to_string()]);
+    assert!(
+        runtime.service_view(&base).unwrap().status.is_live(),
+        "a dependency was left down"
+    );
+
+    runtime.stop_stack(&workspace.id, "dev").await.unwrap();
+    let _ = runtime
+        .stop_service(&base.id, std::time::Duration::from_secs(5))
+        .await;
+}

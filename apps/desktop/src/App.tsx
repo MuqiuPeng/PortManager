@@ -314,17 +314,6 @@ export default function App() {
         selected={service.id === selectedService}
         busy={busy}
         onSelect={() => setSelectedService(service.id)}
-        onStart={() =>
-          act(async () => {
-            const outcome = await api.startService(service.id);
-            // Surfaced where errors are, because it is the
-            // half of the outcome that will not announce
-            // itself later.
-            if (outcome.warning) setError(outcome.warning);
-          })
-        }
-        onStop={() => act(() => api.stopService(service.id))}
-        onRestart={() => act(() => api.restartService(service.id))}
         onOpen={() =>
           act(() => openExternal(service.url as string))
         }

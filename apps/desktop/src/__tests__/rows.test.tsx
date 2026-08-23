@@ -65,9 +65,6 @@ describe("a payload with every optional field absent", () => {
         selected={false}
         busy={false}
         onSelect={noop}
-        onStart={noop}
-        onStop={noop}
-        onRestart={noop}
         onOpen={noop}
         onEdit={noop}
         onTakeControl={noop}
@@ -125,9 +122,6 @@ describe("a payload with everything set", () => {
         selected={false}
         busy={false}
         onSelect={noop}
-        onStart={noop}
-        onStop={noop}
-        onRestart={noop}
         onOpen={noop}
         onEdit={noop}
         onTakeControl={noop}
@@ -151,9 +145,6 @@ describe("a payload with everything set", () => {
         selected={false}
         busy={false}
         onSelect={noop}
-        onStart={noop}
-        onStop={noop}
-        onRestart={noop}
         onOpen={noop}
         onEdit={noop}
         onTakeControl={noop}
@@ -549,9 +540,6 @@ describe("a service in no stack, in the window", () => {
         inAStack={false}
         onAddToStack={() => {}}
         onSelect={() => {}}
-        onStart={() => {}}
-        onStop={() => {}}
-        onRestart={() => {}}
         onOpen={() => {}}
         onEdit={() => {}}
         onTakeControl={() => {}}

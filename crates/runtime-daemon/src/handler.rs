@@ -273,7 +273,7 @@ impl Dispatcher {
                 // Somebody asked for this one by name, so the rule applies.
                 // Members of a stack and things depended on are started
                 // through the runtime directly and never reach here.
-                runtime.require_in_a_stack(&service.id)?;
+                runtime.refuse_alone(&service.id, "started")?;
                 let options = StartOptions {
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
@@ -291,6 +291,10 @@ impl Dispatcher {
                 timeout_seconds,
             } => {
                 let service = self.resolve_service(project.as_deref(), &service)?;
+                // Taking one member down out from under the others leaves the
+                // stack looking up and behaving otherwise. `stack stop` is how
+                // a set comes down, in reverse.
+                runtime.refuse_alone(&service.id, "stopped")?;
                 let timeout = timeout_seconds
                     .map(Duration::from_secs)
                     .unwrap_or(GRACEFUL_TIMEOUT);
@@ -322,7 +326,7 @@ impl Dispatcher {
                 let service = self.resolve_service(project.as_deref(), &service)?;
                 // A restart ends with the service up, so it is a way of
                 // starting it and answers to the same rule.
-                runtime.require_in_a_stack(&service.id)?;
+                runtime.refuse_alone(&service.id, "restarted")?;
                 let options = StartOptions {
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),

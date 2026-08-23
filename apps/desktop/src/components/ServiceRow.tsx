@@ -1,4 +1,4 @@
-import { isLive, rowAction, type ServiceView, type StartedBy } from "../types";
+import { isLive, type ServiceView, type StartedBy } from "../types";
 import { Button } from "@/components/ui/button";
 
 interface Props {
@@ -10,9 +10,6 @@ interface Props {
   /** Offered instead of Start, to make it startable. */
   onAddToStack: () => void;
   onSelect: () => void;
-  onStart: () => void;
-  onStop: () => void;
-  onRestart: () => void;
   onOpen: () => void;
   onEdit: () => void;
   onTakeControl: () => void;
@@ -36,9 +33,6 @@ export function ServiceRow({
   inAStack,
   onAddToStack,
   onSelect,
-  onStart,
-  onStop,
-  onRestart,
   onOpen,
   onEdit,
   onTakeControl,
@@ -119,76 +113,57 @@ export function ServiceRow({
             Open
           </Button>
         )}
-        {oneShot ? (
-          /* No Stop: there is nothing to stop, and a migration that finished
-             is not a service that is down. */
-          <Button
-            variant="default" size="sm"
-            onClick={onStart}
-            disabled={busy}
-            title="Run it once, now"
-          >
-            Run
-          </Button>
-        ) : viaSupervisor ? (
-          /* Not the runtime's process, but the supervisor holding it takes
-             orders — so these do what the buttons say. */
+        {/* Another supervisor's entry is not the runtime's to run as part of a
+            stack — it answers to whatever holds it, and these drive that. */}
+        {viaSupervisor && (
           <>
             <Button
-              variant="outline" size="sm"
-              onClick={() => onSupervisedControl("restart")}
+              variant="outline"
+              size="sm"
               disabled={busy}
-              title={`Restart via ${service.supervisor}`}
+              onClick={() => onSupervisedControl(live ? "restart" : "start")}
+              title={`Through ${service.supervisor}`}
             >
-              Restart
+              {live ? "Restart" : "Start"}
             </Button>
-            <Button
-              variant="destructive" size="sm"
-              onClick={() => onSupervisedControl("stop")}
-              disabled={busy}
-              title={`Stop via ${service.supervisor}`}
-            >
-              Stop
-            </Button>
+            {live && (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={busy}
+                onClick={() => onSupervisedControl("stop")}
+                title={`Through ${service.supervisor}`}
+              >
+                Stop
+              </Button>
+            )}
           </>
-        ) : external ? (
-          /* Nobody to ask, so the way out is to declare it — with the command
-             read off the running process, never guessed from the scripts. */
-          <Button
-            variant="outline" size="sm"
-            onClick={onTakeControl}
-            disabled={busy}
-            title="Declare this so the runtime can start it again"
-          >
+        )}
+
+        {/* Running, and not the runtime's. Taking it over is about who owns a
+            process that already exists rather than about bringing one up, so
+            the stack rule has nothing to say to it. */}
+        {live && !service.managed && !viaSupervisor && (
+          <Button variant="outline" size="sm" disabled={busy} onClick={onTakeControl}>
             Take control
           </Button>
-        ) : live ? (
-          <>
-            <Button variant="outline" size="sm" onClick={onRestart} disabled={busy}>
-              Restart
-            </Button>
-            <Button variant="destructive" size="sm" onClick={onStop} disabled={busy}>
-              Stop
-            </Button>
-          </>
-        ) : (
-          rowAction(false, inAStack) === "start" ? (
-            <Button variant="default" size="sm" onClick={onStart} disabled={busy}>
-              Start
-            </Button>
-          ) : (
-            // The daemon refuses this one; saying so before the click beats an
-            // error after it, and the useful next move is the one offered.
-            <Button
-              variant="outline" size="sm"
-              onClick={onAddToStack}
-              disabled={busy}
-              title="A service in no stack has nothing recorded about what belongs beside it"
-            >
-              Add to a stack
-            </Button>
-          )
         )}
+
+        {!inAStack && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={onAddToStack}
+            title="A service runs as part of a stack; this one is in none"
+          >
+            Add to a stack
+          </Button>
+        )}
+
+        {/* No Start, Stop or Restart of the service itself: it runs as part of
+            a stack, so those live on the stack. A button here would offer what
+            the daemon refuses, and the row would be arguing with it. */}
       </span>
     </div>
   );

@@ -1461,6 +1461,48 @@ impl Runtime {
         Ok(self.root_checkout(&project.id)?.id)
     }
 
+    /// A service is not started or stopped on its own; its stack is.
+    ///
+    /// The unit somebody declared is the unit that runs. Bringing one member up
+    /// by hand leaves the rest down and looks, from every list, like the stack
+    /// is partly up — and taking one down out from under the others is the same
+    /// thing in reverse. Whatever is true of the set is what there is to say.
+    ///
+    /// Asked only where a request names a service. Running a stack starts its
+    /// members, and starting anything brings up what it depends on; both go
+    /// through the runtime directly and never past here, so they are unaffected
+    /// by construction rather than by an exception list.
+    pub fn refuse_alone(&self, service_id: &ServiceId, verb: &str) -> Result<()> {
+        let service = self.require_service(service_id)?;
+        let stacks = self.stacks_for(&service.workspace_id)?;
+        let named: Vec<&str> = stacks
+            .iter()
+            .filter(|stack| stack.members.iter().any(|member| member == &service.name))
+            .map(|stack| stack.name.as_str())
+            .collect();
+
+        // The verb says what was refused; the advice is an instruction, so it
+        // needs the imperative rather than the same past participle again —
+        // "started 'dev'" is not something anybody can do.
+        let how = if verb == "stopped" { "stack stop" } else { "stack run" };
+        let advice = match named.as_slice() {
+            [] => format!(
+                "'{}' is in no stack, so there is nothing recorded about what belongs beside it; put it in one first",
+                service.name
+            ),
+            [one] => format!(
+                "services are {verb} as a stack, not one at a time — try `{how} {one}`, which '{}' is part of",
+                service.name
+            ),
+            many => format!(
+                "services are {verb} as a stack, not one at a time — '{}' is in {}, so `{how} <name>`",
+                service.name,
+                many.join(", ")
+            ),
+        };
+        Err(RuntimeError::invalid(advice))
+    }
+
     pub fn require_in_a_stack(&self, service_id: &ServiceId) -> Result<()> {
         let service = self.require_service(service_id)?;
         let stacks = self.stacks_for(&service.workspace_id)?;
