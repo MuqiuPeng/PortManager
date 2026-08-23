@@ -43,6 +43,9 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [ports, setPorts] = useState<PortOwner[]>([]);
+  /// False until the first answer arrives. An empty list before then is "not
+  /// asked yet", which is not the same as "nothing is listening".
+  const [portsRead, setPortsRead] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [tab, setTab] = useState<Tab>("services");
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
@@ -128,7 +131,10 @@ export default function App() {
     const poll = async () => {
       try {
         const next = await api.listPorts();
-        if (!cancelled) setPorts(next);
+        if (!cancelled) {
+          setPorts(next);
+          setPortsRead(true);
+        }
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
       }
@@ -565,7 +571,7 @@ export default function App() {
           </main>
         ) : tab === "ports" ? (
           <main className="ports-pane">
-            <PortTable ports={ports} />
+            <PortTable ports={ports} read={portsRead} />
           </main>
         ) : (
           <main className="detail">
