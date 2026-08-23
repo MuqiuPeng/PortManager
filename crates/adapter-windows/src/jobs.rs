@@ -111,10 +111,21 @@ impl JobRegistry {
         Ok(true)
     }
 
-    /// Drop the job for a process that ended on its own.
-    pub fn forget(&self, pid: u32) {
-        if let Ok(mut guard) = self.jobs.lock() {
-            guard.remove(&pid);
+    /// Take down what a finished service left inside its job.
+    ///
+    /// Closing the handle alone would not do it: the job is not created with
+    /// `KILL_ON_JOB_CLOSE`, deliberately, so that a daemon restart does not
+    /// take every service with it. Once the service itself has exited, though,
+    /// everything still in its job is an orphan, and a service that shut itself
+    /// down politely leaves them just as readily as one that was killed.
+    pub fn release(&self, pid: u32) {
+        let Ok(mut guard) = self.jobs.lock() else {
+            return;
+        };
+        if let Some(job) = guard.remove(&pid) {
+            // SAFETY: the handle is valid until `job` is dropped at the end of
+            // this scope.
+            unsafe { TerminateJobObject(job.0, 1) };
         }
     }
 

@@ -32,8 +32,13 @@ pub trait SpawnProvider: Send + Sync {
         Ok(())
     }
 
-    /// Forget a process that exited on its own, releasing anything
-    /// [`Self::confine`] allocated for it.
+    /// The service has exited; take down whatever it left behind.
+    ///
+    /// Anything still inside the confinement when the service itself is gone is
+    /// a descendant that outlived it — the orphan the whole mechanism exists to
+    /// catch. Called on every exit, however it happened: a service asked
+    /// politely and shutting itself down cleanly leaves orphans exactly as
+    /// readily as one that was killed.
     fn release(&self, _pid: u32) {}
 
     /// Build a ready-to-spawn command for a service's shell command line.

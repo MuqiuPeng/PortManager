@@ -55,6 +55,6 @@ impl SpawnProvider for WindowsSpawnProvider {
     }
 
     fn release(&self, pid: u32) {
-        self.jobs.forget(pid);
+        self.jobs.release(pid);
     }
 }
