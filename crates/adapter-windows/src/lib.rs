@@ -25,6 +25,7 @@
 
 #![cfg(windows)]
 
+mod console;
 mod jobs;
 mod port;
 mod process;

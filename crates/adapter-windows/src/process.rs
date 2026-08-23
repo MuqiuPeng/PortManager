@@ -7,6 +7,7 @@ use runtime_adapter::generic::GenericProcessProvider;
 use runtime_adapter::process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
 use runtime_types::{Result, RuntimeError};
 
+use crate::console::Console;
 use crate::jobs::JobRegistry;
 use crate::spawn::CREATE_NO_WINDOW;
 
@@ -14,6 +15,7 @@ use crate::spawn::CREATE_NO_WINDOW;
 pub struct WindowsProcessProvider {
     generic: GenericProcessProvider,
     jobs: Arc<JobRegistry>,
+    console: Console,
 }
 
 impl WindowsProcessProvider {
@@ -26,6 +28,7 @@ impl WindowsProcessProvider {
         Self {
             generic: GenericProcessProvider,
             jobs,
+            console: Console::new(),
         }
     }
 
@@ -82,11 +85,15 @@ impl ProcessProvider for WindowsProcessProvider {
             return Ok(false);
         }
 
-        // TODO(windows): for TerminationMode::Graceful, send
-        // GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) first and only fall
-        // through to a hard kill after the caller's grace period expires. The
-        // process group created in WindowsSpawnProvider exists for this.
-        let _ = mode;
+        // Ask first. The caller polls `is_alive` and escalates to `Forceful`
+        // when its grace period runs out, so this only has to deliver the
+        // request — not to wait for an answer.
+        if matches!(mode, TerminationMode::Graceful) && self.console.interrupt(identity.pid)? {
+            return Ok(true);
+        }
+        // An undeliverable request is not a granted one. Falling through rather
+        // than reporting success keeps the caller from waiting out a grace
+        // period the service never heard the start of.
 
         // Membership beats ancestry: the job holds every process the service
         // spawned, including any that re-parented away from it.

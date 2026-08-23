@@ -124,3 +124,80 @@ impl JobRegistry {
             .map_err(|_| RuntimeError::internal("the job registry mutex was poisoned"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+
+    /// Confining a process must not disturb it. The runtime reads a service's
+    /// start time back from the OS after spawning and compares it on every
+    /// liveness check, so anything that changes what the process table reports
+    /// makes a running service look dead.
+    #[test]
+    fn confining_leaves_the_process_alone() {
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -n 20 127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let pid = child.id();
+
+        let registry = JobRegistry::new();
+        let confined = registry.confine(pid);
+
+        let alive = unsafe {
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            let ok = !h.is_null();
+            if ok {
+                CloseHandle(h);
+            }
+            ok
+        };
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(confined.is_ok(), "confine failed: {confined:?}");
+        assert!(alive, "the process vanished after being confined");
+    }
+
+    /// The liveness check the runtime actually performs: read the identity
+    /// after spawning, then ask again later and compare.
+    #[test]
+    fn a_confined_process_still_reports_as_alive() {
+        use runtime_adapter::process::ProcessProvider;
+        use std::sync::Arc;
+
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -n 20 127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let pid = child.id();
+
+        let jobs = Arc::new(JobRegistry::new());
+        let processes = crate::WindowsProcessProvider::with_jobs(Arc::clone(&jobs));
+
+        let before = processes.process_info(pid).unwrap().map(|i| i.identity());
+        let confined = jobs.confine(pid);
+        let after = processes.process_info(pid).unwrap().map(|i| i.identity());
+        let alive = before
+            .zip(after)
+            .map(|(b, a)| a.matches(&b))
+            .unwrap_or(false);
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(confined.is_ok(), "confine failed: {confined:?}");
+        assert!(before.is_some(), "the process was not visible before confining");
+        assert!(after.is_some(), "the process was not visible after confining");
+        assert!(alive, "the identity stopped matching after confining");
+    }
+}
