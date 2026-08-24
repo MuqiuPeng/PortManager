@@ -275,6 +275,7 @@ impl Dispatcher {
                 // through the runtime directly and never reach here.
                 runtime.refuse_alone(&service.id, "started")?;
                 let options = StartOptions {
+                    dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
                     port,
@@ -328,6 +329,7 @@ impl Dispatcher {
                 // starting it and answers to the same rule.
                 runtime.refuse_alone(&service.id, "restarted")?;
                 let options = StartOptions {
+                    dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
                     session: session.map(SessionId::from),
                     port: None,
@@ -513,7 +515,14 @@ impl Dispatcher {
         let project = self.runtime.resolve_project(selector)?;
         let workspaces = self.runtime.store().list_workspaces(&project.id)?;
 
-        if let Ok(path) = std::fs::canonicalize(std::path::Path::new(selector)) {
+        // `canonicalize` alone is not comparable with a stored path on
+        // Windows: it returns the extended-length form and the registry stores
+        // the plain one, so `starts_with` never matched and every path selector
+        // fell through to the root checkout — sending work aimed at a worktree
+        // to the primary instead.
+        if let Ok(path) = std::fs::canonicalize(std::path::Path::new(selector))
+            .map(runtime_core::strip_verbatim)
+        {
             if let Some(found) = workspaces
                 .iter()
                 .filter(|workspace| path.starts_with(&workspace.path))

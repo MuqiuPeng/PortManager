@@ -41,4 +41,11 @@ echo "==> mcp server speaks to this daemon"
 # its own protocol, and the TypeScript side type-checks its own strings.
 scripts/mcp-handshake.sh
 
+echo "==> mcp server runs where it is shipped"
+# Built is not the same as shippable. The build above runs inside the package,
+# where `node_modules` sits one directory up; the copy the app carries has
+# nothing beside it. That difference hid a server that could not start on any
+# installed copy, on either platform, while every check here passed.
+scripts/mcp-standalone.sh
+
 echo "all clear"

@@ -216,7 +216,10 @@ export function formatPorts(ports: PortOwner[]): string {
         ? [port.project_name, port.git_branch, port.service_name].filter(Boolean).join("/")
         : (port.executable?.split(/[/\\]/).pop() ?? "unknown");
       const holder = port.container ? `container ${port.container}` : `pid ${port.pid}`;
-      return `${port.port}\t${label}\t${holder}${port.managed ? "" : "\t(unmanaged)"}`;
+      // The protocol belongs on the line: one number can be held by a TCP and a
+      // UDP socket in the same process, and without it the reader is handed two
+      // identical rows and no way to tell which is which.
+      return `${port.port}/${port.protocol}\t${label}\t${holder}${port.managed ? "" : "\t(unmanaged)"}`;
     })
     .join("\n");
 }

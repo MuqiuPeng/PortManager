@@ -352,13 +352,14 @@ fn published_ports(value: &serde_json::Value) -> Vec<u16> {
 /// containers — and the symptom is not a hang but silence: the command is
 /// killed at the deadline and every container quietly disappears.
 fn run(docker: &PathBuf, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(docker)
+    let mut command = Command::new(docker);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    runtime_adapter::without_a_console(&mut command);
+    let mut child = command.spawn().ok()?;
 
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {

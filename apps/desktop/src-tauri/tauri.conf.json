@@ -43,7 +43,8 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "externalBin": [
       "binaries/runtime-daemon",

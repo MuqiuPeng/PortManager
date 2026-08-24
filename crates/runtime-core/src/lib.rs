@@ -37,6 +37,8 @@ use runtime_types::{
 };
 
 use crate::docker::Docker;
+pub use runtime_adapter::without_a_console;
+
 use crate::events::{EventBus, RuntimeEvent};
 use crate::logs::LogStore;
 use crate::ports::PortResolver;
@@ -2446,21 +2448,25 @@ impl Runtime {
         let resolver = self.resolver();
         let mut owners: Vec<PortOwner> = Vec::new();
         for binding in self.adapter.port().listening_ports()? {
+            // The protocol is part of the identity: a port serving both TCP and
+            // UDP is two things, and collapsing them hides one.
             if owners.iter().any(|owner| {
-                owner.port == binding.port && Some(owner.pid) == binding.primary_pid()
+                owner.port == binding.port
+                    && owner.protocol == binding.protocol
+                    && Some(owner.pid) == binding.primary_pid()
             }) {
                 continue;
             }
-            if let Some(owner) = resolver.owner_of(binding.port)? {
-                if !owners
-                    .iter()
-                    .any(|existing| existing.port == owner.port && existing.pid == owner.pid)
-                {
-                    owners.push(owner);
-                }
+            let owner = resolver.owner_of_binding(&binding)?;
+            if !owners.iter().any(|existing| {
+                existing.port == owner.port
+                    && existing.protocol == owner.protocol
+                    && existing.pid == owner.pid
+            }) {
+                owners.push(owner);
             }
         }
-        owners.sort_by_key(|owner| (owner.port, owner.pid));
+        owners.sort_by_key(|owner| (owner.port, owner.protocol, owner.pid));
         Ok(owners)
     }
 
@@ -2546,9 +2552,35 @@ fn canonicalize(path: &Path) -> Result<PathBuf> {
     } else {
         path.to_path_buf()
     };
-    std::fs::canonicalize(&expanded).map_err(|err| {
+    let resolved = std::fs::canonicalize(&expanded).map_err(|err| {
         RuntimeError::io(format!("cannot resolve {}: {err}", expanded.display()))
-    })
+    })?;
+    Ok(strip_verbatim(resolved))
+}
+
+/// Drop Windows' extended-length `\\?\` prefix.
+///
+/// `std::fs::canonicalize` always returns one. It is a legal path for most of
+/// Win32 but not all of it — `cmd.exe` refuses it as a working directory, which
+/// is how every service is launched — and nothing else reports paths that way,
+/// so a root stored in that shape matches neither a process working directory
+/// nor `git rev-parse` output.
+/// Public because it is part of the contract rather than an internal tidy-up:
+/// this is the spelling a path is *stored* under, so anything looking a
+/// workspace up by path has to ask the same question the registry answered.
+pub fn strip_verbatim(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    let text = path.to_string_lossy().into_owned();
+    // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share`.
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
 }
 
 /// Why restarting a supervised entry would fail, when it would.
@@ -2864,15 +2896,34 @@ mod tests {
         assert!(!command_is_findable("definitely-not-a-real-program --serve"));
     }
 
+    /// A command line that runs through this platform's shell.
+    ///
+    /// `sh` is not a fact about every machine. Nothing on a stock Windows PATH
+    /// is called that — `where sh` finds nothing unless somebody installed Git
+    /// Bash — so a test asserting `sh -c '...'` is findable is really
+    /// asserting it is running on a Unix box, and it failed the first time
+    /// this suite ran anywhere else.
+    ///
+    /// What these tests mean is "a command that goes through a shell", which
+    /// both platforms have and each spells its own way.
+    fn through_a_shell(rest: &str) -> String {
+        if cfg!(windows) {
+            format!("cmd /c {rest}")
+        } else {
+            format!("sh -c '{rest}'")
+        }
+    }
+
     #[test]
     fn shell_syntax_is_left_alone() {
-        // `sh -c` territory: this cannot follow it, and a warning that fires on
+        // Shell territory: this cannot follow it, and a warning that fires on
         // working services is worse than no warning.
+        let shelled = through_a_shell("exec thing");
         for command in [
             "cd frontend && pnpm dev",
             "NODE_ENV=production node server.mjs",
             "pnpm dev > log.txt",
-            "sh -c 'exec thing'",
+            shelled.as_str(),
         ] {
             assert!(command_is_findable(command), "{command}");
         }
@@ -2890,6 +2941,6 @@ mod tests {
     #[test]
     fn a_real_command_line_still_passes() {
         assert!(looks_runnable("/usr/local/bin/node server.mjs"));
-        assert!(looks_runnable("sh -c 'pnpm dev'"));
+        assert!(looks_runnable(&through_a_shell("pnpm dev")));
     }
 }

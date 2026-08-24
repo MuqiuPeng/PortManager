@@ -1,14 +1,9 @@
 //! Listening-socket enumeration.
 
+pub use runtime_types::Protocol;
 use runtime_types::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Protocol {
-    Tcp,
-    Udp,
-}
 
 /// One socket bound on this machine, with the pids that hold it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,14 +28,22 @@ impl PortBinding {
 }
 
 pub trait PortProvider: Send + Sync {
-    /// Every TCP socket in the listening state.
+    /// Every socket accepting traffic: TCP in the listening state, and UDP,
+    /// which has no states — a bound UDP socket is already receiving.
     fn listening_ports(&self) -> Result<Vec<PortBinding>>;
 
+    /// The binding a user means when they name a port.
+    ///
+    /// TCP wins when both protocols hold the same number, because a dev server
+    /// is what the question is about; a UDP socket sharing the port would
+    /// otherwise shadow it and report the wrong owner.
     fn binding_for(&self, port: u16) -> Result<Option<PortBinding>> {
-        Ok(self
-            .listening_ports()?
-            .into_iter()
-            .find(|binding| binding.port == port))
+        let bindings = self.listening_ports()?;
+        Ok(bindings
+            .iter()
+            .find(|binding| binding.port == port && binding.protocol == Protocol::Tcp)
+            .or_else(|| bindings.iter().find(|binding| binding.port == port))
+            .cloned())
     }
 
     /// Whether the port can be bound right now.

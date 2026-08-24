@@ -101,6 +101,7 @@ fn project_view() -> ProjectView {
 fn port_owner() -> PortOwner {
     PortOwner {
         port: 3000,
+        protocol: Protocol::Tcp,
         pid: 42,
         executable: Some("/usr/local/bin/node".to_string()),
         cwd: Some("/repo".into()),

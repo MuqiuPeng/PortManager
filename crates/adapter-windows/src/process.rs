@@ -1,16 +1,21 @@
 //! Process inspection and termination on Windows.
 
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use runtime_adapter::generic::GenericProcessProvider;
 use runtime_adapter::process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
 use runtime_types::{Result, RuntimeError};
 
+use crate::console::Console;
+use crate::jobs::JobRegistry;
 use crate::spawn::CREATE_NO_WINDOW;
 
 #[derive(Debug, Default)]
 pub struct WindowsProcessProvider {
     generic: GenericProcessProvider,
+    jobs: Arc<JobRegistry>,
+    console: Console,
 }
 
 impl WindowsProcessProvider {
@@ -18,14 +23,21 @@ impl WindowsProcessProvider {
         Self::default()
     }
 
+    /// Share the job registry with the spawn provider, which fills it.
+    pub fn with_jobs(jobs: Arc<JobRegistry>) -> Self {
+        Self {
+            generic: GenericProcessProvider,
+            jobs,
+            console: Console::new(),
+        }
+    }
+
     /// Terminate a pid and every descendant via `taskkill /T`.
     ///
-    /// This is the baseline tree kill. It is correct but coarse: it always
-    /// forces, and it shells out.
-    ///
-    /// TODO(windows): assign each spawned service to a Job Object with
-    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and close the handle here, so the
-    /// kernel guarantees no descendant survives even if it re-parents.
+    /// The fallback for anything with no job: a service started before the
+    /// daemon last restarted, or one the kernel refused to confine. It walks
+    /// the parent chain, so a descendant that has re-parented itself escapes —
+    /// which is precisely why the job is tried first.
     fn taskkill(pid: u32) -> Result<bool> {
         let output = Command::new("taskkill")
             .args(["/T", "/F", "/PID", &pid.to_string()])
@@ -73,11 +85,21 @@ impl ProcessProvider for WindowsProcessProvider {
             return Ok(false);
         }
 
-        // TODO(windows): for TerminationMode::Graceful, send
-        // GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) first and only fall
-        // through to taskkill after the caller's grace period expires. The
-        // process group created in WindowsSpawnProvider exists for this.
-        let _ = mode;
+        // Ask first. The caller polls `is_alive` and escalates to `Forceful`
+        // when its grace period runs out, so this only has to deliver the
+        // request — not to wait for an answer.
+        if matches!(mode, TerminationMode::Graceful) && self.console.interrupt(identity.pid)? {
+            return Ok(true);
+        }
+        // An undeliverable request is not a granted one. Falling through rather
+        // than reporting success keeps the caller from waiting out a grace
+        // period the service never heard the start of.
+
+        // Membership beats ancestry: the job holds every process the service
+        // spawned, including any that re-parented away from it.
+        if self.jobs.terminate(identity.pid)? {
+            return Ok(true);
+        }
         Self::taskkill(identity.pid)
     }
 }

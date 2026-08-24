@@ -24,6 +24,14 @@ fn stays_up() -> &'static str {
     // clock. Every test kills these itself, so the number only has to be
     // bigger than the slowest run.
     if cfg!(windows) {
+        // `ping` sends one a second, so the count is the service's lifetime.
+        // Sixty was not enough, and neither was six hundred: these tests run in
+        // parallel, each spawning services and resolving every listening socket
+        // on the machine, and on Windows that takes minutes — so the service
+        // exited on its own part way through and the assertions read a dead
+        // dependency as one that had been restarted. Both platforms wait the
+        // same twenty minutes now, because the number only has to outlast the
+        // slowest run and there is no reason for them to differ.
         "ping -n 1200 127.0.0.1"
     } else {
         "sleep 1200"

@@ -8,6 +8,7 @@
 //!
 //! A directory walk is offered as well, for projects that happen to be stopped.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,7 @@ use crate::detect;
 use crate::docker::Docker;
 use crate::git;
 use crate::store::Store;
+use crate::strip_verbatim;
 use runtime_types::Result;
 
 /// Files that mark a directory as the root of a project.
@@ -114,6 +116,33 @@ pub struct Discovery {
     pub registered: bool,
 }
 
+/// Git answers for one discovery pass.
+///
+/// `git::info` is six `git` invocations, and a pass asks about the same
+/// directory over and over: once for every listening socket that resolves into
+/// it, and again when its root is described. Sockets are many and roots are
+/// few, so almost all of that is the same question.
+///
+/// It matters beyond the scan's own runtime. Spawning git in a tight loop keeps
+/// the process table churning, and on Windows reading that table means opening
+/// every process in it — so a scan made *unrelated* work slow, including work
+/// in other processes entirely.
+#[derive(Default)]
+struct GitAnswers {
+    seen: std::collections::HashMap<PathBuf, Option<git::GitInfo>>,
+}
+
+impl GitAnswers {
+    fn info(&mut self, path: &Path) -> Option<git::GitInfo> {
+        if let Some(answer) = self.seen.get(path) {
+            return answer.clone();
+        }
+        let answer = git::info(path);
+        self.seen.insert(path.to_path_buf(), answer.clone());
+        answer
+    }
+}
+
 /// Find projects without being told where they are.
 ///
 /// `roots` adds directory trees to walk; discovery from running processes
@@ -125,15 +154,20 @@ pub fn discover(
     roots: &[PathBuf],
 ) -> Result<Vec<Discovery>> {
     let mut found: BTreeMap<PathBuf, Discovery> = BTreeMap::new();
+    let mut git_answers = GitAnswers::default();
 
     // A compose file's directory with containers running out of it is a project
     // by the same standard as a directory with a process running out of it.
-    let running = roots_from_running_processes(adapter)?
+    let running = roots_from_running_processes(adapter, &mut git_answers)?
         .into_iter()
-        .chain(docker.project_roots());
+        .chain(docker.project_roots())
+        .collect::<Vec<_>>();
 
     for (root, ports) in running {
-        let entry = found.entry(root.clone()).or_insert_with(|| describe(&root));
+        let entry = match found.entry(root.clone()) {
+            Entry::Occupied(seen) => seen.into_mut(),
+            Entry::Vacant(slot) => slot.insert(describe(&root, &mut git_answers)),
+        };
         entry.running = true;
         for port in ports {
             if !entry.ports.contains(&port) {
@@ -144,8 +178,14 @@ pub fn discover(
     }
 
     for root in roots {
-        for candidate in walk(root, MAX_SCAN_DEPTH) {
-            found.entry(candidate.clone()).or_insert_with(|| describe(&candidate));
+        // A caller that resolved the path with `std::fs::canonicalize` hands us
+        // an extended-length root, and every directory the walk builds beneath
+        // it would inherit the prefix.
+        let root = strip_verbatim(root.clone());
+        for candidate in walk(&root, MAX_SCAN_DEPTH) {
+            if let Entry::Vacant(slot) = found.entry(candidate.clone()) {
+                slot.insert(describe(&candidate, &mut git_answers));
+            }
         }
     }
 
@@ -181,20 +221,29 @@ pub fn discover(
 /// Map every listening socket back to a project root.
 fn roots_from_running_processes(
     adapter: &dyn PlatformAdapter,
+    git_answers: &mut GitAnswers,
 ) -> Result<BTreeMap<PathBuf, Vec<u16>>> {
     let mut roots: BTreeMap<PathBuf, Vec<u16>> = BTreeMap::new();
+
+    // One reading of the process table for the whole pass. Asking about a
+    // single pid enumerates every process on Windows — sysinfo reads the lot
+    // and filters — so asking once per listening socket walked the table a
+    // hundred times over, and that was four fifths of a scan.
+    let processes = adapter.process().list_processes()?;
+    let by_pid: std::collections::HashMap<u32, &runtime_adapter::ProcessInfo> =
+        processes.iter().map(|process| (process.pid, process)).collect();
 
     for binding in adapter.port().listening_ports()? {
         let Some(pid) = binding.primary_pid() else {
             continue;
         };
-        let Some(process) = adapter.process().process_info(pid)? else {
+        let Some(process) = by_pid.get(&pid) else {
             continue;
         };
-        let Some(cwd) = process.cwd else {
+        let Some(cwd) = process.cwd.clone() else {
             continue;
         };
-        let Some(root) = project_root_for(&cwd) else {
+        let Some(root) = project_root_in(&cwd, git_answers) else {
             continue;
         };
         roots.entry(root).or_default().push(binding.port);
@@ -207,12 +256,16 @@ fn roots_from_running_processes(
 /// The git root wins when there is one, because that is the boundary a
 /// developer thinks in; otherwise the nearest directory with a build manifest.
 pub fn project_root_for(cwd: &Path) -> Option<PathBuf> {
+    project_root_in(cwd, &mut GitAnswers::default())
+}
+
+fn project_root_in(cwd: &Path, git_answers: &mut GitAnswers) -> Option<PathBuf> {
     if is_system_path(cwd) {
         return None;
     }
 
     // A repository answers this exactly, including for worktrees.
-    if let Some(info) = git::info(cwd) {
+    if let Some(info) = git_answers.info(cwd) {
         return (!is_system_path(&info.main_root)).then_some(info.main_root);
     }
 
@@ -229,7 +282,7 @@ pub fn project_root_for(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-fn describe(root: &Path) -> Discovery {
+fn describe(root: &Path, git_answers: &mut GitAnswers) -> Discovery {
     let detection = detect::detect(root);
     let mut markers: Vec<String> = MARKERS
         .iter()
@@ -237,7 +290,7 @@ fn describe(root: &Path) -> Discovery {
         .map(|marker| (*marker).to_string())
         .collect();
 
-    let git = git::info(root);
+    let git = git_answers.info(root);
     if git.is_some() {
         markers.insert(0, "git".to_string());
     }
@@ -320,16 +373,33 @@ fn is_skipped(directory: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows compares paths case-insensitively, and it reports them that way too:
+/// the same directory arrives as `C:\WINDOWS\system32` from one API and
+/// `C:\Windows\System32` from another. Matching those against the prefix list
+/// literally lets every system process through the filter. Case is meaningful
+/// everywhere else, so only Windows folds it.
+fn fold_case(text: &str) -> String {
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text.to_string()
+    }
+}
+
 fn is_system_path(path: &Path) -> bool {
-    let text = path.to_string_lossy();
+    let text = fold_case(&path.to_string_lossy());
     if text == "/" {
         return true;
     }
-    if SYSTEM_FRAGMENTS.iter().any(|fragment| text.contains(fragment)) {
+    if SYSTEM_FRAGMENTS
+        .iter()
+        .any(|fragment| text.contains(&fold_case(fragment)))
+    {
         return true;
     }
     SYSTEM_PREFIXES.iter().any(|prefix| {
-        text == *prefix || text.starts_with(&format!("{prefix}{}", std::path::MAIN_SEPARATOR))
+        let prefix = fold_case(prefix);
+        text == prefix || text.starts_with(&format!("{prefix}{}", std::path::MAIN_SEPARATOR))
     })
 }
 
@@ -365,9 +435,18 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            assert!(is_system_path(Path::new("C:\\Windows\\System32")));
-            assert!(is_system_path(Path::new("C:\\Program Files\\nodejs")));
-            assert!(!is_system_path(Path::new("C:\\Users\\dev\\projects\\loom")));
+            assert!(is_system_path(Path::new(r"C:\Windows")));
+            assert!(is_system_path(Path::new(r"C:\Program Files\nodejs")));
+            // The casing the OS actually reports for a service's cwd. Compared
+            // literally these match nothing, which is how every system process
+            // used to get through the filter.
+            assert!(is_system_path(Path::new(r"C:\WINDOWS\system32")));
+            assert!(is_system_path(Path::new(r"c:\program files\nodejs")));
+            assert!(is_system_path(Path::new(
+                r"C:\Users\dev\AppData\Local\Temp\build-1234"
+            )));
+            assert!(!is_system_path(Path::new(r"E:\projects\loom")));
+            assert!(!is_system_path(Path::new(r"C:\Users\dev\projects\loom")));
         }
 
         // The case that motivated the filter, and the one that is the same

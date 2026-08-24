@@ -391,7 +391,10 @@ pub fn port_status(status: &PortStatus) -> String {
     if status.available {
         return format!("port {} is free", status.port);
     }
-    let mut out = format!("port {} is in use", status.port);
+    let mut out = match &status.owner {
+        Some(owner) => format!("port {} is in use ({})", status.port, owner.protocol),
+        None => format!("port {} is in use", status.port),
+    };
     if let Some(owner) = &status.owner {
         out.push('\n');
         out.push_str(&port_owner(owner));
@@ -456,7 +459,10 @@ pub fn ports(owners: &[PortOwner]) -> String {
     if owners.is_empty() {
         return "Nothing is listening.".to_string();
     }
-    let mut out = format!("{:<8} {:<8} {:<34} {}\n", "PORT", "PID", "PROJECT/BRANCH/SERVICE", "CWD");
+    let mut out = format!(
+        "{:<8} {:<5} {:<8} {:<34} {}\n",
+        "PORT", "PROTO", "PID", "PROJECT/BRANCH/SERVICE", "CWD"
+    );
     for owner in owners {
         // Include the branch: two worktrees of one project otherwise render as
         // the same row, which is exactly the ambiguity this table exists to
@@ -484,8 +490,9 @@ pub fn ports(owners: &[PortOwner]) -> String {
             label
         };
         out.push_str(&format!(
-            "{:<8} {:<8} {:<34} {}\n",
+            "{:<8} {:<5} {:<8} {:<34} {}\n",
             owner.port,
+            owner.protocol,
             pid,
             label,
             owner

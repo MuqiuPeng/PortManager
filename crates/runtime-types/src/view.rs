@@ -10,9 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::id::{ProjectId, ServiceId, WorkspaceId};
 use crate::model::{
-    Stack,
-    ConflictPolicy, PortLeaseStatus, Project, RuntimeInstance, Service, ServiceStatus, StartedBy,
-    Workspace,
+    ConflictPolicy, PortLeaseStatus, Project, Protocol, RuntimeInstance, Service, ServiceStatus,
+    Stack, StartedBy, Workspace,
 };
 
 /// A service together with whatever is currently running for it.
@@ -142,6 +141,9 @@ pub struct ProjectView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortOwner {
     pub port: u16,
+    /// Defaulted so a client built against the TCP-only protocol still parses.
+    #[serde(default)]
+    pub protocol: Protocol,
     pub pid: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,

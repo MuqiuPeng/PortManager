@@ -5,9 +5,12 @@
 //! allocation is a lease taken before the process starts, which is what lets a
 //! conflict be reported before a failed boot rather than after.
 
+use std::cell::OnceCell;
 use std::path::Path;
 
 use chrono::{Duration, Utc};
+use runtime_adapter::port::PortBinding;
+use runtime_adapter::process::ProcessInfo;
 use runtime_adapter::PlatformAdapter;
 use runtime_types::ANY_PORT;
 use runtime_types::{
@@ -34,6 +37,13 @@ pub struct PortResolver<'a> {
     store: &'a Store,
     adapter: &'a dyn PlatformAdapter,
     docker: &'a Docker,
+    /// The process table, read at most once per resolver.
+    ///
+    /// `list_ports` resolves every listening socket through this type, and the
+    /// ancestor walk each one needs was reading the whole table again — once
+    /// per socket, hundreds of times over, for a table that does not change
+    /// meaningfully during a single listing.
+    processes: OnceCell<Vec<ProcessInfo>>,
 }
 
 impl<'a> PortResolver<'a> {
@@ -42,6 +52,7 @@ impl<'a> PortResolver<'a> {
             store,
             adapter,
             docker,
+            processes: OnceCell::new(),
         }
     }
 
@@ -70,9 +81,21 @@ impl<'a> PortResolver<'a> {
         let Some(binding) = self.adapter.port().binding_for(port)? else {
             return Ok(None);
         };
+        self.owner_of_binding(&binding).map(Some)
+    }
+
+    /// Resolve a binding the caller already has.
+    ///
+    /// `list_ports` walks the whole socket table; routing each row back through
+    /// [`Self::owner_of`] would re-read that table once per row, and would also
+    /// collapse a port serving both TCP and UDP down to whichever protocol
+    /// `binding_for` prefers.
+    pub fn owner_of_binding(&self, binding: &PortBinding) -> Result<PortOwner> {
+        let port = binding.port;
         let Some(pid) = binding.primary_pid() else {
-            return Ok(Some(PortOwner {
+            return Ok(PortOwner {
                 port,
+                protocol: binding.protocol,
                 pid: 0,
                 executable: None,
                 cwd: None,
@@ -87,12 +110,17 @@ impl<'a> PortResolver<'a> {
                 container: None,
                 supervisor: None,
                 managed: false,
-            }));
+            });
         };
 
-        let process = self.adapter.process().process_info(pid)?;
+        let process = self
+            .process_table()?
+            .iter()
+            .find(|candidate| candidate.pid == pid)
+            .cloned();
         let mut owner = PortOwner {
             port,
+            protocol: binding.protocol,
             pid,
             executable: process
                 .as_ref()
@@ -116,14 +144,17 @@ impl<'a> PortResolver<'a> {
         // call sites so that every path producing a `PortOwner` carries it:
         // `check_port` and the whole-machine scan are different code, and a
         // fact known by only one of them is a fact the caller cannot rely on.
-        if let Ok(processes) = self.adapter.process().list_processes() {
-            owner.supervisor = crate::supervisors::detect(pid, &processes, |candidate| {
-                self.adapter
-                    .process()
-                    .process_info(candidate)
-                    .ok()
-                    .flatten()
-                    .map(|info| info.command_string())
+        // Both the table and the command lines come from the one snapshot this
+        // resolver already holds. Asking the OS again per candidate is what made
+        // listing the ports on a busy machine take the better part of a minute:
+        // `process_info` enumerates every process to answer about one, and
+        // supervisor detection asks about several per socket.
+        if let Ok(processes) = self.process_table() {
+            owner.supervisor = crate::supervisors::detect(pid, processes, |candidate| {
+                processes
+                    .iter()
+                    .find(|process| process.pid == candidate)
+                    .map(|process| process.command_string())
             })
             .map(|found| found.kind);
         }
@@ -184,7 +215,7 @@ impl<'a> PortResolver<'a> {
                 if owner.project_name.is_none() {
                     owner.project_name = container.compose_project.clone();
                 }
-                return Ok(Some(owner));
+                return Ok(owner);
             }
         }
 
@@ -203,7 +234,7 @@ impl<'a> PortResolver<'a> {
             }
         }
 
-        Ok(Some(owner))
+        Ok(owner)
     }
 
     /// `pid` followed by its ancestors, nearest first.
@@ -211,10 +242,19 @@ impl<'a> PortResolver<'a> {
     /// Built from a single process-table snapshot rather than repeated
     /// per-pid lookups, which on macOS would mean one megabyte-sized `sysctl`
     /// per generation.
+    /// The process table for this resolver, read once and reused.
+    fn process_table(&self) -> Result<&[ProcessInfo]> {
+        if let Some(processes) = self.processes.get() {
+            return Ok(processes);
+        }
+        let processes = self.adapter.process().list_processes()?;
+        Ok(self.processes.get_or_init(|| processes))
+    }
+
     fn ancestors(&self, pid: u32) -> Result<Vec<u32>> {
         const MAX_DEPTH: usize = 16;
 
-        let processes = self.adapter.process().list_processes()?;
+        let processes = self.process_table()?;
         let mut chain = vec![pid];
         let mut current = pid;
         for _ in 0..MAX_DEPTH {

@@ -69,6 +69,15 @@ pub struct StartOptions {
     /// Overrides the service's preferred port for this start only.
     pub port: Option<u16>,
     pub conflict_policy: Option<ConflictPolicy>,
+    /// The caller has already brought this service's dependencies up as part
+    /// of the same operation, so resolving them again would repeat work it has
+    /// just done.
+    ///
+    /// It matters for one-shots. A migration is deliberately never "already
+    /// satisfied" — one that ran an hour ago says nothing about now — but a
+    /// group whose members each re-resolve the chain would run it once per
+    /// member, four times in four seconds, which is not what that rule is for.
+    pub dependencies_met: bool,
 }
 
 impl Runtime {
@@ -106,6 +115,9 @@ impl Runtime {
         // the moment it succeeded, and record that as a failure.
         if service.one_shot {
             for name in &service.depends_on {
+                if options.dependencies_met {
+                    break;
+                }
                 let declared = self.store().list_services(&service.workspace_id)?;
                 let dependency = declared
                     .iter()
@@ -131,7 +143,7 @@ impl Runtime {
             });
         }
 
-        if !service.depends_on.is_empty() {
+        if !service.depends_on.is_empty() && !options.dependencies_met {
             let declared = self.store().list_services(&service.workspace_id)?;
             let owners = self.port_owners()?;
             let live: Vec<ServiceId> = declared
@@ -409,14 +421,13 @@ impl Runtime {
             live.contains(&candidate.id)
         })?;
 
+        // The plan is the whole order, dependencies included, and walking it
+        // here is what makes it happen once. Letting each member resolve its
+        // own chain instead would repeat everything ahead of it — harmless for
+        // a service already up, but a one-shot is never "already satisfied" by
+        // design, so a migration ahead of three members ran four times.
         for planned in &plan {
-            // Dependencies outside the group are brought up, as they always
-            // were, but they are not reported as steps of it: the group is
-            // what somebody declared, not everything that had to happen.
             let step = &planned.name;
-            if !stack.members.contains(step) {
-                continue;
-            }
             let service = declared
                 .iter()
                 .find(|service| &service.name == step)
@@ -424,9 +435,18 @@ impl Runtime {
                     RuntimeError::invalid(format!("'{step}' is no longer a service here"))
                 })?;
 
+            // Dependencies outside the group are brought up, as they always
+            // were, but they are not reported as steps of it: the group is what
+            // somebody declared, not everything that had to happen.
+            let reported = stack.members.contains(step);
+
             if service.one_shot {
-                self.run_to_completion(&service.id).await?;
-                done.push(format!("{step} (ran)"));
+                if planned.needs_start {
+                    self.run_to_completion(&service.id).await?;
+                }
+                if reported {
+                    done.push(format!("{step} (ran)"));
+                }
                 continue;
             }
 
@@ -439,8 +459,15 @@ impl Runtime {
             // So a declared port that is taken stops here and says who has it.
             // A member with no port declared still takes the next free one,
             // because nobody said which it should be.
+            //
+            // `dependencies_met` on both attempts, not just the first: the plan
+            // above is the whole order, so anything this member needs is
+            // already up, and letting the retry resolve its own chain would
+            // walk it a second time — which is the repetition the plan exists
+            // to remove.
             let options = StartOptions {
                 conflict_policy: service.preferred_port.map(|_| ConflictPolicy::Ask),
+                dependencies_met: true,
                 ..StartOptions::default()
             };
             let outcome = match self.start_service(&service.id, options.clone()).await {
@@ -451,17 +478,23 @@ impl Runtime {
                 // one member again.
                 Err(RuntimeError::PortConflict { port, holder }) if free_ports => {
                     self.clear_port_for(&service.id, port, &holder).await?;
-                    self.start_service(&service.id, StartOptions::default()).await?
+                    self.start_service(
+                        &service.id,
+                        StartOptions { dependencies_met: true, ..StartOptions::default() },
+                    )
+                    .await?
                 }
                 Err(err) => return Err(err),
             };
 
             self.wait_until_healthy(&service.id, DEPENDENCY_TIMEOUT).await?;
-            done.push(if outcome.reused {
-                format!("{step} (already up)")
-            } else {
-                step.clone()
-            });
+            if reported {
+                done.push(if outcome.reused {
+                    format!("{step} (already up)")
+                } else {
+                    step.clone()
+                });
+            }
         }
         Ok(done)
     }
@@ -775,6 +808,14 @@ impl Runtime {
             .id()
             .ok_or_else(|| RuntimeError::internal("child exited before it could be recorded"))?;
 
+        // Confine before anything else runs: the service's own children start
+        // appearing the moment it does, and a child spawned before the job
+        // exists would never join it.
+        if let Err(err) = self.adapter().spawn().confine(pid) {
+            // Not fatal — termination falls back to walking the process tree.
+            tracing::warn!(%err, pid, "could not confine the service to a job");
+        }
+
         // Read the start time back from the OS rather than using "now": the
         // stored identity must match exactly what a later lookup will report.
         let process_start_time = self
@@ -1045,10 +1086,13 @@ impl Runtime {
         let logs = self.logs_arc();
         let events = self.events().clone();
         let supervisor = self.supervisor_arc();
+        let adapter = self.adapter_arc();
 
         tokio::spawn(async move {
             let status = child.wait().await;
             let exit_code = status.as_ref().ok().and_then(|s| s.code());
+            // Nothing left to terminate; drop whatever `confine` allocated.
+            adapter.spawn().release(instance.pid);
 
             instance.stopped_at = Some(Utc::now());
             instance.exit_code = exit_code;

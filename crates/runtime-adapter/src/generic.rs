@@ -10,7 +10,7 @@ use std::process::Command;
 
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use runtime_types::{Result, RuntimeError};
-use sysinfo::{Pid, ProcessesToUpdate, Signal, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System, UpdateKind};
 
 use crate::port::{PortBinding, PortProvider, Protocol};
 use crate::process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
@@ -24,9 +24,36 @@ impl GenericProcessProvider {
         Self
     }
 
+    /// Exactly the fields [`Self::convert`] reads.
+    ///
+    /// `refresh_processes` would ask for memory, cpu and disk — which nothing
+    /// here uses — and not for cwd or argv, which are the two fields
+    /// port-to-project resolution is built on.
+    fn refresh_kind() -> ProcessRefreshKind {
+        ProcessRefreshKind::new()
+            .with_cwd(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always)
+            .with_exe(UpdateKind::OnlyIfNotSet)
+    }
+
     fn snapshot() -> System {
         let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, true);
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, Self::refresh_kind());
+        system
+    }
+
+    /// One process rather than the whole table.
+    ///
+    /// `process_info` is called once per listening socket, and reading every
+    /// process to answer for one means opening a handle to each of them —
+    /// hundreds of times over, for a question about a single pid.
+    fn snapshot_of(pid: Pid) -> System {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            Self::refresh_kind(),
+        );
         system
     }
 
@@ -60,8 +87,8 @@ impl ProcessProvider for GenericProcessProvider {
     }
 
     fn process_info(&self, pid: u32) -> Result<Option<ProcessInfo>> {
-        let system = Self::snapshot();
         let key = Pid::from_u32(pid);
+        let system = Self::snapshot_of(key);
         Ok(system.process(key).map(|process| Self::convert(key, process)))
     }
 
@@ -109,22 +136,33 @@ impl PortProvider for GenericPortProvider {
     fn listening_ports(&self) -> Result<Vec<PortBinding>> {
         let sockets = netstat2::get_sockets_info(
             AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6,
-            ProtocolFlags::TCP,
+            ProtocolFlags::TCP | ProtocolFlags::UDP,
         )
         .map_err(|err| RuntimeError::io(format!("failed to read socket table: {err}")))?;
 
         let mut bindings: Vec<PortBinding> = Vec::new();
         for socket in sockets {
-            let ProtocolSocketInfo::Tcp(tcp) = socket.protocol_socket_info else {
-                continue;
+            // UDP has no connection state: a socket that is bound is already
+            // receiving, so every row counts. TCP only counts when listening —
+            // an outbound connection is not something anyone owns a port for.
+            let (port, address, protocol) = match &socket.protocol_socket_info {
+                ProtocolSocketInfo::Tcp(tcp) => {
+                    if tcp.state != TcpState::Listen {
+                        continue;
+                    }
+                    (tcp.local_port, tcp.local_addr.to_string(), Protocol::Tcp)
+                }
+                ProtocolSocketInfo::Udp(udp) => {
+                    (udp.local_port, udp.local_addr.to_string(), Protocol::Udp)
+                }
             };
-            if tcp.state != TcpState::Listen {
-                continue;
-            }
+
             // A forking server binds once and shares the socket, so the same
             // port legitimately appears under several pids.
             match bindings.iter_mut().find(|existing| {
-                existing.port == tcp.local_port && existing.address == tcp.local_addr.to_string()
+                existing.port == port
+                    && existing.address == address
+                    && existing.protocol == protocol
             }) {
                 Some(existing) => {
                     for pid in socket.associated_pids {
@@ -134,14 +172,21 @@ impl PortProvider for GenericPortProvider {
                     }
                 }
                 None => bindings.push(PortBinding {
-                    port: tcp.local_port,
-                    protocol: Protocol::Tcp,
-                    address: tcp.local_addr.to_string(),
+                    port,
+                    protocol,
+                    address,
                     pids: socket.associated_pids,
                 }),
             }
         }
-        bindings.sort_by_key(|binding| binding.port);
+        // TCP first within a port, so callers taking the first match get the
+        // protocol they almost always mean.
+        bindings.sort_by(|a, b| {
+            a.port
+                .cmp(&b.port)
+                .then_with(|| a.protocol.cmp(&b.protocol))
+                .then_with(|| a.address.cmp(&b.address))
+        });
         Ok(bindings)
     }
 
