@@ -55,18 +55,41 @@ jobs:
       - name: The version everything is built as
         shell: bash
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.version }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          fi
+          # Said out loud and checked, because the failure downstream does not
+          # name this: an empty version reaches `tauri-action` as "Could not
+          # determine package name and version", which reads like a missing
+          # manifest rather than a blank field.
+          if [ -z "$version" ]; then
+            echo "no version to build as: ref '${GITHUB_REF_NAME}', input '${{ inputs.version }}'" >&2
+            exit 1
+          fi
+          echo "building as $version"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          node -e "
-            const fs = require('fs');
-            const path = 'apps/desktop/src-tauri/tauri.conf.json';
-            const conf = JSON.parse(fs.readFileSync(path, 'utf8'));
-            conf.version = process.env.VERSION ?? '$version';
-            fs.writeFileSync(path, JSON.stringify(conf, null, 2) + '\n');
-          "
-        env:
-          VERSION: ""
+          # Passed as an argument, not through the environment. This step used
+          # to set `VERSION: ""` in its own `env:` and read it back with
+          # `process.env.VERSION ?? '...'` — but `??` falls back on null and
+          # undefined, not on the empty string, so the fallback never ran and
+          # every build was stamped with no version at all. `GITHUB_ENV` only
+          # reaches later steps, so there was nothing else for it to read.
+          node -e '
+            const fs = require("fs");
+            const path = "apps/desktop/src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(path, "utf8"));
+            conf.version = process.argv[1];
+            if (!conf.version) throw new Error("refusing to write an empty version");
+            fs.writeFileSync(path, JSON.stringify(conf, null, 2) + "\n");
+          ' "$version"
+          # Proof, in the log, that the number in the bundle is the number asked
+          # for — the one fact this whole step exists to establish.
+          node -e '
+            const conf = require("./apps/desktop/src-tauri/tauri.conf.json");
+            console.log("tauri.conf.json version is now: " + JSON.stringify(conf.version));
+          '
 
       # The three binaries ship together, so they are built together. The app
       # carries the daemon as a sidecar and the CLI beside it; an update that
