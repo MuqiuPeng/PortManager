@@ -20,13 +20,68 @@ the full product plan.
 | 1 | Daemon, IPC, SQLite, registry, lifecycle, CLI | **done** |
 | 2 | Tauri desktop MVP | **done** |
 | 3 | MCP server | **done** |
-| 4 | Native edge sidebar | **done** (macOS) |
+| 4 | Native edge sidebar | **done** (macOS only, and switchable off) |
 | 5 | Project intelligence | partly done (detection, worktrees, stable ports) |
 | 6 | Agent-aware runtime | partly done (`started_by`, sessions, kill safety) |
 
 macOS is implemented natively. Windows has a working baseline adapter with the
 native work marked — see [docs/windows.md](docs/windows.md). Linux runs on the
 portable adapter.
+
+## Install
+
+Releases carry a Windows installer and a macOS disk image, both unsigned. What
+that costs you differs by platform, and the difference is worth knowing before
+you pick a way to download.
+
+### Windows
+
+Download `Local.Runtime_<version>_x64-setup.exe` from
+[Releases](https://github.com/MuqiuPeng/PortManager/releases) and run it.
+SmartScreen will warn about an unrecognised publisher: **More info**, then
+**Run anyway**.
+
+### macOS
+
+Downloading through a browser is the slow path here, and not because of
+anything in the app. Safari and Chrome attach `com.apple.quarantine` to
+anything they save; Gatekeeper sees that flag on an app with no Apple
+notarisation and reports it as
+
+> "Local Runtime" is damaged and can't be opened.
+
+It is not damaged. That sentence is what an unnotarised app looks like, and
+Apple uses it for both "this file is corrupt" and "this developer has not paid
+us $99 this year".
+
+Nothing at build time can prevent it — the flag is added on your machine, by
+whatever downloads the file. But **only programs that go through LaunchServices
+add it**, which browsers do and command-line tools do not. So download from a
+terminal and there is nothing to clear:
+
+```bash
+gh release download --repo MuqiuPeng/PortManager --pattern '*.dmg' --dir ~/Downloads
+```
+
+Without the `gh` CLI, the asset name carries the version, so resolve it first:
+
+```bash
+curl -fsSL "$(curl -fsSL https://api.github.com/repos/MuqiuPeng/PortManager/releases/latest \
+  | grep -o '"browser_download_url": *"[^"]*\.dmg"' | cut -d'"' -f4)" \
+  -o ~/Downloads/LocalRuntime.dmg
+```
+
+Open the image and drag the app to Applications as usual.
+
+**If you already downloaded it in a browser**, clear the flag by hand:
+
+```bash
+/usr/bin/xattr -cr "/Applications/Local Runtime.app"
+```
+
+The absolute path is deliberate. Anaconda ships its own `xattr` on `PATH` that
+does not understand `-r`, and it fails with `option -r not recognized` — which
+reads like a typo rather than the wrong program.
 
 ## Quick start
 
@@ -88,6 +143,14 @@ from the CLI or by an agent appears in the window immediately through the
 daemon's event stream.
 
 ### The panel
+
+**macOS only, and optional there.** It needs a native always-on-top,
+non-activating window, which the macOS adapter provides and the Windows one
+does not — so on Windows the app closes that window before it is ever shown
+rather than opening a blank rectangle and tidying it away. Settings offers a
+switch on the platforms that have it; turning it off hides the panel, releases
+the global shortcut, and points the tray icon at the main window instead. The
+size and edge you chose are kept for when you turn it back on.
 
 An edge-docked panel gives the common case — glance at what is running, start or
 stop one thing — without switching windows. Four ways in, one state machine:

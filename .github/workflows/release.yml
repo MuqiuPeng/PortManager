@@ -128,13 +128,23 @@ jobs:
           releaseBody: |
             Unsigned, so the first launch needs a word from you.
 
-            **macOS** — the app is not notarised, so Gatekeeper will say it is
-            damaged. It is not; that is what an unsigned app looks like:
+            **Windows** — run the `.exe`. SmartScreen will warn about an
+            unrecognised publisher: More info, then Run anyway.
 
-                xattr -cr "/Applications/Local Runtime.app"
+            **macOS** — download from a terminal and there is nothing to do
+            afterwards. The "damaged" message Gatekeeper gives an unnotarised
+            app comes from a flag that browsers attach to what they save, and
+            command-line tools do not:
 
-            **Windows** — SmartScreen will warn about an unrecognised
-            publisher. More info, then Run anyway.
+                gh release download --repo MuqiuPeng/PortManager --pattern '*.dmg' --dir ~/Downloads
+
+            If you already downloaded it in a browser, clear the flag:
+
+                /usr/bin/xattr -cr "/Applications/Local Runtime.app"
+
+            The absolute path is deliberate: Anaconda ships an `xattr` that
+            does not understand `-r` and fails as though the command were
+            mistyped.
 
             Updates after this one are verified against the key this release
             was signed with, and arrive in the app.
