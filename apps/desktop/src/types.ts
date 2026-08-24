@@ -172,6 +172,8 @@ export interface PanelSettings extends PanelConfig {
   shortcut: string;
   /** Screen id to dock to; absent follows the pointer. */
   screen?: string;
+  /** Whether the edge panel runs at all. */
+  enabled: boolean;
 }
 
 export interface ScreenInfo {

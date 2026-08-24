@@ -12,6 +12,9 @@ import type { DaemonInfo, PanelSettings, ScreenInfo } from "../types";
  */
 export function Settings() {
   const [settings, setSettings] = useState<PanelSettings | null>(null);
+  // Null until asked. The platform's own answer, not a guess from the user
+  // agent: only the app knows whether it has a way to place a panel.
+  const [hasPanel, setHasPanel] = useState<boolean | null>(null);
   const [screens, setScreens] = useState<ScreenInfo[]>([]);
   const [info, setInfo] = useState<DaemonInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +23,7 @@ export function Settings() {
   useEffect(() => {
     void (async () => {
       try {
+        setHasPanel(await api.panelSupported());
         setSettings(await api.getPanelSettings());
         setScreens(await api.listScreens());
         setInfo(await api.daemonInfo());
@@ -60,6 +64,35 @@ export function Settings() {
           Panel
           {saved && <span className="settings-saved">saved</span>}
         </h2>
+
+        {/* Said, not left blank. A section that silently disappears reads as
+            something broken; one line explains why there is nothing to set. */}
+        {hasPanel === false && (
+          <p className="empty">
+            The edge panel is a macOS feature. Everything else works the same
+            here.
+          </p>
+        )}
+
+        {hasPanel && (
+          <label className="field">
+            <span>Edge panel</span>
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(event) => void update({ enabled: event.target.checked })}
+            />
+          </label>
+        )}
+      </section>
+
+      {/* Only the settings that describe a panel that is running. A row of
+          controls greyed out beneath a switch that is off is more to read and
+          no more to do. */}
+      {hasPanel && settings.enabled && (
+        <>
+      <section className="settings-group">
+        <h2>Placement</h2>
 
         <label className="field">
           <span>Screen edge</span>
@@ -200,6 +233,8 @@ export function Settings() {
           is refused and the previous one stays in force.
         </p>
       </section>
+        </>
+      )}
 
       {info && (
         <section className="settings-group">

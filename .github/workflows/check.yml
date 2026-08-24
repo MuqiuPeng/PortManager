@@ -47,8 +47,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # The GUI is excluded: its build script wants an icon and a prebuilt
-      # sidecar that only the packaging step produces, and none of that is what
-      # this job is here to find out. Everything below it is.
-      - run: cargo test --workspace --exclude runtime-desktop
-      - run: cargo clippy --workspace --exclude runtime-desktop --all-targets -- -D warnings
+      # The GUI used to be excluded here, on the grounds that its build script
+      # wanted an icon and a prebuilt sidecar. It no longer does, and the
+      # exclusion had outlived that reason and become a blind spot: the desktop
+      # crate was the one member that never turned bundled SQLite back on, so
+      # it could not link on Windows at all — and this job, the only thing that
+      # compiles for Windows, was told not to look. The release workflow builds
+      # exactly this crate on windows-latest.
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings

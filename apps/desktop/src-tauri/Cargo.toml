@@ -10,6 +10,16 @@ description = "Desktop app for the local runtime manager."
 name = "runtime_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Every crate that ships a binary turns bundled SQLite back on, because the
+# workspace switches it off so a member can be type-checked for another
+# platform. This one did not, and only macOS hid it: there is a system
+# libsqlite3 to link against there and none on Windows, so the app built here
+# and died at `LNK1181: cannot open input file 'sqlite3.lib'` there — including
+# inside `tauri-action`, which is how the exe was going to be released.
+[features]
+default = ["bundled-sqlite"]
+bundled-sqlite = ["runtime-core/bundled-sqlite", "runtime-ipc/bundled-sqlite"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

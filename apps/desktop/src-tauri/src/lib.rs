@@ -56,15 +56,22 @@ pub fn run() {
             keep_main_window_alive(&handle);
             forward_events(handle.clone());
 
-            if let Err(err) = panel::adopt(&handle) {
-                // A missing panel must not take the whole app down; the main
+            // The window is declared in tauri.conf.json, so it exists on every
+            // platform. Windows has no panel to turn it into — and is not
+            // getting one — so it is closed before anything can see it rather
+            // than adopted, failed over and cleaned up afterwards.
+            if !panel::supported() {
+                tracing::info!("this platform has no edge panel; closing its window");
+                if let Some(window) = handle.get_webview_window(panel::PANEL_LABEL) {
+                    if let Err(err) = window.close() {
+                        tracing::warn!(%err, "could not close the panel window");
+                    }
+                }
+            } else if let Err(err) = panel::adopt(&handle) {
+                // Supported and still refused: nothing to do but say so. A
+                // missing panel must not take the whole app down; the main
                 // window and the tray still work.
-                tracing::warn!(%err, "the edge panel is unavailable on this platform");
-                // The window is declared in tauri.conf.json, so it exists on
-                // every platform whether or not adoption works. Unadopted it
-                // never receives its geometry — it just sits wherever it opened
-                // as a blank always-on-top rectangle — so close it rather than
-                // leave that on screen.
+                tracing::warn!(%err, "the edge panel could not be adopted");
                 if let Some(window) = handle.get_webview_window(panel::PANEL_LABEL) {
                     if let Err(err) = window.close() {
                         tracing::warn!(%err, "could not close the unadopted panel");
@@ -72,13 +79,11 @@ pub fn run() {
                 }
             } else {
                 let controller = app.state::<Arc<PanelController>>().inner().clone();
-                // Rest as a tab straight away: the panel is meant to be visible
-                // from the moment the app starts, not discovered by accident.
-                if let Err(err) = controller.rest(&handle) {
-                    tracing::warn!(%err, "could not dock the panel");
-                }
                 controller.watch_edge(&handle);
                 register_shortcut(&handle);
+                // Whether it rests or stays hidden is the stored setting's
+                // answer, so the panel waits for it rather than appearing and
+                // then vanishing in front of somebody who switched it off.
                 restore_settings(handle.clone());
             }
             Ok(())
@@ -113,6 +118,7 @@ pub fn run() {
             commands::list_ports,
             commands::check_port,
             commands::daemon_info,
+            commands::panel_supported,
             commands::get_panel_settings,
             commands::set_panel_settings,
             commands::list_screens,
@@ -160,6 +166,17 @@ fn bind_shortcut(app: &AppHandle, shortcut: &str) {
     }
 }
 
+/// Give the shortcut back, because the thing it summons is switched off.
+///
+/// A shortcut that stays registered while the panel is off is worse than one
+/// that does nothing: it is held against every other app that might want it.
+pub(crate) fn unbind_shortcut(app: &AppHandle, shortcut: &str) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    if let Err(err) = app.global_shortcut().unregister(shortcut) {
+        tracing::warn!(%err, shortcut, "could not release the shortcut");
+    }
+}
+
 /// Move the global shortcut, keeping the old one only if the new one is refused.
 pub(crate) fn rebind_shortcut(
     app: &AppHandle,
@@ -198,7 +215,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             {
                 let app = tray.app_handle();
                 let controller = app.state::<Arc<PanelController>>().inner().clone();
-                if let Err(err) = controller.toggle(app) {
+                // With no panel to summon — on Windows, or with the panel
+                // switched off — a click has to do something, and the only
+                // other thing it could mean is the main window.
+                if !panel::supported() || !controller.enabled() {
+                    show_main_window(app);
+                } else if let Err(err) = controller.toggle(app) {
                     tracing::warn!(%err, "could not toggle the panel");
                 }
             }
@@ -314,21 +336,40 @@ fn restore_settings(app: AppHandle) {
         let request = runtime_ipc::protocol::Request::GetSetting {
             key: panel::SETTINGS_KEY.to_string(),
         };
+        let controller = app.state::<Arc<PanelController>>().inner().clone();
+        // Anything short of a stored setting that says otherwise means the
+        // panel is on, so every early return here rests it. A daemon that is
+        // unreachable or a settings blob that will not parse is a reason to
+        // fall back to the default, not a reason to show nothing at all.
+        let rest_with_defaults = || {
+            if let Err(err) = controller.rest(&app) {
+                tracing::warn!(%err, "could not dock the panel");
+            }
+        };
+
         let Ok(runtime_ipc::protocol::ResponseBody::Setting { value: Some(raw) }) =
             handle.call(request).await
         else {
+            rest_with_defaults();
             return;
         };
         let Ok(settings) = serde_json::from_str::<panel::PanelSettings>(&raw) else {
             tracing::warn!("stored panel settings are unreadable; keeping defaults");
+            rest_with_defaults();
             return;
         };
 
-        let controller = app.state::<Arc<PanelController>>().inner().clone();
         if settings.shortcut != panel::DEFAULT_SHORTCUT {
             let _ = rebind_shortcut(&app, panel::DEFAULT_SHORTCUT, &settings.shortcut);
         }
         controller.load(settings.clone());
+        if !settings.enabled {
+            tracing::info!("the edge panel is switched off in settings");
+            // Loaded above, so it is already off; nothing to show and no
+            // shortcut to answer.
+            unbind_shortcut(&app, &settings.shortcut);
+            return;
+        }
         if let Err(err) = controller.set_config(&app, settings.config) {
             tracing::warn!(%err, "could not apply stored panel settings");
         }
