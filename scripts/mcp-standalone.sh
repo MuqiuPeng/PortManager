@@ -60,19 +60,43 @@ answer=$(node -e '
   }) + "\n");
 ' "$staged/index.js")
 
+# What is under test is whether node can load every module this program
+# needs — not whether the machine running the check has a daemon. Those are
+# different failures and the messages tell them apart, so this reads the
+# message rather than settling for "did it answer".
+#
+# The first version of this asked only for a handshake, and CI failed on a
+# runner with no `runtime` on PATH: the server had loaded perfectly and said
+# so in its own words. A check that reports the bug it is not looking for is
+# worse than no check, because the next person silences it.
 case "$answer" in
-  *'"serverInfo"'*)
-    echo "  the shipped server starts with nothing beside it"
-    ;;
-  *ERR_MODULE_NOT_FOUND*)
-    echo "  the shipped server cannot resolve its own imports:"
+  *ERR_MODULE_NOT_FOUND*|*"Cannot find package"*|*"Cannot find module"*|\
+  *ERR_UNSUPPORTED_DIR_IMPORT*|*ERR_UNKNOWN_FILE_EXTENSION*)
+    echo "  node could not load the shipped server:"
     echo "  $answer"
     echo "  it is staged as loose modules; bundle it instead"
     exit 1
     ;;
+  *SyntaxError*)
+    echo "  the shipped server is not loadable:"
+    echo "  $answer"
+    exit 1
+    ;;
+  *'"serverInfo"'*)
+    echo "  the shipped server starts with nothing beside it, and answered"
+    ;;
+  # Its own words, which it can only reach by having loaded.
+  *"local-runtime MCP server failed to start"*)
+    echo "  the shipped server loaded with nothing beside it"
+    echo "  (it got as far as its own error, which is not a packaging fault)"
+    ;;
+  "")
+    echo "  the shipped server said nothing at all, so this cannot tell"
+    exit 1
+    ;;
   *)
-    echo "  the shipped server did not answer a handshake:"
-    echo "  ${answer:-<nothing>}"
+    echo "  unrecognised outcome, so this cannot tell:"
+    echo "  $answer"
     exit 1
     ;;
 esac
