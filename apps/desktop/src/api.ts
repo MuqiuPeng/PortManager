@@ -113,6 +113,8 @@ export const api = {
 
   daemonInfo: () => invoke<DaemonInfo>("daemon_info"),
 
+  /** Whether this platform has an edge panel — asked, never inferred here. */
+  panelSupported: () => invoke<boolean>("panel_supported"),
   getPanelSettings: () => invoke<PanelSettings>("get_panel_settings"),
 
   setPanelSettings: (settings: PanelSettings) =>

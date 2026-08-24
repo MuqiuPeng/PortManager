@@ -32,7 +32,7 @@
         "skipTaskbar": true,
         "resizable": false,
         "shadow": true,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {

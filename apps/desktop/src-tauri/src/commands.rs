@@ -502,11 +502,25 @@ pub async fn set_panel_settings(
     controller.set_screen(settings.screen.clone());
 
     // Re-registering only when it changed avoids a window where no shortcut is
-    // registered at all.
-    if settings.shortcut != previous.shortcut {
+    // registered at all. Only while the panel is on, though — off, there is
+    // nothing for it to summon and it is not ours to hold.
+    if settings.shortcut != previous.shortcut && settings.enabled {
         crate::rebind_shortcut(&app, &previous.shortcut, &settings.shortcut)
             .map_err(|err| err.to_string())?;
-        controller.set_shortcut(settings.shortcut.clone());
+    }
+    controller.set_shortcut(settings.shortcut.clone());
+
+    // Before the geometry, so that switching on places the panel with the new
+    // settings rather than the old ones and then correcting itself.
+    if settings.enabled != previous.enabled {
+        controller
+            .set_enabled(&app, settings.enabled)
+            .map_err(|err| err.to_string())?;
+        if settings.enabled {
+            crate::bind_shortcut(&app, &settings.shortcut);
+        } else {
+            crate::unbind_shortcut(&app, &settings.shortcut);
+        }
     }
 
     controller
@@ -523,6 +537,16 @@ pub async fn set_panel_settings(
     )
     .await?;
     Ok(())
+}
+
+/// Whether this platform has an edge panel at all.
+///
+/// Asked rather than guessed: the settings screen has no business deciding
+/// what a platform supports from a user-agent string, and the answer already
+/// exists on the other side of this call.
+#[tauri::command]
+pub fn panel_supported() -> bool {
+    panel::supported()
 }
 
 /// Screens the panel can be docked to, for the settings screen.

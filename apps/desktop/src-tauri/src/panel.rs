@@ -64,6 +64,20 @@ pub struct PanelSettings {
     /// Screen to dock to; `None` follows the pointer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<String>,
+    /// Whether the edge panel runs at all.
+    ///
+    /// Separate from the geometry above because it is not geometry: somebody
+    /// who turns the panel off keeps the size and edge they chose, and gets
+    /// them back when they turn it on again.
+    ///
+    /// Defaulting to true keeps every settings blob written before this field
+    /// existed meaning what it meant when it was written.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 fn default_shortcut() -> String {
@@ -76,6 +90,7 @@ impl Default for PanelSettings {
             config: PanelConfig::default(),
             shortcut: default_shortcut(),
             screen: None,
+            enabled: true,
         }
     }
 }
@@ -89,6 +104,8 @@ pub struct PanelController {
     /// True while expanded because the pointer is near the tab, as opposed to
     /// having been summoned deliberately.
     from_hover: AtomicBool,
+    /// False when the panel has been switched off in settings.
+    enabled: AtomicBool,
 }
 
 impl Default for PanelController {
@@ -99,6 +116,7 @@ impl Default for PanelController {
             screen: Mutex::new(None),
             expanded: AtomicBool::new(false),
             from_hover: AtomicBool::new(false),
+            enabled: AtomicBool::new(true),
         }
     }
 }
@@ -121,6 +139,7 @@ impl PanelController {
                 .map(|s| s.clone())
                 .unwrap_or_else(|_| default_shortcut()),
             screen: self.screen.lock().map(|s| s.clone()).unwrap_or(None),
+            enabled: self.enabled(),
         }
     }
 
@@ -134,6 +153,34 @@ impl PanelController {
         }
         if let Ok(mut guard) = self.screen.lock() {
             *guard = settings.screen;
+        }
+        self.enabled.store(settings.enabled, Ordering::Relaxed);
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Switch the panel on or off, now rather than at the next launch.
+    ///
+    /// Off hides the window rather than closing it, so switching back on is
+    /// showing something that is already adopted. Closing it would mean
+    /// building and adopting a new one, and adoption is a main-thread AppKit
+    /// call that can fail — a setting should not be able to leave the app
+    /// without a panel it says is on.
+    pub fn set_enabled(&self, app: &AppHandle, on: bool) -> Result<()> {
+        let was = self.enabled.swap(on, Ordering::Relaxed);
+        if was == on {
+            return Ok(());
+        }
+        if on {
+            self.rest(app)
+        } else {
+            self.expanded.store(false, Ordering::Relaxed);
+            self.from_hover.store(false, Ordering::Relaxed);
+            panel_window(app)?
+                .hide()
+                .map_err(|err| RuntimeError::internal(format!("could not hide the panel: {err}")))
         }
     }
 
@@ -205,6 +252,12 @@ impl PanelController {
     }
 
     fn apply(&self, app: &AppHandle, state: PanelState, activation: PanelActivation) -> Result<()> {
+        // Every path that moves the panel arrives here — the shortcut, the
+        // tray, the hover watcher, a settings change — so one guard covers
+        // them all rather than each caller remembering.
+        if !self.enabled() {
+            return Ok(());
+        }
         let config = self.config();
         let screen = self.screen.lock().map(|s| s.clone()).unwrap_or(None);
 
@@ -213,6 +266,15 @@ impl PanelController {
             // commands and main-thread closures on the main thread.
             unsafe { provider.apply_state(handle, &config, screen.as_deref(), state, activation) }
         })?;
+
+        // The window is created hidden, because a window that opens before it
+        // has been given a position opens wherever the platform likes — which
+        // on a machine with no panel support was a blank rectangle in the
+        // middle of the screen, for as long as it took to notice and close it.
+        // It is shown here, once it is somewhere.
+        panel_window(app)?
+            .show()
+            .map_err(|err| RuntimeError::internal(format!("could not show the panel: {err}")))?;
 
         self.expanded
             .store(state == PanelState::Expanded, Ordering::Relaxed);
@@ -353,6 +415,15 @@ pub fn screens() -> Vec<runtime_adapter::ScreenInfo> {
         .unwrap_or_default()
 }
 
+/// Whether this platform has an edge panel to offer.
+///
+/// One source for it: the same `window_provider` the panel itself goes
+/// through, so the window cannot be built on a platform that has no way to
+/// place it and the settings screen cannot offer a switch that does nothing.
+pub fn supported() -> bool {
+    window_provider().is_some()
+}
+
 /// Turn the panel into a real platform panel. Called once, before first show.
 pub fn adopt(app: &AppHandle) -> Result<()> {
     with_panel(app, |provider, handle| {
@@ -399,3 +470,41 @@ fn pointer_location() -> Option<(f64, f64)> {
 fn pointer_location() -> Option<(f64, f64)> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Settings written before the switch existed still mean the panel is on.
+    ///
+    /// The field defaults to true, and this is the reason it has to: every
+    /// installed copy has a stored blob without it, and reading those as
+    /// `false` would turn the panel off for everybody on the update that
+    /// introduced the ability to turn it off.
+    #[test]
+    fn settings_written_before_the_switch_read_as_on() {
+        let older = r#"{"edge":"right","width":300,"height_ratio":0.9,
+            "island_width":10,"island_height":96,"hover_margin":6,
+            "animation_ms":170,"pinned":false,"shortcut":"CmdOrCtrl+Alt+L"}"#;
+
+        let settings: PanelSettings = serde_json::from_str(older).expect("older settings parse");
+
+        assert!(settings.enabled, "an update turned the panel off for everyone");
+    }
+
+    /// And the switch survives a round trip, or turning it off lasts until the
+    /// next launch and no longer.
+    #[test]
+    fn switching_it_off_is_remembered() {
+        let off = PanelSettings {
+            enabled: false,
+            ..PanelSettings::default()
+        };
+
+        let raw = serde_json::to_string(&off).expect("serialise");
+        let read: PanelSettings = serde_json::from_str(&raw).expect("parse");
+
+        assert!(!read.enabled, "the panel came back on: {raw}");
+    }
+}
+
