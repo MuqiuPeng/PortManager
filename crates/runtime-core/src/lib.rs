@@ -2896,15 +2896,34 @@ mod tests {
         assert!(!command_is_findable("definitely-not-a-real-program --serve"));
     }
 
+    /// A command line that runs through this platform's shell.
+    ///
+    /// `sh` is not a fact about every machine. Nothing on a stock Windows PATH
+    /// is called that — `where sh` finds nothing unless somebody installed Git
+    /// Bash — so a test asserting `sh -c '...'` is findable is really
+    /// asserting it is running on a Unix box, and it failed the first time
+    /// this suite ran anywhere else.
+    ///
+    /// What these tests mean is "a command that goes through a shell", which
+    /// both platforms have and each spells its own way.
+    fn through_a_shell(rest: &str) -> String {
+        if cfg!(windows) {
+            format!("cmd /c {rest}")
+        } else {
+            format!("sh -c '{rest}'")
+        }
+    }
+
     #[test]
     fn shell_syntax_is_left_alone() {
-        // `sh -c` territory: this cannot follow it, and a warning that fires on
+        // Shell territory: this cannot follow it, and a warning that fires on
         // working services is worse than no warning.
+        let shelled = through_a_shell("exec thing");
         for command in [
             "cd frontend && pnpm dev",
             "NODE_ENV=production node server.mjs",
             "pnpm dev > log.txt",
-            "sh -c 'exec thing'",
+            shelled.as_str(),
         ] {
             assert!(command_is_findable(command), "{command}");
         }
@@ -2922,6 +2941,6 @@ mod tests {
     #[test]
     fn a_real_command_line_still_passes() {
         assert!(looks_runnable("/usr/local/bin/node server.mjs"));
-        assert!(looks_runnable("sh -c 'pnpm dev'"));
+        assert!(looks_runnable(&through_a_shell("pnpm dev")));
     }
 }
