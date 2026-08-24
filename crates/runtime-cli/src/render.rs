@@ -359,6 +359,16 @@ pub fn start_outcome(outcome: &StartOutcome) -> String {
             }
         }
     }
+    // "Already running" and "under management" are not the same thing, and
+    // saying only the first is how somebody asks the runtime to start a
+    // service, is told it is running, and finds later that stopping it from
+    // here is refused. The start succeeded; it just did not take charge of
+    // anything, and nothing else in this reply would say so.
+    if outcome.reused && !outcome.service.managed {
+        out.push_str(
+            "\n  ! started outside the runtime, so it is not managed here; `take-over` to change that",
+        );
+    }
     // Before the status, because it is the part that will not announce itself:
     // the start succeeds either way, and what it broke shows up hours later on
     // somebody else's restart.

@@ -326,8 +326,29 @@ pub async fn run_stack(
     project: String,
     name: String,
 ) -> CmdResult<Vec<String>> {
-    match call(&state, Request::RunStack { selector: project, name }).await? {
+    match call(&state, Request::RunStack { selector: project, name, free_ports: false }).await? {
         ResponseBody::StackRun { done } => Ok(done),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Stop what something else started, and start it here instead.
+///
+/// The button that says "take control" used to adopt, which declares a service
+/// and stops nothing — so it left the thing running exactly as it was, outside
+/// the runtime, having said it had taken control of it.
+#[tauri::command]
+pub async fn take_over_service(
+    state: State<'_, DaemonHandle>,
+    service: String,
+) -> CmdResult<ServiceView> {
+    let request = Request::TakeOverService {
+        project: None,
+        service,
+        timeout_seconds: None,
+    };
+    match call(&state, request).await? {
+        ResponseBody::Service(view) => Ok(view),
         other => Err(unexpected(&other)),
     }
 }

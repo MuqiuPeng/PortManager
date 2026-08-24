@@ -155,6 +155,15 @@ export function formatStart(outcome: StartOutcome): string {
   }
   if (outcome.service.url) lines.push(`  ${outcome.service.url}`);
   lines.push(`  status ${outcome.service.status}`);
+  // "Already running" and "managed here" are not the same thing. An agent
+  // asked to start a service through the runtime does exactly that, is told it
+  // is running, and the service stays outside — stopping it from here is then
+  // refused, and nothing in this reply had said why.
+  if (outcome.reused && !outcome.service.managed) {
+    lines.push(
+      "  ! started outside the runtime, so it is not managed here — take_over_service to change that",
+    );
+  }
   // Last, so it is the thing left in view: the start succeeded either way, and
   // what it may have broken will not announce itself.
   if (outcome.warning) lines.push(`  ! ${outcome.warning}`);

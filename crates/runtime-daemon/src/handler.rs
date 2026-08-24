@@ -243,10 +243,10 @@ impl Dispatcher {
                 Ok(ResponseBody::StackRun { done: runtime.stop_stack(&workspace.id, &name).await? })
             }
 
-            Request::RunStack { selector, name } => {
+            Request::RunStack { selector, name, free_ports } => {
                 // Where it runs, not where it is declared.
                 let workspace = self.workspace_to_run_in(&selector)?;
-                Ok(ResponseBody::StackRun { done: runtime.run_stack(&workspace.id, &name).await? })
+                Ok(ResponseBody::StackRun { done: runtime.run_stack_freeing_ports(&workspace.id, &name, free_ports).await? })
             }
 
             Request::Diagnose => Ok(ResponseBody::Findings { items: runtime.diagnose()? }),
@@ -273,7 +273,7 @@ impl Dispatcher {
                 // Somebody asked for this one by name, so the rule applies.
                 // Members of a stack and things depended on are started
                 // through the runtime directly and never reach here.
-                runtime.require_in_a_stack(&service.id)?;
+                runtime.refuse_alone(&service.id, "started")?;
                 let options = StartOptions {
                     dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),
@@ -292,6 +292,10 @@ impl Dispatcher {
                 timeout_seconds,
             } => {
                 let service = self.resolve_service(project.as_deref(), &service)?;
+                // Taking one member down out from under the others leaves the
+                // stack looking up and behaving otherwise. `stack stop` is how
+                // a set comes down, in reverse.
+                runtime.refuse_alone(&service.id, "stopped")?;
                 let timeout = timeout_seconds
                     .map(Duration::from_secs)
                     .unwrap_or(GRACEFUL_TIMEOUT);
@@ -323,7 +327,7 @@ impl Dispatcher {
                 let service = self.resolve_service(project.as_deref(), &service)?;
                 // A restart ends with the service up, so it is a way of
                 // starting it and answers to the same rule.
-                runtime.require_in_a_stack(&service.id)?;
+                runtime.refuse_alone(&service.id, "restarted")?;
                 let options = StartOptions {
                     dependencies_met: false,
                     started_by: started_by.as_deref().map(StartedBy::parse).unwrap_or_default(),

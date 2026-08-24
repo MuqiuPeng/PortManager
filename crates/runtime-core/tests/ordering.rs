@@ -17,16 +17,24 @@ use tempfile::TempDir;
 /// gating the tests instead would give up exactly what the Windows run is for:
 /// the spawn path, which is where the platforms actually differ.
 fn stays_up() -> &'static str {
+    // Long enough that it cannot expire mid-suite. It used to be thirty
+    // seconds, which was fine until the suite grew past that: a stand-in for
+    // "still running" that stops running on its own reports whatever the test
+    // was about as broken, and the failure names the assertion rather than the
+    // clock. Every test kills these itself, so the number only has to be
+    // bigger than the slowest run.
     if cfg!(windows) {
         // `ping` sends one a second, so the count is the service's lifetime.
-        // Sixty was not enough. These tests run in parallel, each spawning
-        // services and resolving every listening socket on the machine, and on
-        // Windows that takes minutes — so the service exited on its own part
-        // way through and the assertions read a dead dependency as one that had
-        // been restarted. The number only has to outlast the run.
-        "ping -n 600 127.0.0.1"
+        // Sixty was not enough, and neither was six hundred: these tests run in
+        // parallel, each spawning services and resolving every listening socket
+        // on the machine, and on Windows that takes minutes — so the service
+        // exited on its own part way through and the assertions read a dead
+        // dependency as one that had been restarted. Both platforms wait the
+        // same twenty minutes now, because the number only has to outlast the
+        // slowest run and there is no reason for them to differ.
+        "ping -n 1200 127.0.0.1"
     } else {
-        "sleep 30"
+        "sleep 1200"
     }
 }
 
@@ -751,4 +759,154 @@ async fn an_adopted_service_can_be_started() {
     );
 
     let _ = child.kill();
+}
+
+/// A service is started as part of its stack, never on its own.
+///
+/// The unit somebody declared is the unit that runs. Bringing one member up by
+/// hand leaves the rest down while every list reads as though the stack is
+/// partly up, and taking one down out from under the others is the same thing
+/// backwards.
+///
+/// What this must not break is the reason a member comes up at all: the stack
+/// starting it, and anything it depends on being brought up first. Those go
+/// through the runtime rather than through a request naming a service, which
+/// is the distinction the rule is drawn on.
+#[tokio::test]
+async fn a_member_is_refused_alone_and_started_by_its_stack() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    let base = declare(&runtime, &workspace.id, dir.path(), "base", stays_up(), &[], false);
+    let front = declare(&runtime, &workspace.id, dir.path(), "front", stays_up(), &["base"], false);
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["front".to_string()])
+        .unwrap();
+
+    for verb in ["started", "stopped", "restarted"] {
+        let refused = runtime.refuse_alone(&front.id, verb).unwrap_err().to_string();
+        assert!(refused.contains("dev"), "{verb}: {refused}");
+        assert!(refused.contains("not one at a time"), "{verb}: {refused}");
+    }
+
+    // And the stack brings it up, along with what it depends on.
+    let done = runtime.run_stack(&workspace.id, "dev").await.unwrap();
+    assert_eq!(done, vec!["front".to_string()]);
+    assert!(
+        runtime.service_view(&base).unwrap().status.is_live(),
+        "a dependency was left down"
+    );
+
+    runtime.stop_stack(&workspace.id, "dev").await.unwrap();
+    let _ = runtime
+        .stop_service(&base.id, std::time::Duration::from_secs(5))
+        .await;
+}
+
+/// A port somebody wrote down is a port they meant.
+///
+/// Moving the service to the next free one keeps the start succeeding and
+/// turns the number they wrote into a suggestion — and it is usually written
+/// down because something else has it fixed: a proxy, a callback URL, a
+/// colleague's notes. So a declared port that is taken stops the run and names
+/// the holder, and a member with no port declared still takes the next free
+/// one, because nobody said which it should be.
+#[tokio::test]
+async fn a_declared_port_that_is_taken_stops_the_run() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    // A port held by something outside the runtime, for the length of the test.
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+
+    let mut service = declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
+    service.preferred_port = Some(port);
+    runtime.store().upsert_service(&service).unwrap();
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+
+    let refused = runtime.run_stack(&workspace.id, "dev").await.unwrap_err();
+    match refused {
+        runtime_types::RuntimeError::PortConflict { port: reported, holder } => {
+            assert_eq!(reported, port);
+            assert!(!holder.is_empty(), "the holder was not named");
+        }
+        other => panic!("expected a port conflict, got {other:?}"),
+    }
+
+    // Nothing was started, so nothing is left running behind the refusal.
+    assert!(
+        !runtime.service_view(&service).unwrap().status.is_live(),
+        "the member started anyway"
+    );
+    drop(held);
+}
+
+/// Port zero means "any free one", chosen again at every start.
+///
+/// Three states, and a socket already has names for all of them: no port at
+/// all for something that does not listen, a fixed number for something that
+/// must have it, and zero for whatever is free. Nothing is written back — the
+/// point of asking for any is that the next run can have another, which is
+/// what keeps it working when this one gets taken.
+///
+/// Tested with a service that reads `$PORT`, because that is the only kind for
+/// which asking for any port means anything: the runtime chooses and tells,
+/// and a service that ignores the telling would be listening somewhere else.
+#[tokio::test]
+async fn any_port_is_chosen_at_each_start_and_not_written_down() {
+    let dir = repo();
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0);
+
+    // How a shell spells a variable, which is not the same shell on both
+    // platforms: `cmd.exe` reads `%PORT%` and would treat `$PORT` as a literal
+    // argument, so the server would bind nothing and the test would blame the
+    // allocator.
+    let port_var = if cfg!(windows) { "%PORT%" } else { "$PORT" };
+    let serves = format!("{} -m http.server {port_var} --bind 127.0.0.1", python());
+    let mut service = declare(&runtime, &workspace.id, dir.path(), "web", &serves, &[], false);
+    service.preferred_port = Some(runtime_types::ANY_PORT);
+    runtime.store().upsert_service(&service).unwrap();
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .unwrap();
+
+    runtime.run_stack(&workspace.id, "dev").await.unwrap();
+    let chosen = runtime
+        .service_view(&service)
+        .unwrap()
+        .actual_port
+        .expect("no port was chosen for a service that asked for any");
+    assert!(chosen > 0, "zero is the request, not an answer");
+
+    // The request is still "any": nothing was written back, so the next start
+    // is free to land somewhere else.
+    let stored = runtime.require_service(&service.id).unwrap();
+    assert_eq!(
+        stored.preferred_port,
+        Some(runtime_types::ANY_PORT),
+        "the chosen port was written down as if it had been asked for"
+    );
+
+    runtime.stop_stack(&workspace.id, "dev").await.unwrap();
 }

@@ -320,17 +320,6 @@ export default function App() {
         selected={service.id === selectedService}
         busy={busy}
         onSelect={() => setSelectedService(service.id)}
-        onStart={() =>
-          act(async () => {
-            const outcome = await api.startService(service.id);
-            // Surfaced where errors are, because it is the
-            // half of the outcome that will not announce
-            // itself later.
-            if (outcome.warning) setError(outcome.warning);
-          })
-        }
-        onStop={() => act(() => api.stopService(service.id))}
-        onRestart={() => act(() => api.restartService(service.id))}
         onOpen={() =>
           act(() => openExternal(service.url as string))
         }
@@ -491,10 +480,16 @@ export default function App() {
           supervisor={takingOver.supervisor}
           busy={busy}
           onCancel={() => setTakingOver(null)}
-          onConfirm={(force) => {
+          onConfirm={(force, restart) => {
             const { port } = takingOver;
             setTakingOver(null);
-            void act(() => api.adoptPort(port, force));
+            void act(async () => {
+              // Declared first either way: taking over needs a service to take
+              // over, and adopting is what reads the command off the running
+              // process rather than guessing it from package.json.
+              const adopted = await api.adoptPort(port, force);
+              if (restart) await api.takeOverService(adopted.service.id);
+            });
           }}
         />
       )}

@@ -423,7 +423,7 @@ function registerTools(
     {
       title: "Start service",
       description:
-        "Start a service. Already-running services are returned as-is rather than started twice. If the preferred port is taken by another project, the runtime allocates the next free one and says so.",
+        "Start a service — refused on its own. Services run as part of a stack, so run_stack is what brings one up; this reports which stack to run. Already-running services are returned as-is rather than started twice. If the preferred port is taken by another project, the runtime allocates the next free one and says so.",
       inputSchema: {
         service: z.string().describe(SERVICE_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_DESCRIPTION),
@@ -481,7 +481,7 @@ function registerTools(
     {
       title: "Stop service",
       description:
-        "Stop a service and every process it spawned. Terminates gracefully first, then forcefully if it does not exit in time.",
+        "Stop a service — refused on its own. A stack comes down through stop_stack, in reverse; taking one member down out from under the others leaves the rest running while every list reads as though the set is up. Stops every process the service spawned. Terminates gracefully first, then forcefully if it does not exit in time.",
       inputSchema: {
         service: z.string().describe(SERVICE_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_DESCRIPTION),
@@ -508,7 +508,7 @@ function registerTools(
     {
       title: "Restart service",
       description:
-        "Stop a service, wait for the whole process tree to exit, then start it again. Follow with wait_until_healthy to confirm it is serving.",
+        "Restart a service — refused on its own. A restart ends with the service up, so it is a way of starting one, and services run as part of a stack: stop_stack then run_stack brings the set round. This reports which stack the service is in.",
       inputSchema: {
         service: z.string().describe(SERVICE_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_DESCRIPTION),

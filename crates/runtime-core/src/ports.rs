@@ -12,6 +12,7 @@ use chrono::{Duration, Utc};
 use runtime_adapter::port::PortBinding;
 use runtime_adapter::process::ProcessInfo;
 use runtime_adapter::PlatformAdapter;
+use runtime_types::ANY_PORT;
 use runtime_types::{
     ConflictPolicy, PortLease, PortLeaseStatus, PortOwner, PortReservation, PortStatus, Project,
     ProjectId, Result, RuntimeError, Service, StartedBy, Workspace,
@@ -19,6 +20,12 @@ use runtime_types::{
 
 use crate::docker::Docker;
 use crate::store::Store;
+
+/// Where a service that asks for any free port starts looking.
+///
+/// Above the range a developer types by hand — 3000, 5432, 8080 — so a chosen
+/// port does not land on the one somebody was about to declare.
+const ALLOCATION_FLOOR: u16 = 39000;
 
 /// How far above the preferred port `allocate-next` will search.
 pub const ALLOCATION_SPAN: u16 = 100;
@@ -55,9 +62,17 @@ impl<'a> PortResolver<'a> {
     /// `feature/refund` reliably lands on 3001 while `main` keeps 3000 — the
     /// same branch gets the same port on every machine and every restart.
     pub fn preferred_port(service: &Service, workspace: &Workspace) -> Option<u16> {
-        service
-            .preferred_port
-            .map(|base| base.saturating_add(workspace.port_offset))
+        match service.preferred_port {
+            // Nothing to offset and nothing to reserve: whatever the runtime
+            // picks for this run is chosen fresh each time.
+            Some(ANY_PORT) => None,
+            other => other.map(|base| base.saturating_add(workspace.port_offset)),
+        }
+    }
+
+    /// Whether this service takes whatever is free rather than a fixed number.
+    pub fn takes_any_port(service: &Service) -> bool {
+        service.preferred_port == Some(ANY_PORT)
     }
 
     /// Who is listening on this port right now, resolved as far as possible
@@ -360,6 +375,22 @@ impl<'a> PortResolver<'a> {
 
         let policy = policy.unwrap_or(service.conflict_policy);
         let preferred = requested.or_else(|| Self::preferred_port(service, workspace));
+        // "Any free one" is answered here rather than by the caller, because
+        // this is what knows which are free: the leases it keeps and the ports
+        // actually listening. Chosen fresh at every start and never written
+        // back — the point of asking for any is that next time it can be
+        // another, which is what keeps it working when this one gets taken.
+        let preferred = match preferred {
+            Some(port) => Some(port),
+            None if Self::takes_any_port(service) => self
+                .next_free_port(ALLOCATION_FLOOR, Some(&service.id))?
+                .map(Some)
+                .ok_or(RuntimeError::NoPortAvailable {
+                    from: ALLOCATION_FLOOR,
+                    to: ALLOCATION_FLOOR.saturating_add(ALLOCATION_SPAN),
+                })?,
+            None => None,
+        };
         let Some(preferred) = preferred else {
             return Err(RuntimeError::invalid(format!(
                 "service '{}' has no port to reserve; set preferred_port or pass one explicitly",

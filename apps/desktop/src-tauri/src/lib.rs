@@ -105,6 +105,7 @@ pub fn run() {
             commands::run_stack,
             commands::stop_stack,
             commands::stop_service,
+            commands::take_over_service,
             commands::restart_service,
             commands::get_logs,
             commands::get_health,
