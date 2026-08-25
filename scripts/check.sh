@@ -22,6 +22,9 @@ cargo check --workspace --exclude runtime-desktop --all-targets \
 echo "==> frontend"
 pnpm --dir apps/desktop test
 
+echo "==> one repository"
+scripts/one-repo.sh
+
 echo "==> colour tokens"
 scripts/tokens.sh
 

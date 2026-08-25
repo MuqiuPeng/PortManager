@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
-repository = "https://github.com/guanshunpeng/local-runtime"
+repository = "https://github.com/MuqiuPeng/PortManager"
 
 [workspace.dependencies]
 runtime-types = { path = "crates/runtime-types" }
