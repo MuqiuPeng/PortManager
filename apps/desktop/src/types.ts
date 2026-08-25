@@ -74,6 +74,10 @@ export interface ServiceView {
   preferred_port?: number;
   env?: Record<string, string>;
   auto_start: boolean;
+  /** What to do when the port is taken. Sent all along — the Rust view
+   *  flattens the whole service — but missing from this hand-written mirror
+   *  of it, so the editor could not read the value it was overwriting. */
+  conflict_policy?: string;
   /** Services here that must be up first. Absent when there are none. */
   depends_on?: string[];
   /** Runs to completion instead of staying up: a migration, a seed. */

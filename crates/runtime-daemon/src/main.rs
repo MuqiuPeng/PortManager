@@ -6,6 +6,7 @@
 //! running.
 
 mod handler;
+mod path;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,6 +57,10 @@ async fn run(args: Args) -> Result<()> {
         std::env::set_var("LOCAL_RUNTIME_SOCKET", socket);
     }
     paths::ensure_data_dir()?;
+
+    // Before anything can be started, and before the first `doctor` is asked
+    // what this machine looks like.
+    path::widen().await;
 
     let socket_path = paths::socket_path()?;
     // Refuse to start a second daemon: two authorities over the same state is

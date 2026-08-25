@@ -42,7 +42,13 @@ export function ServiceEditor({ service, onClose, onSaved }: Props) {
   const [cwd, setCwd] = useState(service.cwd);
   const [port, setPort] = useState(service.preferred_port?.toString() ?? "");
   const [type, setType] = useState<ServiceType>(service.service_type);
-  const [policy, setPolicy] = useState("allocate-next");
+  // Read from the service, not fixed at a default. This was
+  // `useState("allocate-next")`, so opening the editor on a service set to
+  // `fail` or `ask` and saving anything at all — a command, an environment
+  // variable — silently moved it back. `ask` is what makes a taken port stop
+  // and name its holder, and it was being switched off by the act of editing
+  // something else.
+  const [policy, setPolicy] = useState(service.conflict_policy ?? "allocate-next");
   const [dependsOn, setDependsOn] = useState((service.depends_on ?? []).join(" "));
   const [oneShot, setOneShot] = useState(service.one_shot === true);
   const [env, setEnv] = useState<EnvRow[]>(() =>
