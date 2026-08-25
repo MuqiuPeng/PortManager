@@ -167,33 +167,42 @@ mod tests {
 
     use super::*;
 
+    /// What separates two directories on this platform.
+    ///
+    /// The tests below used to spell it `:`, which is one entry on Windows and
+    /// two everywhere else — so every one of them passed here and failed
+    /// there, asserting nothing about the code and a great deal about the
+    /// machine it ran on.
+    const SEP: &str = if cfg!(windows) { ";" } else { ":" };
+
+    /// A PATH built the way the platform writes one.
+    fn os(parts: &[&str]) -> OsString {
+        OsString::from(parts.join(SEP))
+    }
+
     fn parts(v: &OsStr) -> Vec<String> {
         std::env::split_paths(v)
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
     }
 
-    fn os(v: &str) -> OsString {
-        OsString::from(v)
-    }
-
     /// A version manager works by going in front. Appending its answer is the
     /// same as ignoring it.
     ///
     /// This is not hypothetical: with the sources in the other order the daemon
-    /// resolved `node` to /usr/local/bin — v22 on this machine — while every
-    /// shell here resolves it to nvm's v24, and a Prisma migration died inside
-    /// a dependency the older one cannot load.
+    /// resolved `node` to /usr/local/bin — v22 on the machine this was found on
+    /// — while every shell there resolves it to nvm's v24, and a Prisma
+    /// migration died inside a dependency the older one cannot load.
     #[test]
     fn the_version_manager_keeps_the_front() {
         let merged = merge(&[
-            os("/Users/x/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin"),
-            os("/usr/local/bin:/usr/bin"),
-            os("/usr/bin:/bin"),
+            os(&["/nvm/v24/bin", "/usr/local/bin", "/usr/bin"]),
+            os(&["/usr/local/bin", "/usr/bin"]),
+            os(&["/usr/bin", "/bin"]),
         ]);
         assert_eq!(
             parts(&merged).first().map(String::as_str),
-            Some("/Users/x/.nvm/versions/node/v24/bin"),
+            Some("/nvm/v24/bin"),
             "{:?}",
             parts(&merged)
         );
@@ -203,7 +212,10 @@ mod tests {
     /// shell — but nothing in it is dropped either.
     #[test]
     fn nothing_inherited_is_lost_by_being_outranked() {
-        let merged = merge(&[os("/opt/homebrew/bin"), os("/usr/bin:/bin:/usr/sbin:/sbin")]);
+        let merged = merge(&[
+            os(&["/opt/homebrew/bin"]),
+            os(&["/usr/bin", "/bin", "/usr/sbin", "/sbin"]),
+        ]);
         assert_eq!(
             parts(&merged),
             ["/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
@@ -213,16 +225,18 @@ mod tests {
     /// One entry, however many sources name it.
     #[test]
     fn a_directory_named_twice_appears_once() {
-        let merged = merge(&[os("/usr/bin:/bin"), os("/bin:/usr/bin:/opt/bin")]);
+        let merged = merge(&[
+            os(&["/usr/bin", "/bin"]),
+            os(&["/bin", "/usr/bin", "/opt/bin"]),
+        ]);
         assert_eq!(parts(&merged), ["/usr/bin", "/bin", "/opt/bin"]);
     }
 
-    /// An empty source contributes nothing rather than an empty entry, which
-    /// on a PATH means the working directory — a place no command should be
-    /// found from.
+    /// An empty entry means the working directory, which is not a place any
+    /// command should be found from.
     #[test]
     fn an_empty_source_adds_nothing() {
-        let merged = merge(&[os(""), os("/usr/bin::/bin"), os("")]);
+        let merged = merge(&[os(&[]), os(&["/usr/bin", "", "/bin"]), os(&[])]);
         assert_eq!(parts(&merged), ["/usr/bin", "/bin"]);
     }
 }
