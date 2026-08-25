@@ -95,6 +95,13 @@ async fn run(args: Args) -> Result<()> {
         "daemon ready"
     );
 
+    // After the socket is listening, and not before: bringing a stack up waits
+    // for each service to report healthy, and a daemon that did that first
+    // would be unreachable for as long as the slowest project takes to start —
+    // during which every client would decide it was not running and try to
+    // start a second one.
+    tokio::spawn(auto_start(Arc::clone(&runtime)));
+
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -130,6 +137,36 @@ async fn run(args: Args) -> Result<()> {
 }
 
 /// Serve one connection until the client disconnects.
+/// Bring up the stacks that asked to be brought up.
+///
+/// One at a time rather than together: these are whole projects, and starting
+/// six of them at once turns a boot into a thundering herd on the same disk
+/// and the same port range. Nothing here is urgent — the point is that they
+/// are running a minute from now, not that they all start in the same second.
+///
+/// A failure is reported and the next one is tried. The alternative is that
+/// one project with a broken command stops every other project from starting,
+/// and the reason would be somewhere in a log nobody reads at boot.
+async fn auto_start(runtime: Arc<Runtime>) {
+    let wanted = match runtime.stacks_to_auto_start() {
+        Ok(wanted) => wanted,
+        Err(err) => {
+            tracing::warn!(%err, "could not read which stacks start automatically");
+            return;
+        }
+    };
+    if wanted.is_empty() {
+        return;
+    }
+    tracing::info!(count = wanted.len(), "starting the stacks that asked for it");
+    for (workspace_id, name) in wanted {
+        match runtime.run_stack(&workspace_id, &name).await {
+            Ok(done) => tracing::info!(stack = %name, steps = done.len(), "started"),
+            Err(err) => tracing::warn!(stack = %name, %err, "could not start"),
+        }
+    }
+}
+
 async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Result<()> {
     let mut events: Option<tokio::sync::broadcast::Receiver<_>> = None;
 

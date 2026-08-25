@@ -481,7 +481,7 @@ async fn a_stack_step_that_was_removed_is_found() {
 
     let web = declare(&runtime, &workspace.id, dir.path(), "web", stays_up(), &[], false);
     runtime
-        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()], None)
         .unwrap();
     // Steps are checked when a stack is declared; a service can go afterwards.
     runtime.delete_service(&web.id).unwrap();
@@ -584,7 +584,7 @@ async fn declaring_and_dropping_a_group_is_announced() {
 
     let mut events = runtime.events().subscribe();
     runtime
-        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()], None)
         .unwrap();
     assert!(
         matches!(events.try_recv(), Ok(runtime_core::events::RuntimeEvent::WorkspaceChanged { .. })),
@@ -627,7 +627,7 @@ async fn a_service_in_no_stack_is_refused_by_name_but_still_started_as_a_depende
     assert!(runtime.require_in_a_stack(&front.id).is_err());
 
     runtime
-        .set_stack(&workspace.id, "dev", vec!["front".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["front".to_string()], None)
         .unwrap();
 
     // `front` is named by the stack, so asking for it is allowed.
@@ -665,7 +665,7 @@ async fn a_stack_declared_once_reaches_every_checkout() {
         .remove(0);
     let web = declare(&runtime, &root.id, dir.path(), "web", stays_up(), &[], false);
     runtime
-        .set_stack(&root.id, "dev", vec!["web".to_string()])
+        .set_stack(&root.id, "dev", vec!["web".to_string()], None)
         .unwrap();
 
     // A second checkout of the same project, with its own copy of the service.
@@ -705,7 +705,7 @@ async fn a_one_shot_that_has_never_run_is_not_counted_as_up() {
 
     declare(&runtime, &workspace.id, dir.path(), "migrate", &creates(Path::new("done")), &[], true);
     runtime
-        .set_stack(&workspace.id, "setup", vec!["migrate".to_string()])
+        .set_stack(&workspace.id, "setup", vec!["migrate".to_string()], None)
         .unwrap();
 
     let view = runtime
@@ -786,7 +786,7 @@ async fn a_member_is_refused_alone_and_started_by_its_stack() {
     let base = declare(&runtime, &workspace.id, dir.path(), "base", stays_up(), &[], false);
     let front = declare(&runtime, &workspace.id, dir.path(), "front", stays_up(), &["base"], false);
     runtime
-        .set_stack(&workspace.id, "dev", vec!["front".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["front".to_string()], None)
         .unwrap();
 
     for verb in ["started", "stopped", "restarted"] {
@@ -836,7 +836,7 @@ async fn a_declared_port_that_is_taken_stops_the_run() {
     service.preferred_port = Some(port);
     runtime.store().upsert_service(&service).unwrap();
     runtime
-        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()], None)
         .unwrap();
 
     let refused = runtime.run_stack(&workspace.id, "dev").await.unwrap_err();
@@ -888,7 +888,7 @@ async fn any_port_is_chosen_at_each_start_and_not_written_down() {
     service.preferred_port = Some(runtime_types::ANY_PORT);
     runtime.store().upsert_service(&service).unwrap();
     runtime
-        .set_stack(&workspace.id, "dev", vec!["web".to_string()])
+        .set_stack(&workspace.id, "dev", vec!["web".to_string()], None)
         .unwrap();
 
     runtime.run_stack(&workspace.id, "dev").await.unwrap();
@@ -910,3 +910,83 @@ async fn any_port_is_chosen_at_each_start_and_not_written_down() {
 
     runtime.stop_stack(&workspace.id, "dev").await.unwrap();
 }
+
+/// Setting up a checkout with one service, for the boot tests below.
+fn one_service(dir: &Path) -> (Runtime, runtime_types::WorkspaceId) {
+    let runtime = Runtime::in_memory().unwrap();
+    let project = runtime.add_project(dir, None).unwrap();
+    let workspace = runtime
+        .store()
+        .list_workspaces(&project.project.id)
+        .unwrap()
+        .remove(0)
+        .id;
+    declare(&runtime, &workspace, dir, "web", stays_up(), &[], false);
+    (runtime, workspace)
+}
+
+/// A stack says whether it comes up at boot, and remembers it.
+///
+/// The flag used to live on a service, where nothing read it: an agent could
+/// set `auto_start` through the MCP server, be told it had worked, and find
+/// that nothing ever started. It could not have worked there — a service
+/// cannot be started on its own, so the only unit that can honour the promise
+/// is the stack.
+#[tokio::test]
+async fn a_stack_can_ask_to_be_started_at_boot() {
+    let dir = repo();
+    let (runtime, workspace) = one_service(dir.path());
+
+    runtime
+        .set_stack(&workspace, "dev", vec!["web".into()], Some(true))
+        .expect("declare");
+
+    assert_eq!(
+        runtime.stacks_to_auto_start().expect("read back"),
+        vec![(workspace, "dev".to_string())],
+        "a stack asked to start at boot and was not listed"
+    );
+}
+
+/// Editing the members does not answer a question about boot.
+///
+/// `set_stack` takes `Option<bool>`, and `None` is what every caller that only
+/// means to change the membership passes. Read as `false` it would switch off
+/// a stack somebody had asked for, and the act that did it — adding a service
+/// to the group — would look unrelated to it.
+#[tokio::test]
+async fn changing_the_members_leaves_boot_alone() {
+    let dir = repo();
+    let (runtime, workspace) = one_service(dir.path());
+    declare(&runtime, &workspace, dir.path(), "api", stays_up(), &[], false);
+
+    runtime
+        .set_stack(&workspace, "dev", vec!["web".into()], Some(true))
+        .expect("declare");
+    runtime
+        .set_stack(&workspace, "dev", vec!["web".into(), "api".into()], None)
+        .expect("add a member");
+
+    assert_eq!(
+        runtime.stacks_to_auto_start().expect("read back").len(),
+        1,
+        "adding a member switched off starting at boot"
+    );
+}
+
+/// And nothing starts at boot unless it said so.
+#[tokio::test]
+async fn a_stack_that_said_nothing_does_not_start_at_boot() {
+    let dir = repo();
+    let (runtime, workspace) = one_service(dir.path());
+
+    runtime
+        .set_stack(&workspace, "dev", vec!["web".into()], None)
+        .expect("declare");
+
+    assert!(
+        runtime.stacks_to_auto_start().expect("read back").is_empty(),
+        "a stack nobody marked started itself"
+    );
+}
+

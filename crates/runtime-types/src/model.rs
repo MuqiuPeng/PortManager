@@ -128,6 +128,17 @@ pub struct Stack {
     /// only decides between members that wait for nothing and could therefore
     /// start in any order at all.
     pub members: Vec<String>,
+    /// Bring this up when the daemon starts.
+    ///
+    /// On the stack rather than on a service, because a service cannot be
+    /// started on its own — `run_stack` is the only way anything comes up, and
+    /// a flag that promised otherwise would be promising something the runtime
+    /// refuses to do.
+    ///
+    /// Defaults to false: a machine that starts every project it has ever seen
+    /// the moment it boots is worse than one that starts none of them.
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 /// The port that means "any free one" — what `bind` has always taken it as.

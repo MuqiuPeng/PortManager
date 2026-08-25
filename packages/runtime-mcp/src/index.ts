@@ -723,10 +723,16 @@ function registerTools(
         project: z.string().describe(PROJECT_DESCRIPTION),
         name: z.string(),
         members: z.array(z.string()).describe("Service names, in order."),
+        auto_start: z
+          .boolean()
+          .optional()
+          .describe(
+            "Bring this stack up when the daemon starts. Omit to leave it as it is — changing the members says nothing about boot.",
+          ),
       },
     },
-    async ({ project, name, members }) =>
-      run("set_stack", { selector: project, name, members }, (body) =>
+    async ({ project, name, members, auto_start }) =>
+      run("set_stack", { selector: project, name, members, auto_start }, (body) =>
         body.type === "stacks" ? formatStacks(body.items) : unexpected(body),
       ),
   );

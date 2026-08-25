@@ -208,6 +208,9 @@ enum StackCommand {
         /// Service names, in order. Each brings up its own dependencies first.
         #[arg(required = true)]
         members: Vec<String>,
+        /// Bring this stack up when the daemon starts. Omit to leave it alone.
+        #[arg(long)]
+        auto_start: Option<bool>,
     },
     /// Remove a stack. Nothing running is touched.
     Remove { name: String },
@@ -464,8 +467,10 @@ async fn run(cli: Cli) -> Result<String> {
             let selector = project.clone().unwrap_or_else(|| ".".to_string());
             match command {
                 StackCommand::List => client.call(Request::ListStacks { selector }).await?,
-                StackCommand::Set { name, members } => {
-                    client.call(Request::SetStack { selector, name, members }).await?
+                StackCommand::Set { name, members, auto_start } => {
+                    client
+                        .call(Request::SetStack { selector, name, members, auto_start })
+                        .await?
                 }
                 StackCommand::Remove { name } => {
                     client.call(Request::RemoveStack { selector, name }).await?

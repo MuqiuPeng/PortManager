@@ -143,6 +143,13 @@ pub enum Request {
         selector: String,
         name: String,
         members: Vec<String>,
+        /// Whether the daemon should bring this up when it starts.
+        ///
+        /// Absent means "leave it as it is": a caller changing the members has
+        /// not said anything about boot, and taking silence for `false` would
+        /// switch off a stack somebody had asked for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_start: Option<bool>,
     },
     RemoveStack { selector: String, name: String },
     /// Bring up every step in order, each with its own dependencies.

@@ -1520,7 +1520,19 @@ impl Runtime {
         )))
     }
 
-    pub fn set_stack(&self, workspace_id: &WorkspaceId, name: &str, members: Vec<String>) -> Result<Stack> {
+    /// Declare or replace a stack.
+    ///
+    /// `auto_start` is `None` for "leave it as it is", which is what every
+    /// caller that only means to change the members passes — setting the
+    /// members should not quietly switch off a stack somebody asked to come up
+    /// at boot.
+    pub fn set_stack(
+        &self,
+        workspace_id: &WorkspaceId,
+        name: &str,
+        members: Vec<String>,
+        auto_start: Option<bool>,
+    ) -> Result<Stack> {
         let declared = self.store.list_services(workspace_id)?;
         for step in &members {
             if !declared.iter().any(|service| &service.name == step) {
@@ -1538,14 +1550,36 @@ impl Runtime {
             .find(|stack| stack.name == name);
 
         let stack = Stack {
-            id: existing.map(|stack| stack.id).unwrap_or_else(StackId::new),
+            id: existing
+                .as_ref()
+                .map(|stack| stack.id.clone())
+                .unwrap_or_else(StackId::new),
             workspace_id: declared_in,
             name: name.to_string(),
             members,
+            auto_start: auto_start
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|stack| stack.auto_start)),
         };
         self.store.upsert_stack(&stack)?;
         self.announce_workspace(workspace_id);
         Ok(stack)
+    }
+
+    /// Every stack that asked to come up when the daemon starts.
+    ///
+    /// Across all checkouts, because the daemon serves the machine rather than
+    /// a project — and a worktree that declared its own stack is as entitled to
+    /// start as the one it was branched from.
+    pub fn stacks_to_auto_start(&self) -> Result<Vec<(WorkspaceId, String)>> {
+        let mut wanted = Vec::new();
+        for workspace in self.store.list_workspaces_all()? {
+            for stack in self.store.list_stacks(&workspace.id)? {
+                if stack.auto_start {
+                    wanted.push((workspace.id.clone(), stack.name));
+                }
+            }
+        }
+        Ok(wanted)
     }
 
     pub fn remove_stack(&self, workspace_id: &WorkspaceId, name: &str) -> Result<bool> {
@@ -1918,7 +1952,9 @@ impl Runtime {
         if !members.iter().any(|member| member == name) {
             members.push(name.to_string());
         }
-        self.set_stack(workspace_id, &stack, members)?;
+        // Adopting a service into a stack says nothing about whether that stack
+        // should come up at boot, so it leaves that alone.
+        self.set_stack(workspace_id, &stack, members, None)?;
         Ok(stack)
     }
 

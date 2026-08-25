@@ -229,9 +229,9 @@ impl Dispatcher {
                 let workspace = self.workspace_to_run_in(&selector)?;
                 Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
-            Request::SetStack { selector, name, members } => {
+            Request::SetStack { selector, name, members, auto_start } => {
                 let workspace = self.workspace_to_run_in(&selector)?;
-                runtime.set_stack(&workspace.id, &name, members)?;
+                runtime.set_stack(&workspace.id, &name, members, auto_start)?;
                 Ok(ResponseBody::Stacks { items: runtime.stack_views(&workspace.id)? })
             }
             Request::RemoveStack { selector, name } => {

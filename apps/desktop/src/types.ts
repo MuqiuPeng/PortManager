@@ -426,6 +426,9 @@ export interface Stack {
    * dependencies, which is what `flow` is worked out from.
    */
   members: string[];
+  /** Brought up when the daemon starts. Declared on the stack rather than
+   *  on a service, because a service cannot be started on its own. */
+  auto_start?: boolean;
 }
 
 /** Something wrong with what is declared, found without being asked. */

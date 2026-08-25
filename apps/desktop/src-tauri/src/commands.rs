@@ -287,7 +287,9 @@ pub async fn set_stack(
     name: String,
     members: Vec<String>,
 ) -> CmdResult<Vec<StackView>> {
-    let request = Request::SetStack { selector: project, name, members };
+    // The window edits membership; whether a stack comes up at boot is set
+    // where that decision is made, and is not disturbed by this.
+    let request = Request::SetStack { selector: project, name, members, auto_start: None };
     match call(&state, request).await? {
         ResponseBody::Stacks { items } => Ok(items),
         other => Err(unexpected(&other)),

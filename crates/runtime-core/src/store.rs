@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS stacks (
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     members      TEXT NOT NULL DEFAULT '[]',
+    auto_start   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(workspace_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_stacks_workspace ON stacks(workspace_id);
@@ -222,6 +223,7 @@ impl Store {
         const ADDITIONS: &[&str] = &[
             "ALTER TABLE services ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE services ADD COLUMN one_shot INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE stacks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0",
         ];
         for statement in ADDITIONS {
             // "duplicate column name" is the ordinary case: the column is
@@ -424,14 +426,17 @@ impl Store {
         let members = serde_json::to_string(&stack.members).map_err(json_err)?;
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO stacks(id, workspace_id, name, members)
-                 VALUES(?1, ?2, ?3, ?4)
-                 ON CONFLICT(workspace_id, name) DO UPDATE SET members = excluded.members",
+                "INSERT INTO stacks(id, workspace_id, name, members, auto_start)
+                 VALUES(?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(workspace_id, name) DO UPDATE SET
+                     members = excluded.members,
+                     auto_start = excluded.auto_start",
                 params![
                     stack.id.as_str(),
                     stack.workspace_id.as_str(),
                     stack.name,
-                    members
+                    members,
+                    stack.auto_start as i64
                 ],
             )
             .map_err(sqlite_err)?;
@@ -904,6 +909,7 @@ fn row_task(row: &Row<'_>) -> Result<Stack> {
         workspace_id: WorkspaceId(get_text(row, "workspace_id")?),
         name: get_text(row, "name")?,
         members: serde_json::from_str(&get_text(row, "members")?).map_err(json_err)?,
+        auto_start: get_opt_int(row, "auto_start")?.unwrap_or(0) != 0,
     })
 }
 
