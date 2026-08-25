@@ -23,11 +23,13 @@
 
 use std::collections::HashSet;
 use std::ffi::OsString;
+#[cfg(unix)]
 use std::time::Duration;
 
 /// How long the login shell gets. A profile that takes longer than this is one
 /// that would make every launch feel broken, and a short `PATH` is better than
 /// a daemon that never finishes starting.
+#[cfg(unix)]
 const PATIENCE: Duration = Duration::from_secs(3);
 
 /// Ask the shell where it would look, and resolve commands the way it does.
@@ -88,6 +90,7 @@ pub async fn widen() {
 /// An interactive shell runs the rc file, and rc files greet people, print
 /// tips, and warn about updates. Taking the whole of stdout would fold that
 /// into `PATH`.
+#[cfg(unix)]
 const MARKER: &str = "__runtime_path__";
 
 /// The user's shell, run with `flags`, asked for its `PATH`.
