@@ -161,30 +161,6 @@ export function FlowChart({ flow, placement, onMove, selected, onSelect }: Props
       width={width}
       style={{ height: "100%", minHeight: height }}
     >
-      <defs>
-        <marker
-          id="flow-arrow"
-          viewBox="0 0 8 8"
-          refX="7"
-          refY="4"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto-start-reverse"
-        >
-          <path className="flow-arrowhead" d="M 0 0 L 8 4 L 0 8 z" />
-        </marker>
-        <marker
-          id="flow-arrow-lit"
-          viewBox="0 0 8 8"
-          refX="7"
-          refY="4"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto-start-reverse"
-        >
-          <path className="flow-arrowhead lit" d="M 0 0 L 8 4 L 0 8 z" />
-        </marker>
-      </defs>
 
       {flow.flatMap((node) =>
         (node.after ?? []).map((dep) => {
@@ -199,23 +175,33 @@ export function FlowChart({ flow, placement, onMove, selected, onSelect }: Props
           const y2 = to.y + BOX_H / 2;
           // Curved rather than straight so crossing lines stay tellable apart.
           const mid = (x1 + x2) / 2;
+          // Lit when the node being read is at either end of it, dimmed when
+          // one is being read and this is not part of the answer.
+          const state = !focused
+            ? ""
+            : dep === focused || node.name === focused
+              ? " linked"
+              : " faded";
           return (
-            <path
-              key={`${dep}->${node.name}`}
-              className={
-                focused && (dep === focused || node.name === focused)
-                  ? "flow-edge linked"
-                  : focused
-                    ? "flow-edge faded"
-                    : "flow-edge"
-              }
-              markerEnd={
-                focused && (dep === focused || node.name === focused)
-                  ? "url(#flow-arrow-lit)"
-                  : "url(#flow-arrow)"
-              }
-              d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
-            />
+            <g key={`${dep}->${node.name}`}>
+              <path
+                className={`flow-edge${state}`}
+                d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
+              />
+              {/* Drawn rather than marked. A `<marker>` is painted from its own
+                  styles, not the line's, so its colour is a second copy of a
+                  fact the line already holds — and keeping the two in step
+                  failed twice here, once with a lit duplicate marker and once
+                  with `context-stroke`, which this WebKit ignores.
+                  The curve ends with both its last control point and its
+                  endpoint on the same y, so the tangent there is always
+                  horizontal: the head is a fixed triangle and needs no angle
+                  worked out. */}
+              <path
+                className={`flow-head${state}`}
+                d={`M ${x2} ${y2 - 4} L ${x2 + 7} ${y2} L ${x2} ${y2 + 4} z`}
+              />
+            </g>
           );
         }),
       )}

@@ -408,10 +408,14 @@ describe("a group drawn as a graph", () => {
 
   it("points every line at the thing that waits", () => {
     // The arrowhead is what makes the picture readable in one direction rather
-    // than two, and a marker that was never placed is just a line.
+    // than two. It is drawn beside the line rather than attached as a
+    // `<marker>`, because a marker is painted from its own styles and so its
+    // colour is a second copy of what the line already says — which is how it
+    // came to stay grey while the line it belonged to went blue.
     const html = renderToString(<FlowChart flow={flow} />);
-    expect(html).toContain('id="flow-arrow"');
-    expect(html.match(/marker-end="url\(#flow-arrow\)"/g)?.length).toBe(3);
+    expect(html).not.toContain("marker-end");
+    expect(html.match(/class="flow-edge"/g)?.length).toBe(3);
+    expect(html.match(/class="flow-head"/g)?.length).toBe(3);
   });
 
   it("draws a line for every wait", () => {

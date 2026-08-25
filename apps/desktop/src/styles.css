@@ -1243,7 +1243,9 @@ button {
 
 .flow {
   display: block;
-  max-width: 100%;
+  /* No `max-width`. The canvas is sized to the graph and the band around it
+     scrolls; capping it at the container's width is what cut the last stage
+     off instead of letting it scroll into view. */
 }
 
 .flow-edge {
@@ -1252,14 +1254,18 @@ button {
   stroke-width: 1.5;
 }
 
-/* A marker does not inherit the stroke of the path that placed it, so the
-   head is coloured on its own or it comes out black. */
-.flow-arrowhead {
+/* The head is a shape of its own, so it carries the same states the line does
+   and nothing has to keep two colours in step. */
+.flow-head {
   fill: var(--border);
 }
 
-.flow-arrowhead.lit {
+.flow-head.linked {
   fill: var(--primary);
+}
+
+.flow-head.faded {
+  opacity: 0.25;
 }
 
 /* Reading one node: what it waits for and what waits for it, told apart from
