@@ -233,6 +233,30 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         });
 
+    // The menu bar is not a place for an app icon. macOS expects a template
+    // image there: black pixels and an alpha channel, nothing else, which the
+    // system paints itself — dark on a light bar, light on a dark one, and the
+    // accent colour while the menu is open. Handing it the app's own icon, as
+    // this did, puts a rounded colour tile among a row of monochrome glyphs and
+    // leaves it unreadable against half the wallpapers it sits over.
+    //
+    // Windows is the opposite convention: its tray is full colour, and a black
+    // silhouette there would be the odd one out. So each platform gets what it
+    // asks for rather than one icon being made to serve both.
+    //
+    // The template's pixels are white rather than the customary black. AppKit
+    // reads only the alpha channel of a template image and paints the shape
+    // itself, so the colour underneath makes no difference to the menu bar —
+    // but anything that draws the raw image instead of honouring the template
+    // flag gets white, which is legible on the dark bars such things tend to
+    // have. Nothing is lost and something is gained.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .icon(tauri::include_image!("icons/tray-macos.png"))
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
