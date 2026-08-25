@@ -113,6 +113,12 @@ export const api = {
 
   daemonInfo: () => invoke<DaemonInfo>("daemon_info"),
 
+  /** Something the window remembers, kept by the daemon so it survives a
+   *  reinstall and reads the same in the panel as in the window. */
+  getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
+  setSetting: (key: string, value: string) =>
+    invoke<void>("set_setting", { key, value }),
+
   /** Whether this platform has an edge panel — asked, never inferred here. */
   panelSupported: () => invoke<boolean>("panel_supported"),
   getPanelSettings: () => invoke<PanelSettings>("get_panel_settings"),

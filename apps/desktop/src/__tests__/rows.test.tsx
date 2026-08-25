@@ -385,16 +385,33 @@ describe("a group drawn as a graph", () => {
     { name: "web", service_id: "d", after: ["api"], level: 2, status: "stopped" },
   ] as FlowNode[];
 
-  it("puts what waits for the same thing side by side, not in a queue", () => {
+  /** Where a node was placed, as `[x, y]`. */
+  const at = (html: string, name: string) => {
+    const found = html.indexOf(`>${name}<`);
+    const g = html.lastIndexOf("translate(", found);
+    const parts = html.slice(g + 10, html.indexOf(")", g)).split(" ");
+    return [Number(parts[0]), Number(parts[1])] as const;
+  };
+
+  it("puts what waits for the same thing in one stage, not in a queue", () => {
+    // Stages advance left to right, so peers share an x and are set apart down
+    // the page. This read the other way round before the chart was turned, and
+    // these two axes are what says which way it is.
     const html = renderToString(<FlowChart flow={flow} />);
-    const y = (name: string) => {
-      const at = html.indexOf(`>${name}<`);
-      const g = html.lastIndexOf("translate(", at);
-      return Number(html.slice(g + 10, html.indexOf(")", g)).split(" ")[1]);
-    };
-    expect(y("api")).toBe(y("jobs"));
-    expect(y("db")).toBeLessThan(y("api"));
-    expect(y("web")).toBeGreaterThan(y("api"));
+    const [apiX, apiY] = at(html, "api");
+    const [jobsX, jobsY] = at(html, "jobs");
+    expect(apiX).toBe(jobsX);
+    expect(apiY).not.toBe(jobsY);
+    expect(at(html, "db")[0]).toBeLessThan(apiX);
+    expect(at(html, "web")[0]).toBeGreaterThan(apiX);
+  });
+
+  it("points every line at the thing that waits", () => {
+    // The arrowhead is what makes the picture readable in one direction rather
+    // than two, and a marker that was never placed is just a line.
+    const html = renderToString(<FlowChart flow={flow} />);
+    expect(html).toContain('id="flow-arrow"');
+    expect(html.match(/marker-end="url\(#flow-arrow\)"/g)?.length).toBe(3);
   });
 
   it("draws a line for every wait", () => {

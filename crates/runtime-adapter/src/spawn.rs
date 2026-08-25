@@ -46,10 +46,48 @@ pub trait SpawnProvider: Send + Sync {
         let (program, prefix) = self.shell();
         let mut command = Command::new(program);
         command.args(prefix);
-        append_command_line(&mut command, command_line);
+        // Set here rather than by every caller: it belongs to the shell this
+        // builds, not to the service, and a caller that forgot it would lose
+        // the PATH silently and only on some machines.
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env(CARRIED_PATH, path);
+        }
+        append_command_line(&mut command, &insist_on_our_path(command_line));
         self.prepare(&mut command)?;
         Ok(command)
     }
+}
+
+/// The variable the daemon's `PATH` travels in, so the script below never has
+/// to quote a path.
+const CARRIED_PATH: &str = "LOCAL_RUNTIME_PATH";
+
+/// Put the daemon's `PATH` back after the shell's profile has had its turn.
+///
+/// Services run through a login shell so that a profile's `JAVA_HOME`, its
+/// `pyenv` hooks and everything else are set exactly as they would be in a
+/// terminal. But a login shell also rebuilds `PATH` — `export PATH="…:$PATH"`
+/// is what every profile does — and puts its own directories in front of the
+/// ones the daemon resolved at startup.
+///
+/// That is not cosmetic. The daemon asks both an interactive and a login shell
+/// where commands live, because a version manager installs itself in the rc
+/// file and a login shell never reads it. On this machine `zsh -lc` resolves
+/// `node` to /usr/local/bin — v22 — while `zsh -ic` resolves it to nvm's v24,
+/// and a Prisma migration run under the first died inside a dependency the
+/// older one cannot load, reporting an ESM error that named no version at all.
+///
+/// So the profile runs, and then the answer the daemon already worked out is
+/// restored over the top. Carried in a variable rather than written into the
+/// script, because a `PATH` holds directory names that would otherwise need
+/// quoting and one of them, on this machine, has a space in it.
+fn insist_on_our_path(command_line: &str) -> String {
+    if cfg!(windows) {
+        return command_line.to_string();
+    }
+    format!(
+        "[ -n \"${{{CARRIED_PATH}}}\" ] && export PATH=\"${{{CARRIED_PATH}}}\"\n{command_line}"
+    )
 }
 
 /// Hand a whole command line to the shell without re-quoting it.

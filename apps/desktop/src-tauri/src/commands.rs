@@ -541,6 +541,30 @@ pub async fn set_panel_settings(
     Ok(())
 }
 
+/// Read something the window remembers between launches.
+///
+/// Through the daemon rather than the webview's own storage, so it survives
+/// reinstalling the bundle and is the same answer in the panel as in the main
+/// window — they are two views of one machine, and a layout that differed
+/// between them would be a third fact about the same stack.
+#[tauri::command]
+pub async fn get_setting(state: State<'_, DaemonHandle>, key: String) -> CmdResult<Option<String>> {
+    match call(&state, Request::GetSetting { key }).await? {
+        ResponseBody::Setting { value } => Ok(value),
+        _ => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn set_setting(
+    state: State<'_, DaemonHandle>,
+    key: String,
+    value: String,
+) -> CmdResult<()> {
+    call(&state, Request::SetSetting { key, value }).await?;
+    Ok(())
+}
+
 /// Whether this platform has an edge panel at all.
 ///
 /// Asked rather than guessed: the settings screen has no business deciding

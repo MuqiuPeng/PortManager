@@ -1252,10 +1252,55 @@ button {
   stroke-width: 1.5;
 }
 
+/* A marker does not inherit the stroke of the path that placed it, so the
+   head is coloured on its own or it comes out black. */
+.flow-arrowhead {
+  fill: var(--border);
+}
+
+.flow-arrowhead.lit {
+  fill: var(--primary);
+}
+
+/* Reading one node: what it waits for and what waits for it, told apart from
+   everything that merely crosses the same space. Six edges through one picture
+   is exactly when a graph stops answering that at a glance. */
+.flow-edge.linked {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+
+.flow-edge.faded {
+  opacity: 0.25;
+}
+
+.flow-node.faded {
+  opacity: 0.35;
+}
+
+.flow-node.faded,
+.flow-edge.faded,
+.flow-edge.linked {
+  transition: opacity 150ms ease;
+}
+
 .flow-node rect {
   fill: var(--muted);
   stroke: var(--border);
   stroke-width: 1;
+  /* Slow enough to be seen as a change. A stack coming up is the one time the
+     order it starts in is visible, and an instant swap reads as a redraw
+     rather than as this step, now. */
+  transition:
+    fill 250ms ease,
+    stroke 250ms ease;
+}
+
+/* Held in the cursor: lifted, and following rather than settling. */
+.flow-node.held rect {
+  stroke: var(--primary);
+  stroke-width: 2;
+  transition: none;
 }
 
 .flow-node text {
@@ -1278,19 +1323,24 @@ button {
   stroke-width: 2;
 }
 
-/* Live services carry the colour they carry everywhere else. */
+/* Live services carry the colour they carry everywhere else — filled, not
+   only outlined, because the point of watching a stack start is telling at a
+   glance how far down the graph it has got. */
 .flow-node.status-healthy rect {
   stroke: var(--live);
+  fill: color-mix(in srgb, var(--live) 20%, var(--muted));
 }
 
 .flow-node.status-starting rect,
 .flow-node.status-unhealthy rect {
   stroke: var(--warn);
+  fill: color-mix(in srgb, var(--warn) 14%, var(--muted));
 }
 
 .flow-node.status-failed rect,
 .flow-node.missing rect {
   stroke: var(--destructive);
+  fill: color-mix(in srgb, var(--destructive) 14%, var(--muted));
   stroke-dasharray: 3 3;
 }
 

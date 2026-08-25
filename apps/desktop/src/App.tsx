@@ -15,7 +15,7 @@ import { Settings } from "./components/Settings";
 import { ServiceEditor } from "./components/ServiceEditor";
 import { ServiceRow } from "./components/ServiceRow";
 import { SupervisedRow } from "./components/SupervisedRow";
-import { FlowChart } from "./components/FlowChart";
+import { FlowChart, type Placement } from "./components/FlowChart";
 import { LOOSE, StackCards } from "./components/StackCards";
 import { TakeControlSheet } from "./components/TakeControlSheet";
 import type {
@@ -28,7 +28,7 @@ import type {
   ServiceView,
   StackView,
 } from "./types";
-import { affectsFailures, mergeLogs, servicesFor } from "./types";
+import { mergeLogs, servicesFor } from "./types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -110,14 +110,20 @@ export default function App() {
   // Live updates: anything the daemon does — from this window, the CLI or an
   // agent — lands here without polling.
   useEffect(() => {
-    const unlisten = onRuntimeEvent((event) => {
+    const unlisten = onRuntimeEvent(() => {
       void refreshProjects();
       // What is broken is as live as what is running. Refreshing only the
       // service list left a toast on screen for a service that had since
       // been fixed, or removed — and its Logs and Copy buttons then asked
       // the daemon about an id it no longer knew.
       //
-      if (affectsFailures(event)) setRevision((n) => n + 1);
+        // Every event, not only the ones that change a failure. A stack lights
+        // up as its members come healthy, and each of those is a
+        // `service_changed` at a moment when nothing is broken — without this
+        // the flow chart stayed grey until the whole stack had finished and
+        // then turned green at once, which is the one moment the order cannot
+        // be seen.
+        setRevision((n) => n + 1);
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -209,6 +215,13 @@ export default function App() {
   /** Tasks for the selected project, reloaded whenever it changes. */
   const [stacks, setTasks] = useState<StackView[]>([]);
 
+  /** Where somebody has dragged the nodes of a stack, kept per stack.
+   *
+   * Positions are only positions — the dependencies are still what the edges
+   * are drawn from — so an arrangement that has gone stale is untidy rather
+   * than wrong, and a node nobody has moved falls back to the layout. */
+  const [placements, setPlacements] = useState<Record<string, Placement>>({});
+
   /** Problems with what is declared, across every project. */
   const [findings, setFindings] = useState<Finding[]>([]);
   const [findingsHidden, setFindingsHidden] = useState(false);
@@ -297,7 +310,36 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, busy]);
+  }, [project?.id, busy, revision]);
+
+  /** Read a stack's arrangement once, the first time it is looked at. */
+  const loadPlacement = useCallback(async (stackId: string) => {
+    try {
+      const raw = await api.getSetting(`desktop.flow.${stackId}`);
+      if (!raw) return;
+      setPlacements((all) => ({ ...all, [stackId]: JSON.parse(raw) as Placement }));
+    } catch {
+      // An arrangement that will not parse is one to forget, not to stop for:
+      // every node falls back to the layout it would have had anyway.
+    }
+  }, []);
+
+  async function moveNode(stackId: string, name: string, x: number, y: number) {
+    const next = { ...(placements[stackId] ?? {}), [name]: { x, y } };
+    setPlacements((all) => ({ ...all, [stackId]: next }));
+    try {
+      await api.setSetting(`desktop.flow.${stackId}`, JSON.stringify(next));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  useEffect(() => {
+    const chosenStack = stacks.find((stack) => stack.name === pickedStack);
+    if (chosenStack && placements[chosenStack.id] === undefined) {
+      void loadPlacement(chosenStack.id);
+    }
+  }, [stacks, pickedStack, placements, loadPlacement]);
 
   async function reloadStacks() {
     if (!project) return;
@@ -619,8 +661,11 @@ export default function App() {
                   const chosen = stacks.find((stack) => stack.name === pickedStack);
                   const shown = servicesFor(checkout.services, stacks, pickedStack, LOOSE);
 
+                  // The pane itself does not scroll; each column does. One
+                  // scrollbar for both would mean scrolling past a long service
+                  // list to reach the stack that chose it.
                   return (
-                    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+                    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
                       {project.workspaces.length > 1 && (
                         <div className="flex flex-wrap items-center gap-1">
                           {project.workspaces.map((w) => (
@@ -644,6 +689,13 @@ export default function App() {
                         </div>
                       )}
 
+                      <div className="flex min-h-0 flex-1 gap-4">
+                      {/* Stacks on the wide side, their members on the narrow
+                          one, which is the opposite of how much each says: a
+                          service row is a name and a state and needs no width,
+                          while a row of stack cards wraps as soon as a project
+                          has more than three ways to start. */}
+                      <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
                       <StackCards
                         stacks={stacks}
                         total={checkout.services.length}
@@ -670,15 +722,9 @@ export default function App() {
                         }}
                       />
 
-                      {/* The shape of the chosen stack, above its members:
-                          what waits for what is the reason it is one thing
-                          rather than several. */}
-                      {chosen && (chosen.flow ?? []).length > 0 && (
-                        <div className="overflow-x-auto rounded-lg border p-3">
-                          <FlowChart flow={chosen.flow ?? []} />
-                        </div>
-                      )}
+                      </div>
 
+                      <div className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto">
                       <div className="flex flex-col gap-0.5">
                         {shown.length === 0 ? (
                           <p className="empty">
@@ -734,6 +780,28 @@ export default function App() {
                           ))}
                         </>
                       )}
+                        </div>
+                      </div>
+
+                      {/* The whole width, under both columns.
+
+                          Stages run left to right, so what this picture needs
+                          is width. It has been in two wrong places already: a
+                          row between the cards and the services, where it was
+                          squeezed vertically, and inside the stack column,
+                          where it had half the width and ran off the edge with
+                          a third of the height under it empty. A band of its
+                          own gives it the long axis and takes only the short
+                          one. */}
+                    {chosen && (chosen.flow ?? []).length > 0 && (
+                      <div className="flex min-h-0 flex-1 overflow-auto rounded-lg border">
+                        <FlowChart
+                          flow={chosen.flow ?? []}
+                          placement={placements[chosen.id]}
+                          onMove={(name, x, y) => void moveNode(chosen.id, name, x, y)}
+                        />
+                      </div>
+                    )}
                     </div>
                   );
                 })()}

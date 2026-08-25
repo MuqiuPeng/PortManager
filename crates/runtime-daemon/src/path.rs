@@ -22,7 +22,7 @@
 //! look.
 
 use std::collections::HashSet;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::time::Duration;
 
 /// How long the login shell gets. A profile that takes longer than this is one
@@ -30,7 +30,7 @@ use std::time::Duration;
 /// a daemon that never finishes starting.
 const PATIENCE: Duration = Duration::from_secs(3);
 
-/// Ask the shell where it would look, and add whatever we were missing.
+/// Ask the shell where it would look, and resolve commands the way it does.
 pub async fn widen() {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
 
@@ -43,19 +43,42 @@ pub async fn widen() {
     // `zsh -i -l -c` answered with nothing at all.
     let (login, interactive) = tokio::join!(ask(&["-l"]), ask(&["-i"]));
 
-    let mut merged = inherited.clone();
-    let mut added = 0;
-    for answer in [login, interactive].into_iter().flatten() {
-        let (next, gained) = merge(&merged, &answer);
-        merged = next;
-        added += gained;
+    let mut sources: Vec<OsString> = Vec::new();
+    // The interactive shell first, then the login shell, and only then what we
+    // inherited. Order is the whole mechanism of a version manager: nvm works
+    // by putting the chosen version's directory in front of the system one, so
+    // appending its answer — which is what this did — hands that back.
+    //
+    // It cost a real failure. The daemon resolved `node` to /usr/local/bin,
+    // which is v22, while every shell on this machine resolves it to nvm's
+    // v24; a Prisma migration then died inside a dependency that v22 cannot
+    // load, reporting an ESM error that says nothing about which node ran it.
+    //
+    // What is inherited comes last rather than not at all. From a terminal it
+    // is the same list the shell just gave us, so the order does not change;
+    // from Finder it is `/usr/bin:/bin:/usr/sbin:/sbin`, which is not a choice
+    // anybody made and should not outrank one.
+    if let Some(answer) = interactive {
+        sources.push(OsString::from(answer));
     }
-    if added == 0 {
+    if let Some(answer) = login {
+        sources.push(OsString::from(answer));
+    }
+    if sources.is_empty() {
+        return;
+    }
+    sources.push(inherited.clone());
+
+    let merged = merge(&sources);
+    if merged == inherited {
         return;
     }
     // Logged rather than silent: a daemon that quietly rewrites its own
     // environment is one nobody can explain the behaviour of later.
-    tracing::info!(added, "widened PATH from the shell");
+    tracing::info!(
+        entries = std::env::split_paths(&merged).count(),
+        "took the PATH the shell resolves commands against"
+    );
     std::env::set_var("PATH", merged);
 }
 
@@ -96,6 +119,10 @@ async fn ask(flags: &[&str]) -> Option<String> {
     };
 
     let text = String::from_utf8_lossy(&out.stdout);
+    // Trimmed here rather than in `merge`: a shell ends its output with a
+    // newline, and an untrimmed answer turns the last directory into one that
+    // does not exist — which fails later as "command not found", pointing
+    // nowhere near this.
     let answer = text.rsplit_once(MARKER).map(|(_, path)| path.trim().to_string());
     match answer {
         Some(path) if !path.is_empty() => Some(path),
@@ -112,35 +139,32 @@ async fn ask(_flags: &[&str]) -> Option<String> {
     None
 }
 
-/// Everything inherited, in order, then everything discovered that is new.
+/// Every source in turn, first mention winning, nothing repeated.
 ///
-/// Returns how many were added so the caller can stay quiet when there is
-/// nothing to say.
-fn merge(inherited: &OsStr, discovered: &str) -> (OsString, usize) {
+/// Order is the point rather than a detail: whichever source is listed first
+/// decides which of two directories holding the same command is the one that
+/// runs.
+fn merge(sources: &[OsString]) -> OsString {
     let mut seen: HashSet<OsString> = HashSet::new();
     let mut kept: Vec<OsString> = Vec::new();
 
-    for entry in std::env::split_paths(inherited) {
-        let entry = entry.into_os_string();
-        if !entry.is_empty() && seen.insert(entry.clone()) {
-            kept.push(entry);
+    for source in sources {
+        for entry in std::env::split_paths(source) {
+            let entry = entry.into_os_string();
+            if !entry.is_empty() && seen.insert(entry.clone()) {
+                kept.push(entry);
+            }
         }
     }
-    let before = kept.len();
-
-    for entry in std::env::split_paths(discovered.trim()) {
-        let entry = entry.into_os_string();
-        if !entry.is_empty() && seen.insert(entry.clone()) {
-            kept.push(entry);
-        }
-    }
-
-    let joined = std::env::join_paths(kept.iter()).unwrap_or_else(|_| inherited.to_os_string());
-    (joined, kept.len() - before)
+    std::env::join_paths(kept.iter()).unwrap_or_else(|_| {
+        sources.last().cloned().unwrap_or_default()
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
 
     fn parts(v: &OsStr) -> Vec<String> {
@@ -149,45 +173,56 @@ mod tests {
             .collect()
     }
 
-    /// What the app suffers: a minimal PATH gains the places tools actually live.
+    fn os(v: &str) -> OsString {
+        OsString::from(v)
+    }
+
+    /// A version manager works by going in front. Appending its answer is the
+    /// same as ignoring it.
+    ///
+    /// This is not hypothetical: with the sources in the other order the daemon
+    /// resolved `node` to /usr/local/bin — v22 on this machine — while every
+    /// shell here resolves it to nvm's v24, and a Prisma migration died inside
+    /// a dependency the older one cannot load.
     #[test]
-    fn a_finder_launch_gains_the_places_tools_live() {
-        let (merged, added) = merge(
-            OsStr::new("/usr/bin:/bin"),
-            "/opt/homebrew/bin:/usr/bin:/bin:/Users/x/.nvm/versions/node/v24/bin",
+    fn the_version_manager_keeps_the_front() {
+        let merged = merge(&[
+            os("/Users/x/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin"),
+            os("/usr/local/bin:/usr/bin"),
+            os("/usr/bin:/bin"),
+        ]);
+        assert_eq!(
+            parts(&merged).first().map(String::as_str),
+            Some("/Users/x/.nvm/versions/node/v24/bin"),
+            "{:?}",
+            parts(&merged)
         );
-        assert_eq!(added, 2, "{:?}", parts(&merged));
+    }
+
+    /// What a Finder launch has is not a preference, so it does not outrank the
+    /// shell — but nothing in it is dropped either.
+    #[test]
+    fn nothing_inherited_is_lost_by_being_outranked() {
+        let merged = merge(&[os("/opt/homebrew/bin"), os("/usr/bin:/bin:/usr/sbin:/sbin")]);
         assert_eq!(
             parts(&merged),
-            [
-                "/usr/bin",
-                "/bin",
-                "/opt/homebrew/bin",
-                "/Users/x/.nvm/versions/node/v24/bin"
-            ]
+            ["/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         );
     }
 
-    /// What was inherited keeps precedence: a deliberate environment is not
-    /// overruled by the profile, only extended.
+    /// One entry, however many sources name it.
     #[test]
-    fn what_was_inherited_still_comes_first() {
-        let (merged, _) = merge(OsStr::new("/my/tools:/usr/bin"), "/usr/bin:/my/tools");
-        assert_eq!(parts(&merged), ["/my/tools", "/usr/bin"]);
+    fn a_directory_named_twice_appears_once() {
+        let merged = merge(&[os("/usr/bin:/bin"), os("/bin:/usr/bin:/opt/bin")]);
+        assert_eq!(parts(&merged), ["/usr/bin", "/bin", "/opt/bin"]);
     }
 
-    /// A shell that adds nothing costs nothing, so the caller can stay silent.
+    /// An empty source contributes nothing rather than an empty entry, which
+    /// on a PATH means the working directory — a place no command should be
+    /// found from.
     #[test]
-    fn nothing_new_is_reported_as_nothing_new() {
-        let (_, added) = merge(OsStr::new("/usr/bin:/bin"), "/bin:/usr/bin");
-        assert_eq!(added, 0);
-    }
-
-    /// Trailing newlines and empty fields are the shape real shells answer in.
-    #[test]
-    fn the_answer_is_taken_as_a_shell_gives_it() {
-        let (merged, added) = merge(OsStr::new("/usr/bin"), "/usr/bin:/opt/bin\n");
-        assert_eq!(added, 1);
-        assert_eq!(parts(&merged), ["/usr/bin", "/opt/bin"]);
+    fn an_empty_source_adds_nothing() {
+        let merged = merge(&[os(""), os("/usr/bin::/bin"), os("")]);
+        assert_eq!(parts(&merged), ["/usr/bin", "/bin"]);
     }
 }

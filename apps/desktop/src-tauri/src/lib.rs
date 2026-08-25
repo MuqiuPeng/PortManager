@@ -118,6 +118,8 @@ pub fn run() {
             commands::list_ports,
             commands::check_port,
             commands::daemon_info,
+            commands::get_setting,
+            commands::set_setting,
             commands::panel_supported,
             commands::get_panel_settings,
             commands::set_panel_settings,

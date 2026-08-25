@@ -15,6 +15,13 @@ set -e
 theme="apps/desktop/src/theme.css"
 sheet="apps/desktop/src/styles.css"
 
+# Run from anywhere else and every grep below looks at nothing, finds nothing,
+# and this reports that the colours are fine. A check that cannot see the file
+# it is about must say so rather than pass.
+for file in "$theme" "$sheet"; do
+  [ -f "$file" ] || { echo "  cannot check: $file is not here (run from the repository root)"; exit 1; }
+done
+
 if grep -qE "^\s*--(background|foreground|card|muted|accent|primary|border):" "$sheet"; then
   echo "  $sheet defines palette tokens; they belong in $theme alone"
   exit 1

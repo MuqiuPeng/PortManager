@@ -22,12 +22,13 @@ interface Props {
 }
 
 /**
- * The ways this project is brought up, across the top of it.
+ * The ways this project is brought up, across the top of the stack column.
  *
  * A stack is the unit: what somebody declared this project is started as, and
- * what the panel will start. So it comes before the services rather than
- * beside them — the previous arrangement put two navigation columns in front
- * of the content and left the services the narrowest thing on screen.
+ * what the panel will start. The cards are small on purpose — a name, a state,
+ * one button — because the room belongs to the thing underneath them: a stack
+ * is a graph, and the interesting ones have several steps, a one-shot at the
+ * front, a fan-out in the middle.
  *
  * Each card carries its own state and its own start button, which is the
  * arithmetic declaring a stack removes: five services grouped into one thing
@@ -47,11 +48,11 @@ export function StackCards({
   onNew,
 }: Props) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
       <button
         onClick={() => onSelect(null)}
         className={cn(
-          "flex h-16 flex-col justify-between rounded-lg border px-3 py-2 text-left transition-colors",
+          "flex flex-col justify-between gap-1 rounded-lg border px-3 py-2 text-left transition-colors",
           selected === null ? "border-ring bg-accent" : "hover:bg-accent/50",
         )}
       >
@@ -78,7 +79,7 @@ export function StackCards({
           <div
             key={stack.id}
             className={cn(
-              "flex h-16 flex-col justify-between rounded-lg border px-3 py-2 transition-colors",
+              "flex flex-col justify-between gap-1 rounded-lg border px-3 py-2 transition-colors",
               chosen ? "border-ring bg-accent" : "hover:bg-accent/50",
             )}
           >
@@ -166,7 +167,7 @@ export function StackCards({
           onClick={() => onSelect(selected === LOOSE ? null : LOOSE)}
           title="No stack names these, so they cannot be started until one does"
           className={cn(
-            "flex h-16 flex-col justify-between rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
+            "flex flex-col justify-between gap-1 rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
             selected === LOOSE ? "border-ring bg-accent" : "hover:bg-accent/50",
           )}
         >
@@ -182,7 +183,7 @@ export function StackCards({
       <button
         disabled={busy}
         onClick={onNew}
-        className="flex h-16 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-accent/50 disabled:opacity-50"
+        className="flex items-center justify-center rounded-lg border border-dashed py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 disabled:opacity-50"
       >
         + Stack
       </button>
