@@ -280,6 +280,9 @@ impl Runtime {
                 // `.runtime.json` is the only thing that does.
                 depends_on: detected.depends_on.clone(),
                 one_shot: detected.one_shot,
+                // Inference never sets this; a config file can, and that is the
+                // path it arrives by.
+                stop_signal: detected.stop_signal,
             };
             self.store.upsert_service(&service)?;
         }
@@ -753,6 +756,7 @@ impl Runtime {
                     on_conflict: Some(service.conflict_policy),
                     depends_on: service.depends_on,
                     one_shot: service.one_shot,
+                    stop_signal: service.stop_signal,
                 },
             );
         }
@@ -2208,6 +2212,7 @@ impl Runtime {
             conflict_policy: ConflictPolicy::Reuse,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
         };
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);
@@ -2381,6 +2386,7 @@ impl Runtime {
             conflict_policy: ConflictPolicy::Reuse,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
         };
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);

@@ -88,7 +88,9 @@ impl ProcessProvider for WindowsProcessProvider {
         // Ask first. The caller polls `is_alive` and escalates to `Forceful`
         // when its grace period runs out, so this only has to deliver the
         // request — not to wait for an answer.
-        if matches!(mode, TerminationMode::Graceful) && self.console.interrupt(identity.pid)? {
+        // The carried signal is ignored: Windows has no signals to choose
+        // between, and CTRL_BREAK is the whole of "ask politely" here.
+        if matches!(mode, TerminationMode::Graceful(_)) && self.console.interrupt(identity.pid)? {
             return Ok(true);
         }
         // An undeliverable request is not a granted one. Falling through rather

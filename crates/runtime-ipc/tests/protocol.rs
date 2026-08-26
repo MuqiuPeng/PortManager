@@ -29,6 +29,7 @@ fn service() -> Service {
         conflict_policy: ConflictPolicy::AllocateNext,
         depends_on: vec!["db".to_string()],
         one_shot: false,
+        stop_signal: None,
     }
 }
 
@@ -164,6 +165,7 @@ fn responses() -> Vec<ResponseBody> {
                     on_conflict: None,
                     depends_on: vec!["db".to_string()],
                     one_shot: true,
+                    stop_signal: None,
                 },
             )]),
         }),
@@ -371,6 +373,7 @@ fn every_request_survives_a_round_trip() {
                 on_conflict: None,
                 depends_on: vec!["db".to_string()],
                 one_shot: true,
+                stop_signal: None,
             },
         },
         Request::RemoveService { project: None, service: "web".to_string() },

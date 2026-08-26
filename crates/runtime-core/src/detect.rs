@@ -36,6 +36,10 @@ pub struct DetectedService {
     /// Runs to completion rather than staying up.
     #[serde(default)]
     pub one_shot: bool,
+    /// What a graceful stop sends. Like `depends_on`, only ever set from a
+    /// config file: which signal a program wants is not visible in a command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_signal: Option<runtime_types::StopSignal>,
     /// Why this was suggested, shown in the CLI and the add-project dialog.
     pub reason: String,
 }
@@ -112,6 +116,7 @@ fn from_config(fallback_name: &str, root: &Path, config: ProjectConfig) -> Detec
             }),
             depends_on: service.depends_on,
             one_shot: service.one_shot,
+            stop_signal: service.stop_signal,
             reason: CONFIG_FILE_NAME.to_string(),
         })
         .collect();
@@ -197,6 +202,7 @@ fn detect_node(
             cwd: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: format!("package.json scripts.{script}"),
         });
     }
@@ -347,6 +353,7 @@ fn detect_workspace_members(
             cwd: Some(directory),
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: "workspace member".to_string(),
         });
     }
@@ -521,6 +528,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             cwd: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: "manage.py".to_string(),
         });
         return;
@@ -536,6 +544,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             cwd: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: "fastapi/uvicorn dependency".to_string(),
         });
     } else if text.contains("flask") {
@@ -548,6 +557,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             cwd: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: "flask dependency".to_string(),
         });
     }
@@ -571,6 +581,7 @@ fn detect_rust(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<Det
             cwd: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
             reason: "Cargo.toml".to_string(),
         });
     }
@@ -593,6 +604,7 @@ fn detect_compose(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<
         cwd: None,
         depends_on: Vec::new(),
         one_shot: false,
+        stop_signal: None,
         reason: "docker compose file".to_string(),
     });
 }

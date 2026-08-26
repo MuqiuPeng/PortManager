@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS services (
     conflict_policy TEXT NOT NULL DEFAULT 'allocate-next',
     depends_on      TEXT NOT NULL DEFAULT '[]',
     one_shot        INTEGER NOT NULL DEFAULT 0,
+    stop_signal     TEXT,
     UNIQUE(workspace_id, name)
 );
 
@@ -224,6 +225,7 @@ impl Store {
             "ALTER TABLE services ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE services ADD COLUMN one_shot INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE stacks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE services ADD COLUMN stop_signal TEXT",
         ];
         for statement in ADDITIONS {
             // "duplicate column name" is the ordinary case: the column is
@@ -484,8 +486,8 @@ impl Store {
             conn.execute(
                 "INSERT INTO services(id, workspace_id, name, service_type, command, cwd, env,
                                       preferred_port, health_check, auto_start, conflict_policy,
-                                      depends_on, one_shot)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                      depends_on, one_shot, stop_signal)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(workspace_id, name) DO UPDATE SET
                      service_type = excluded.service_type,
                      command = excluded.command,
@@ -496,7 +498,8 @@ impl Store {
                      auto_start = excluded.auto_start,
                      conflict_policy = excluded.conflict_policy,
                      depends_on = excluded.depends_on,
-                     one_shot = excluded.one_shot",
+                     one_shot = excluded.one_shot,
+                     stop_signal = excluded.stop_signal",
                 params![
                     service.id.as_str(),
                     service.workspace_id.as_str(),
@@ -511,6 +514,7 @@ impl Store {
                     json_tag(service.conflict_policy),
                     depends_on,
                     service.one_shot as i64,
+                    service.stop_signal.map(json_tag),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -900,6 +904,10 @@ fn row_service(row: &Row<'_>) -> Result<Service> {
             .map(|raw| serde_json::from_str(&raw).unwrap_or_default())
             .unwrap_or_default(),
         one_shot: get_opt_int(row, "one_shot")?.unwrap_or(0) != 0,
+        // An unreadable value goes back to the default rather than refusing to
+        // open the row: the worst case is a stop that sends SIGTERM, which is
+        // what every service got before this column existed.
+        stop_signal: get_opt_text(row, "stop_signal")?.and_then(|raw| parse_tag(&raw).ok()),
     })
 }
 

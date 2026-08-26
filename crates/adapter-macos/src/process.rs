@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use runtime_adapter::generic::GenericProcessProvider;
 use runtime_adapter::process::{ProcessIdentity, ProcessInfo, ProcessProvider, TerminationMode};
-use runtime_types::{Result, RuntimeError};
+use runtime_types::{Result, RuntimeError, StopSignal};
 
 #[derive(Debug, Default)]
 pub struct MacProcessProvider {
@@ -250,7 +250,10 @@ impl ProcessProvider for MacProcessProvider {
         }
 
         let signal = match mode {
-            TerminationMode::Graceful => libc::SIGTERM,
+            TerminationMode::Graceful(StopSignal::Term) => libc::SIGTERM,
+            TerminationMode::Graceful(StopSignal::Int) => libc::SIGINT,
+            TerminationMode::Graceful(StopSignal::Quit) => libc::SIGQUIT,
+            TerminationMode::Graceful(StopSignal::Hup) => libc::SIGHUP,
             TerminationMode::Forceful => libc::SIGKILL,
         };
 

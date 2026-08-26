@@ -112,6 +112,7 @@ fn declare(
         conflict_policy: runtime_types::ConflictPolicy::Reuse,
         depends_on: depends_on.iter().map(|d| d.to_string()).collect(),
         one_shot,
+        stop_signal: None,
     };
     runtime.add_service(workspace, service).unwrap()
 }

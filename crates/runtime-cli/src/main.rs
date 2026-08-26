@@ -315,6 +315,11 @@ enum ServiceCommand {
         /// Runs to completion instead of staying up.
         #[arg(long = "one-shot")]
         one_shot: Option<bool>,
+        /// What a graceful stop sends: term, int, quit, hup. SIGTERM unless
+        /// said otherwise — postgres wants int, where term means "wait for
+        /// every client to disconnect first".
+        #[arg(long = "stop-signal")]
+        stop_signal: Option<String>,
     },
 
     /// Declare a service detection did not find.
@@ -334,6 +339,11 @@ enum ServiceCommand {
         /// Runs to completion instead of staying up: a migration, a seed.
         #[arg(long = "one-shot")]
         one_shot: bool,
+        /// What a graceful stop sends: term, int, quit, hup. SIGTERM unless
+        /// said otherwise — postgres wants int, where term means "wait for
+        /// every client to disconnect first".
+        #[arg(long = "stop-signal")]
+        stop_signal: Option<String>,
     },
 
     /// Remove a declared service. Nothing running is touched.
@@ -541,6 +551,7 @@ async fn run(cli: Cli) -> Result<String> {
             depends_on,
             no_depends_on,
             one_shot,
+            stop_signal,
         }) => {
             let patch = runtime_types::ServicePatch {
                 name: rename,
@@ -561,6 +572,13 @@ async fn run(cli: Cli) -> Result<String> {
                     Some(depends_on)
                 },
                 one_shot,
+                // Not mentioned leaves it alone; naming the default is how it
+                // is put back, which `--stop-signal term` does.
+                stop_signal: stop_signal
+                    .as_deref()
+                    .map(parse_stop_signal)
+                    .transpose()?
+                    .map(Some),
                 // `Some(None)` clears it; `None` leaves it alone.
                 preferred_port: if no_port {
                     Some(None)
@@ -598,6 +616,7 @@ async fn run(cli: Cli) -> Result<String> {
             service_type,
             depends_on,
             one_shot,
+            stop_signal,
         }) => {
             let selector = project.unwrap_or_else(|| ".".to_string());
             client
@@ -618,6 +637,10 @@ async fn run(cli: Cli) -> Result<String> {
                         on_conflict: None,
                         depends_on,
                         one_shot,
+                        stop_signal: stop_signal
+                            .as_deref()
+                            .map(parse_stop_signal)
+                            .transpose()?,
                     },
                 })
                 .await?
@@ -833,6 +856,25 @@ async fn run(cli: Cli) -> Result<String> {
     };
 
     render_response(&response, cli.json)
+}
+
+/// A signal name, as a person would type it.
+///
+/// Bare words rather than `SIGINT`, and case-insensitive, because this is
+/// typed at a prompt. An unknown one is refused with the list: a stop signal
+/// that silently fell back to SIGTERM would be a service that looks configured
+/// and behaves as though it is not.
+fn parse_stop_signal(value: &str) -> Result<runtime_types::StopSignal> {
+    let lowered = value.trim().to_ascii_lowercase();
+    match lowered.strip_prefix("sig").unwrap_or(&lowered) {
+        "term" => Ok(runtime_types::StopSignal::Term),
+        "int" => Ok(runtime_types::StopSignal::Int),
+        "quit" => Ok(runtime_types::StopSignal::Quit),
+        "hup" => Ok(runtime_types::StopSignal::Hup),
+        other => Err(RuntimeError::invalid(format!(
+            "unknown stop signal '{other}'; expected term, int, quit or hup"
+        ))),
+    }
 }
 
 fn parse_service_type(value: &str) -> Result<runtime_types::ServiceType> {

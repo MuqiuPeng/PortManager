@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use runtime_types::Result;
+use runtime_types::{Result, StopSignal};
 use serde::{Deserialize, Serialize};
 
 /// A snapshot of one OS process.
@@ -63,10 +63,22 @@ impl ProcessIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminationMode {
-    /// SIGTERM on Unix; CTRL_BREAK / WM_CLOSE on Windows.
-    Graceful,
+    /// The signal the service asked for on Unix, SIGTERM unless it said
+    /// otherwise; CTRL_BREAK / WM_CLOSE on Windows, which has no equivalent
+    /// choice and ignores the carried signal.
+    ///
+    /// Carried rather than translated by whatever is signalled first, because
+    /// a stop reaches the whole process group at once: a wrapper is told at
+    /// the same instant as the process it wraps, so by the time it could
+    /// translate, the translation is already too late.
+    Graceful(StopSignal),
     /// SIGKILL on Unix; TerminateProcess on Windows.
     Forceful,
+}
+
+impl TerminationMode {
+    /// The ordinary graceful stop, for callers with no service in hand.
+    pub const TERM: Self = Self::Graceful(StopSignal::Term);
 }
 
 /// Reads and terminates processes.

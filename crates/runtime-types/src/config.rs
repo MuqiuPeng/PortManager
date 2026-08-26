@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{ConflictPolicy, HealthCheck, ServiceType};
+use crate::model::{ConflictPolicy, HealthCheck, ServiceType, StopSignal};
 
 /// The file name looked for at a project root.
 pub const CONFIG_FILE_NAME: &str = ".runtime.json";
@@ -45,4 +45,8 @@ pub struct ServiceConfig {
     /// Runs to completion instead of staying up: a migration, a seed, a build.
     #[serde(default)]
     pub one_shot: bool,
+    /// What a graceful stop sends, for a process where SIGTERM means something
+    /// other than "stop now" — PostgreSQL being the one that comes up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_signal: Option<StopSignal>,
 }

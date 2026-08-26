@@ -172,6 +172,7 @@ pub async fn add_service(
             on_conflict: None,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
         },
     };
     match call(&state, request).await? {

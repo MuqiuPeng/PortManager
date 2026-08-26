@@ -185,6 +185,7 @@ impl Dispatcher {
                     conflict_policy: config.on_conflict.unwrap_or_default(),
                     depends_on: config.depends_on,
                     one_shot: config.one_shot,
+                    stop_signal: config.stop_signal,
                 };
                 let created = runtime.add_service(&workspace.id, service)?;
                 Ok(ResponseBody::Service(runtime.service_view(&created)?))

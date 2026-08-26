@@ -393,6 +393,12 @@ function registerTools(
           .describe(
             "This runs to completion instead of staying up: a migration, a seed, a build step. The run waits for it to exit successfully before starting whatever depends on it, and does not treat the exit as a failure.",
           ),
+        stop_signal: z
+          .enum(["term", "int", "quit", "hup"])
+          .optional()
+          .describe(
+            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program: PostgreSQL reads it as 'stop once every client has disconnected', which on a dev machine is an unbounded wait, and the runtime ends up killing the database instead. 'int' is its fast shutdown.",
+          ),
       },
     },
     async ({
@@ -410,6 +416,7 @@ function registerTools(
       auto_start,
       depends_on,
       one_shot,
+      stop_signal,
     }) => {
       const patch: Record<string, unknown> = {};
       // An absent key means "leave it alone" and an explicit null means "clear
@@ -426,6 +433,7 @@ function registerTools(
       if (auto_start !== undefined) patch.auto_start = auto_start;
       if (depends_on !== undefined) patch.depends_on = depends_on;
       if (one_shot !== undefined) patch.one_shot = one_shot;
+      if (stop_signal !== undefined) patch.stop_signal = stop_signal;
 
       if (Object.keys(patch).length === 0) {
         return {
@@ -471,9 +479,15 @@ function registerTools(
           .describe(
             "This runs to completion instead of staying up: a migration, a seed, a build step. The run waits for it to exit successfully before starting whatever depends on it, and does not treat the exit as a failure.",
           ),
+        stop_signal: z
+          .enum(["term", "int", "quit", "hup"])
+          .optional()
+          .describe(
+            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program: PostgreSQL reads it as 'stop once every client has disconnected', which on a dev machine is an unbounded wait, and the runtime ends up killing the database instead. 'int' is its fast shutdown.",
+          ),
       },
     },
-    async ({ project, name, command, port, cwd, service_type, depends_on, one_shot }) =>
+    async ({ project, name, command, port, cwd, service_type, depends_on, one_shot, stop_signal }) =>
       run(
         "add_service",
         {
@@ -487,6 +501,7 @@ function registerTools(
           // declared-but-empty dependency list is a thing somebody said.
           ...(depends_on !== undefined ? { depends_on } : {}),
           ...(one_shot !== undefined ? { one_shot } : {}),
+          ...(stop_signal !== undefined ? { stop_signal } : {}),
         },
         (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
       ),

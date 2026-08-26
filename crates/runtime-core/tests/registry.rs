@@ -407,6 +407,7 @@ fn renaming_onto_an_existing_service_is_refused() {
                 conflict_policy: Default::default(),
                 depends_on: Vec::new(),
                 one_shot: false,
+                stop_signal: None,
             },
         )
         .unwrap();
@@ -832,9 +833,14 @@ async fn exported_config_carries_ordering_back() {
         .unwrap()
         .remove(0);
 
-    for (name, depends_on, one_shot) in [
-        ("migrate", vec![], true),
-        ("api", vec!["migrate".to_string()], false),
+    for (name, depends_on, one_shot, stop_signal) in [
+        ("migrate", vec![], true, None),
+        (
+            "api",
+            vec!["migrate".to_string()],
+            false,
+            Some(runtime_types::StopSignal::Int),
+        ),
     ] {
         let service = runtime_types::Service {
             id: runtime_types::ServiceId::new(),
@@ -850,6 +856,7 @@ async fn exported_config_carries_ordering_back() {
             conflict_policy: ConflictPolicy::Fail,
             depends_on,
             one_shot,
+            stop_signal,
         };
         runtime.add_service(&workspace.id, service).unwrap();
     }
@@ -876,6 +883,11 @@ async fn exported_config_carries_ordering_back() {
         api.depends_on,
         vec!["migrate".to_string()],
         "depends_on did not survive the round trip"
+    );
+    assert_eq!(
+        api.stop_signal,
+        Some(runtime_types::StopSignal::Int),
+        "stop_signal did not survive the round trip"
     );
 }
 
@@ -917,6 +929,7 @@ async fn registering_a_worktree_tops_up_its_services() {
         conflict_policy: ConflictPolicy::Fail,
         depends_on: Vec::new(),
         one_shot: false,
+        stop_signal: None,
     };
     runtime.add_service(&primary.id, service).unwrap();
 
@@ -1080,6 +1093,7 @@ async fn a_cursored_read_is_not_answered_with_a_synthesised_line() {
         conflict_policy: ConflictPolicy::Fail,
         depends_on: Vec::new(),
         one_shot: false,
+        stop_signal: None,
     };
     let service = runtime.add_service(&workspace.id, service).unwrap();
 
@@ -1305,5 +1319,69 @@ async fn a_project_root_is_the_path_of_its_own_checkout() {
         "no checkout is at {}: {:?}",
         root.display(),
         checkouts.iter().map(|c| c.path.display().to_string()).collect::<Vec<_>>()
+    );
+}
+
+/// A service that declares a stop signal is stopped with that signal.
+///
+/// The reason this cannot be left to the process itself: a stop is delivered
+/// to the whole process group, so a wrapper is signalled at the same instant
+/// as the thing it wraps and has no moment in which to translate. PostgreSQL
+/// is the case — SIGTERM there means "stop once every client disconnects",
+/// which on a dev machine is a wait with no end, and the runtime would spend
+/// its whole grace period and then SIGKILL a database mid-write.
+///
+/// Written so that it fails without the feature rather than merely passing
+/// with it: the script ignores SIGTERM outright. Send the default and this
+/// hangs until the grace period runs out and the escalation kills it; send
+/// what the service asked for and it exits at once.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_declared_stop_signal_is_the_one_sent() {
+    let logs = tempfile::tempdir().unwrap();
+    let config = r#"{ "name": "deaf", "services": {
+        "stubborn": { "command": "python3 -u stubborn.py" } } }"#;
+    // Ignores SIGTERM the way postgres effectively does while it waits for
+    // clients, and exits on SIGINT the way its fast shutdown does.
+    let script = "import signal, time, sys\n\
+signal.signal(signal.SIGTERM, signal.SIG_IGN)\n\
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))\n\
+print('ready', flush=True)\n\
+while True:\n    time.sleep(0.1)\n";
+    let dir = repo(&[(".runtime.json", config), ("stubborn.py", script)]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .update_service(
+            &service.id,
+            runtime_types::ServicePatch {
+                stop_signal: Some(Some(runtime_types::StopSignal::Int)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .unwrap();
+
+    // Well under the grace period, which is the whole assertion: reaching the
+    // escalation also ends with the process gone, so "it stopped" on its own
+    // says nothing about which signal did it.
+    let began = std::time::Instant::now();
+    runtime
+        .stop_service(&service.id, runtime_core::lifecycle::GRACEFUL_TIMEOUT)
+        .await
+        .unwrap();
+    let took = began.elapsed();
+
+    assert!(
+        took < runtime_core::lifecycle::GRACEFUL_TIMEOUT / 2,
+        "stopping took {took:?}, which means SIGTERM was sent and the escalation \
+         is what actually ended it"
     );
 }

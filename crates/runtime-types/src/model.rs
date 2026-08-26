@@ -109,6 +109,41 @@ pub struct Service {
     /// cannot share one definition of "started".
     #[serde(default)]
     pub one_shot: bool,
+    /// What a graceful stop sends, when SIGTERM is the wrong word for it.
+    ///
+    /// `None` and `Some(Term)` behave alike; the option exists so a service
+    /// that never said anything stays distinguishable from one that chose the
+    /// default, and so a patch can clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_signal: Option<StopSignal>,
+}
+
+/// Which signal a graceful stop sends.
+///
+/// A stop is delivered to the whole process group, so it reaches a wrapped
+/// process directly and at the same instant as its wrapper — measured, with a
+/// parent that forwarded nothing and a child that received SIGTERM anyway. A
+/// supervisor that means to translate signals for what it spawned therefore
+/// cannot: by the time it decides, the thing it wraps has already been told.
+///
+/// So the translation has to happen before the signal goes out, which is what
+/// this is. The case it exists for is PostgreSQL, where SIGTERM is not "stop"
+/// but "stop once every client has disconnected" — a wait with no bound, on a
+/// process usually holding an idle connection from something else in the same
+/// stack. Left alone it spends the whole grace period and is killed, and the
+/// next start reads a data directory that was never shut down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StopSignal {
+    /// SIGTERM. What almost everything means by "please stop".
+    #[default]
+    Term,
+    /// SIGINT. PostgreSQL's fast shutdown; Ctrl-C to most things else.
+    Int,
+    /// SIGQUIT. PostgreSQL's immediate shutdown, which skips the checkpoint.
+    Quit,
+    /// SIGHUP. For something that reloads rather than exits.
+    Hup,
 }
 
 /// A named sequence of steps in a checkout.
@@ -341,6 +376,13 @@ pub struct ServicePatch {
     pub depends_on: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub one_shot: Option<bool>,
+    /// `Some(None)` goes back to SIGTERM; `None` leaves it alone.
+    #[serde(
+        default,
+        deserialize_with = "present_as_some",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stop_signal: Option<Option<StopSignal>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     /// Variables to drop.
@@ -394,6 +436,9 @@ impl ServicePatch {
         }
         if let Some(depends_on) = self.depends_on {
             service.depends_on = depends_on;
+        }
+        if let Some(stop_signal) = self.stop_signal {
+            service.stop_signal = stop_signal;
         }
         if let Some(one_shot) = self.one_shot {
             service.one_shot = one_shot;
@@ -514,6 +559,7 @@ mod tests {
             conflict_policy: ConflictPolicy::AllocateNext,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
         };
 
         ServicePatch {
@@ -549,6 +595,7 @@ mod tests {
             conflict_policy: ConflictPolicy::AllocateNext,
             depends_on: Vec::new(),
             one_shot: false,
+            stop_signal: None,
         };
 
         ServicePatch {

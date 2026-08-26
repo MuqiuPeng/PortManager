@@ -123,6 +123,7 @@ mod tests {
             conflict_policy: ConflictPolicy::Fail,
             depends_on: depends_on.iter().map(|d| d.to_string()).collect(),
             one_shot: false,
+            stop_signal: None,
         }
     }
 

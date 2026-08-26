@@ -62,6 +62,7 @@ fn main() {
         conflict_policy: ConflictPolicy::Reuse,
         depends_on: Vec::new(),
         one_shot: false,
+        stop_signal: None,
     };
 
     out.insert(

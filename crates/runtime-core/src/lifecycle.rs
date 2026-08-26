@@ -24,6 +24,16 @@ use crate::store::Store;
 use crate::supervisor::RunningProcess;
 use crate::Runtime;
 
+/// What a graceful stop of this service sends.
+///
+/// Read from the service rather than fixed at the signalling layer, because
+/// the signal has to be chosen before it goes out: a stop reaches the whole
+/// process group at once, so a wrapper is told at the same moment as the
+/// process it wraps and cannot translate on its behalf.
+fn graceful_stop(service: &Service) -> TerminationMode {
+    TerminationMode::Graceful(service.stop_signal.unwrap_or_default())
+}
+
 /// How long a graceful stop is given before escalating.
 pub const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -600,7 +610,7 @@ impl Runtime {
 
         let process = self.adapter().process();
         let identity = info.identity();
-        process.terminate_tree(&identity, TerminationMode::Graceful)?;
+        process.terminate_tree(&identity, graceful_stop(&service))?;
 
         // The same escalation a stop uses: something that ignores a polite
         // request still has to let the port go within a bounded time.
@@ -1241,7 +1251,7 @@ impl Runtime {
         let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
         let process = self.adapter().process();
 
-        process.terminate_tree(&identity, TerminationMode::Graceful)?;
+        process.terminate_tree(&identity, graceful_stop(&service))?;
 
         // Escalate rather than hang: a dev server that ignores SIGTERM must
         // still release its port within a bounded time.
@@ -1613,7 +1623,10 @@ impl Runtime {
         )?;
 
         let identity = info.identity();
-        process.terminate_tree(&identity, TerminationMode::Graceful)?;
+        // Whatever holds the port is not this service, and may be nothing the
+        // runtime has a declaration for, so there is nobody to ask which
+        // signal it prefers.
+        process.terminate_tree(&identity, TerminationMode::TERM)?;
         let deadline = tokio::time::Instant::now() + GRACEFUL_PORT_WAIT;
         let mut forced = false;
         while process.is_alive(&identity)? {

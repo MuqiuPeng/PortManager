@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
-use runtime_types::{Result, RuntimeError};
+use runtime_types::{Result, RuntimeError, StopSignal};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System, UpdateKind};
 
 use crate::port::{PortBinding, PortProvider, Protocol};
@@ -107,7 +107,10 @@ impl ProcessProvider for GenericProcessProvider {
         targets.push(identity.pid);
 
         let signal = match mode {
-            TerminationMode::Graceful => Signal::Term,
+            TerminationMode::Graceful(StopSignal::Term) => Signal::Term,
+            TerminationMode::Graceful(StopSignal::Int) => Signal::Interrupt,
+            TerminationMode::Graceful(StopSignal::Quit) => Signal::Quit,
+            TerminationMode::Graceful(StopSignal::Hup) => Signal::Hangup,
             TerminationMode::Forceful => Signal::Kill,
         };
         // Children first, so a supervisor cannot respawn a worker we just

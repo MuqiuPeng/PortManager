@@ -138,6 +138,11 @@ export function formatServiceDetail(service: ServiceView): string {
   // left to find out whether it worked is to start the stack.
   if (service.depends_on?.length) lines.push(`  after    ${service.depends_on.join(", ")}`);
   if (service.one_shot) lines.push("  once     runs to completion, not kept up");
+  // Only when it is not the default: every service stops on SIGTERM, and a
+  // line saying so on all of them would bury the one where it is not true.
+  if (service.stop_signal && service.stop_signal !== "term") {
+    lines.push(`  stop     SIG${service.stop_signal.toUpperCase()}`);
+  }
 
   // Names only. Confirming that a variable was set does not require putting its
   // value — which is usually a credential — into an agent's transcript.

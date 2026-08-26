@@ -57,6 +57,8 @@ export interface ServiceView {
   depends_on?: string[];
   /** Runs to completion rather than staying up. */
   one_shot?: boolean;
+  /** What a graceful stop sends, when SIGTERM is the wrong word for it. */
+  stop_signal?: "term" | "int" | "quit" | "hup";
 }
 
 /** A live port in a checkout that no declared service explains. */
