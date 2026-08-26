@@ -53,6 +53,10 @@ export interface ServiceView {
   url?: string;
   /** False when the runtime found it already running and cannot stop it. */
   managed?: boolean;
+  /** Services in the same checkout that must be up first. */
+  depends_on?: string[];
+  /** Runs to completion rather than staying up. */
+  one_shot?: boolean;
 }
 
 /** A live port in a checkout that no declared service explains. */

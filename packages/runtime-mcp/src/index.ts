@@ -381,6 +381,18 @@ function registerTools(
             "What to do when the port is taken. 'fail' is right for a service that hardcodes its port, where being moved to another one cannot work.",
           ),
         auto_start: z.boolean().optional(),
+        depends_on: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Services in this same project that must be up and healthy before this one starts, by name. Replaces the list rather than adding to it — an ordering merged with another ordering is one nobody chose — so pass every dependency, and pass an empty array to clear them.",
+          ),
+        one_shot: z
+          .boolean()
+          .optional()
+          .describe(
+            "This runs to completion instead of staying up: a migration, a seed, a build step. The run waits for it to exit successfully before starting whatever depends on it, and does not treat the exit as a failure.",
+          ),
       },
     },
     async ({
@@ -396,6 +408,8 @@ function registerTools(
       service_type,
       on_conflict,
       auto_start,
+      depends_on,
+      one_shot,
     }) => {
       const patch: Record<string, unknown> = {};
       // An absent key means "leave it alone" and an explicit null means "clear
@@ -410,6 +424,8 @@ function registerTools(
       if (service_type !== undefined) patch.service_type = service_type;
       if (on_conflict !== undefined) patch.conflict_policy = on_conflict;
       if (auto_start !== undefined) patch.auto_start = auto_start;
+      if (depends_on !== undefined) patch.depends_on = depends_on;
+      if (one_shot !== undefined) patch.one_shot = one_shot;
 
       if (Object.keys(patch).length === 0) {
         return {
@@ -443,9 +459,21 @@ function registerTools(
         service_type: z
           .enum(["web", "api", "worker", "database", "cache", "container", "custom"])
           .optional(),
+        depends_on: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Services in this same project that must be up and healthy before this one starts, by name. This is what gives a stack its order — a stack with no dependencies declared is a set of things started at once, not a sequence.",
+          ),
+        one_shot: z
+          .boolean()
+          .optional()
+          .describe(
+            "This runs to completion instead of staying up: a migration, a seed, a build step. The run waits for it to exit successfully before starting whatever depends on it, and does not treat the exit as a failure.",
+          ),
       },
     },
-    async ({ project, name, command, port, cwd, service_type }) =>
+    async ({ project, name, command, port, cwd, service_type, depends_on, one_shot }) =>
       run(
         "add_service",
         {
@@ -455,6 +483,10 @@ function registerTools(
           port: port ?? null,
           cwd: cwd ?? null,
           type: service_type ?? null,
+          // Omitted rather than sent empty: the wire defaults both, and a
+          // declared-but-empty dependency list is a thing somebody said.
+          ...(depends_on !== undefined ? { depends_on } : {}),
+          ...(one_shot !== undefined ? { one_shot } : {}),
         },
         (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
       ),

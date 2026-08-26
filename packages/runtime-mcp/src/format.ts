@@ -132,6 +132,13 @@ export function formatServiceDetail(service: ServiceView): string {
   if (service.url) lines.push(`  url      ${service.url}`);
   if (service.preferred_port) lines.push(`  prefers  :${service.preferred_port}`);
 
+  // Shown because this is the reply to having set them. Without these, an
+  // agent that declares an ordering is answered with a detail view that looks
+  // exactly like the one it would have got for doing nothing, and the only way
+  // left to find out whether it worked is to start the stack.
+  if (service.depends_on?.length) lines.push(`  after    ${service.depends_on.join(", ")}`);
+  if (service.one_shot) lines.push("  once     runs to completion, not kept up");
+
   // Names only. Confirming that a variable was set does not require putting its
   // value — which is usually a credential — into an agent's transcript.
   const names = Object.keys(service.env ?? {});
