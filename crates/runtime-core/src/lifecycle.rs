@@ -491,6 +491,21 @@ impl Runtime {
                 // so the message read the same whether the stack stopped at its
                 // second step or its fifth, and where it stopped is the thing
                 // somebody needs to know.
+                // The whole stack stops, including members that have nothing
+                // to do with this one and would have started fine.
+                //
+                // Deliberate, and asked about: a stack is one thing somebody
+                // declared as the way this project comes up, not a list of
+                // suggestions. Half of it running is a state nobody chose and
+                // the hardest kind to notice — every service that mattered to
+                // whatever you were about to do is up, and the one that did not
+                // start is the one you find out about later, from something
+                // else failing. Stopping here leaves a state that is obviously
+                // wrong instead of subtly wrong.
+                //
+                // What is already up is left up rather than rolled back: those
+                // are somebody's containers and databases, and taking them down
+                // to be tidy is a more expensive surprise than leaving them.
                 Err(err) => return Err(err),
             };
 
