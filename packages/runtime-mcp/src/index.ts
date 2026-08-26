@@ -397,7 +397,7 @@ function registerTools(
           .enum(["term", "int", "quit", "hup"])
           .optional()
           .describe(
-            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program: PostgreSQL reads it as 'stop once every client has disconnected', which on a dev machine is an unbounded wait, and the runtime ends up killing the database instead. 'int' is its fast shutdown.",
+            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program the command starts directly: PostgreSQL reads it as 'stop once every client has disconnected', so with a connection held from anywhere else the stop waits out its grace period and kills the database instead — 8.6s and a forced termination, against 0.4s with 'int', which is its fast shutdown. A program behind a wrapper that installs its own handler usually needs nothing here.",
           ),
       },
     },
@@ -483,7 +483,7 @@ function registerTools(
           .enum(["term", "int", "quit", "hup"])
           .optional()
           .describe(
-            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program: PostgreSQL reads it as 'stop once every client has disconnected', which on a dev machine is an unbounded wait, and the runtime ends up killing the database instead. 'int' is its fast shutdown.",
+            "What a graceful stop sends. SIGTERM unless said otherwise. Set this when SIGTERM does not mean 'stop now' to the program the command starts directly: PostgreSQL reads it as 'stop once every client has disconnected', so with a connection held from anywhere else the stop waits out its grace period and kills the database instead — 8.6s and a forced termination, against 0.4s with 'int', which is its fast shutdown. A program behind a wrapper that installs its own handler usually needs nothing here.",
           ),
       },
     },

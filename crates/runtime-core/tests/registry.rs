@@ -1324,12 +1324,11 @@ async fn a_project_root_is_the_path_of_its_own_checkout() {
 
 /// A service that declares a stop signal is stopped with that signal.
 ///
-/// The reason this cannot be left to the process itself: a stop is delivered
-/// to the whole process group, so a wrapper is signalled at the same instant
-/// as the thing it wraps and has no moment in which to translate. PostgreSQL
-/// is the case — SIGTERM there means "stop once every client disconnects",
-/// which on a dev machine is a wait with no end, and the runtime would spend
-/// its whole grace period and then SIGKILL a database mid-write.
+/// The case is a program the runtime starts directly, whose reading of
+/// SIGTERM is not "stop now". PostgreSQL's is "stop once every client has
+/// disconnected", and with a connection held from outside the stopping group
+/// that never arrives: measured at 8.6s and a forced termination, against
+/// 0.4s once the service says SIGINT.
 ///
 /// Written so that it fails without the feature rather than merely passing
 /// with it: the script ignores SIGTERM outright. Send the default and this

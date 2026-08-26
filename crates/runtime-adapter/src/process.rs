@@ -67,10 +67,12 @@ pub enum TerminationMode {
     /// otherwise; CTRL_BREAK / WM_CLOSE on Windows, which has no equivalent
     /// choice and ignores the carried signal.
     ///
-    /// Carried rather than translated by whatever is signalled first, because
-    /// a stop reaches the whole process group at once: a wrapper is told at
-    /// the same instant as the process it wraps, so by the time it could
-    /// translate, the translation is already too late.
+    /// Carried rather than decided here, because only the service knows what
+    /// its program reads SIGTERM as. A stop does reach the whole process
+    /// group, so a wrapped process sees the raw signal whatever its wrapper
+    /// intends — but a wrapper that translates a moment later still works on
+    /// anything that accepts an escalating second signal. What this is for is
+    /// the program with no wrapper at all.
     Graceful(StopSignal),
     /// SIGKILL on Unix; TerminateProcess on Windows.
     Forceful,

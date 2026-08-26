@@ -120,18 +120,20 @@ pub struct Service {
 
 /// Which signal a graceful stop sends.
 ///
-/// A stop is delivered to the whole process group, so it reaches a wrapped
-/// process directly and at the same instant as its wrapper — measured, with a
-/// parent that forwarded nothing and a child that received SIGTERM anyway. A
-/// supervisor that means to translate signals for what it spawned therefore
-/// cannot: by the time it decides, the thing it wraps has already been told.
+/// For PostgreSQL, SIGTERM is not "stop" but "stop once every client has
+/// disconnected". With a connection held from outside the stopping group —
+/// another service, another project, a psql somebody left open — that is a
+/// wait with no end, so the stop spends its whole grace period and finishes
+/// with SIGKILL, and the next start reads a data directory that was never
+/// shut down. Measured at 8.6s and a forced termination; SIGINT, which is its
+/// fast shutdown, ends the same case in 0.4s.
 ///
-/// So the translation has to happen before the signal goes out, which is what
-/// this is. The case it exists for is PostgreSQL, where SIGTERM is not "stop"
-/// but "stop once every client has disconnected" — a wait with no bound, on a
-/// process usually holding an idle connection from something else in the same
-/// stack. Left alone it spends the whole grace period and is killed, and the
-/// next start reads a data directory that was never shut down.
+/// This is for a program the runtime starts directly. A wrapper that installs
+/// its own handler mostly does not need it: a stop reaches the whole process
+/// group, so the wrapped process sees the raw signal too, but the wrapper's
+/// translation still lands a moment later and PostgreSQL escalates smart to
+/// fast when it does. `embedded-postgres` is that shape and stops in 0.4s
+/// with no help. It is the bare `postgres -D ...` that hangs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StopSignal {

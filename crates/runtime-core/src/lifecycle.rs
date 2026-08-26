@@ -26,10 +26,10 @@ use crate::Runtime;
 
 /// What a graceful stop of this service sends.
 ///
-/// Read from the service rather than fixed at the signalling layer, because
-/// the signal has to be chosen before it goes out: a stop reaches the whole
-/// process group at once, so a wrapper is told at the same moment as the
-/// process it wraps and cannot translate on its behalf.
+/// Read from the service rather than fixed at the signalling layer: what
+/// SIGTERM means is a fact about the program, and the runtime has no way to
+/// know it. PostgreSQL reads it as "wait for every client first", which with
+/// a connection held from outside this group never finishes on its own.
 fn graceful_stop(service: &Service) -> TerminationMode {
     TerminationMode::Graceful(service.stop_signal.unwrap_or_default())
 }
