@@ -36,6 +36,19 @@ type Tab = "services" | "ports" | "discover" | "settings";
 
 /** Ports change without any event of their own, so that tab polls. */
 const PORT_POLL_MS = 4000;
+/**
+ * How long after an action to look again.
+ *
+ * A container's exit is not an event either, and `stop` returns before Docker
+ * has finished: the refresh that follows the call catches the containers still
+ * up, and nothing after it says otherwise. So the rows kept saying "running"
+ * for something `docker ps` no longer listed.
+ *
+ * This is a patch over a missing event rather than the fix. What would settle
+ * it is the daemon noticing a container change and announcing it, the way it
+ * announces a service's.
+ */
+const SETTLE_MS = 2500;
 const LOG_POLL_MS = 800;
 
 export default function App() {
@@ -392,6 +405,10 @@ export default function App() {
     try {
       await action();
       await refreshProjects();
+      // And once more when whatever was asked has had time to finish. See
+      // SETTLE_MS: the containers a stack brings up outlive the call that
+      // stops them by a second or two, and nothing tells us when they go.
+      window.setTimeout(() => void refreshProjects(), SETTLE_MS);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
