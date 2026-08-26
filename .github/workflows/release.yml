@@ -78,17 +78,33 @@ jobs:
           # reaches later steps, so there was nothing else for it to read.
           node -e '
             const fs = require("fs");
+            const version = process.argv[1];
+            if (!version) throw new Error("refusing to write an empty version");
+
             const path = "apps/desktop/src-tauri/tauri.conf.json";
             const conf = JSON.parse(fs.readFileSync(path, "utf8"));
-            conf.version = process.argv[1];
-            if (!conf.version) throw new Error("refusing to write an empty version");
+            conf.version = version;
             fs.writeFileSync(path, JSON.stringify(conf, null, 2) + "\n");
+
+            // And the workspace, because the CLI and the daemon take their
+            // version from Cargo and not from here. v0.1.1 shipped an app that
+            // called itself 0.1.1 beside a `runtime --version` that said 0.1.0,
+            // from the same bundle — which is the version skew the shims exist
+            // to prevent, arriving by the one route nobody was watching.
+            const manifest = "Cargo.toml";
+            const before = fs.readFileSync(manifest, "utf8");
+            const after = before.replace(/^version = "[^"]*"$/m, `version = "${version}"`);
+            if (after === before) throw new Error("the workspace version was not where it was expected");
+            fs.writeFileSync(manifest, after);
           ' "$version"
           # Proof, in the log, that the number in the bundle is the number asked
           # for — the one fact this whole step exists to establish.
           node -e '
+            const fs = require("fs");
             const conf = require("./apps/desktop/src-tauri/tauri.conf.json");
-            console.log("tauri.conf.json version is now: " + JSON.stringify(conf.version));
+            const workspace = fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]*)"$/m)[1];
+            console.log("app " + conf.version + ", crates " + workspace);
+            if (conf.version !== workspace) throw new Error("the bundle would ship two version numbers");
           '
 
       # The three binaries ship together, so they are built together. The app
