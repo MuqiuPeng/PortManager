@@ -107,9 +107,27 @@ variable or the wrong command — \`update_service\` is how you correct either,
 and correcting the port is also what lets the runtime recognise an
 already-running process as that service.
 
+\`healthy\` is not always a statement about a process. For a service the
+runtime started, a dead process is \`stopped\` no matter what the port says.
+But a service reported as started elsewhere has no process the runtime owns,
+and its health is only "something answers on that port" — while its logs are
+still the ones captured from the process the runtime used to run, which has
+since exited. Read that qualifier before believing anything out of
+\`get_logs\`: a token, a URL or a port lifted from a dead instance's output is
+stale, and it fails somewhere far from here.
+
 Environment variables: set what a service needs through \`update_service\`, and
 do not read their values back out of the user's shell to put them somewhere
-else. Names are safe to discuss; values are usually credentials.`
+else. Names are safe to discuss; values are usually credentials.
+
+There is also a \`runtime\` CLI, and its syntax is not these tool names. When
+the user wants to run something themselves, give them the command rather than
+a translation of a tool call: \`run_stack\` is
+\`runtime stack run <name> --project <project>\`, \`list_services\` is
+\`runtime service list --project <project>\`, and \`--project\` and \`--json\`
+are accepted by every command. Do not derive one vocabulary from the other —
+they are close enough to guess wrong, and a guessed command in a code block is
+a command somebody runs.`
 
   const server = new McpServer(
     {
