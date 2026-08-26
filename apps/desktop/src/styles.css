@@ -1250,22 +1250,20 @@ button {
 
 .flow-edge {
   fill: none;
-  stroke: var(--border);
+  /* Same reason as the node outline: `--border` divides areas, and these lines
+     have to be followed by eye across a picture. */
+  stroke: var(--muted-foreground);
   stroke-width: 1.5;
 }
 
 /* The head is a shape of its own, so it carries the same states the line does
    and nothing has to keep two colours in step. */
 .flow-head {
-  fill: var(--border);
+  fill: var(--muted-foreground);
 }
 
 .flow-head.linked {
   fill: var(--primary);
-}
-
-.flow-head.faded {
-  opacity: 0.25;
 }
 
 /* Reading one node: what it waits for and what waits for it, told apart from
@@ -1276,12 +1274,20 @@ button {
   stroke-width: 2;
 }
 
+/* Receding, not vanishing. At a quarter and a third these were legible on a
+   dark theme and gone on a light one, where what is left of a pale shape at
+   0.35 is the background. Reading one node should push the rest back, not
+   delete them — what is dimmed is still the answer to "what else is there". */
 .flow-edge.faded {
-  opacity: 0.25;
+  opacity: 0.45;
 }
 
 .flow-node.faded {
-  opacity: 0.35;
+  opacity: 0.5;
+}
+
+.flow-head.faded {
+  opacity: 0.45;
 }
 
 .flow-node.faded,
@@ -1291,8 +1297,14 @@ button {
 }
 
 .flow-node rect {
-  fill: var(--muted);
-  stroke: var(--border);
+  /* The card colour, not the muted one. A node is a thing on the canvas, and
+     `--muted` against `--background` is two shades of the same near-white:
+     legible on a dark theme and almost gone on a light one. */
+  fill: var(--card);
+  /* And an outline that is a line rather than a suggestion. `--border` is made
+     for dividing two large areas, which is a job that wants to disappear; the
+     edge of a box somebody has to pick out of six is the opposite job. */
+  stroke: var(--muted-foreground);
   stroke-width: 1;
   /* Slow enough to be seen as a change. A stack coming up is the one time the
      order it starts in is visible, and an instant swap reads as a redraw
