@@ -267,6 +267,7 @@ impl Runtime {
                 return Err(RuntimeError::PortConflict {
                     port: reservation.port,
                     holder: crate::ports::describe(reservation.conflict.as_ref()),
+                    wanted_by: Some(service.name.clone()),
                 });
             }
         }
@@ -476,7 +477,7 @@ impl Runtime {
                 // holder, in the words every surface uses. Answering that
                 // refusal is what `free_ports` is: clear the port and try the
                 // one member again.
-                Err(RuntimeError::PortConflict { port, holder }) if free_ports => {
+                Err(RuntimeError::PortConflict { port, holder, .. }) if free_ports => {
                     self.clear_port_for(&service.id, port, &holder).await?;
                     self.start_service(
                         &service.id,
@@ -484,6 +485,12 @@ impl Runtime {
                     )
                     .await?
                 }
+                // Which step, not only what went wrong. A port conflict names
+                // the port and who holds it, and in a stack where two members
+                // ask for the same one that sentence is true of both of them —
+                // so the message read the same whether the stack stopped at its
+                // second step or its fifth, and where it stopped is the thing
+                // somebody needs to know.
                 Err(err) => return Err(err),
             };
 

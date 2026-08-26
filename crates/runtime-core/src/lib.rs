@@ -1777,6 +1777,33 @@ impl Runtime {
                         }
                     }
 
+                    // Two services in one checkout asking for the same port.
+                    //
+                    // Nothing refuses this and nothing said it: the second one
+                    // to start finds the port taken and its policy decides —
+                    // usually `allocate-next`, which quietly moves it. So the
+                    // number somebody typed is not the number it runs on, the
+                    // start succeeds, and there is nowhere to look. It is worth
+                    // saying before it is started rather than after.
+                    if let Some(port) = service.preferred_port.filter(|port| *port != runtime_types::ANY_PORT) {
+                        let others: Vec<_> = declared
+                            .iter()
+                            .filter(|other| other.id != service.id)
+                            .filter(|other| other.preferred_port == Some(port))
+                            .map(|other| other.name.clone())
+                            .collect();
+                        if !others.is_empty() {
+                            findings.push(Finding {
+                                subject: subject.clone(),
+                                message: format!(
+                                    "asks for :{port}, and so does {}; whichever starts second will be moved somewhere else or refused",
+                                    others.join(", ")
+                                ),
+                                certain: true,
+                            });
+                        }
+                    }
+
                     if !command_is_findable(&service.command) {
                         let program = service
                             .command

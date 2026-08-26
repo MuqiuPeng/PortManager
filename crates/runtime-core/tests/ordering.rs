@@ -841,7 +841,7 @@ async fn a_declared_port_that_is_taken_stops_the_run() {
 
     let refused = runtime.run_stack(&workspace.id, "dev").await.unwrap_err();
     match refused {
-        runtime_types::RuntimeError::PortConflict { port: reported, holder } => {
+        runtime_types::RuntimeError::PortConflict { port: reported, holder, .. } => {
             assert_eq!(reported, port);
             assert!(!holder.is_empty(), "the holder was not named");
         }

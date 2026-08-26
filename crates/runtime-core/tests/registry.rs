@@ -250,7 +250,7 @@ fn fail_policy_reports_who_holds_the_port() {
         .unwrap_err();
 
     match error {
-        RuntimeError::PortConflict { port, holder } => {
+        RuntimeError::PortConflict { port, holder, .. } => {
             assert_eq!(port, taken);
             assert!(!holder.is_empty());
         }

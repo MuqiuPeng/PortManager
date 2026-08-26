@@ -21,8 +21,21 @@ pub enum RuntimeError {
     #[error("{message}")]
     AlreadyExists { message: String },
 
-    #[error("port {port} is in use by {holder}")]
-    PortConflict { port: u16, holder: String },
+    /// Both halves of the sentence: who wanted the port and who has it.
+    ///
+    /// `wanted_by` was missing, and in a stack where two members declare the
+    /// same port the message was true of either of them — so "port 5101 is in
+    /// use by postgres" read the same whether the run stopped at its second
+    /// step or its fifth, and which step it stopped at is the thing anybody
+    /// needs. Defaulted for a client older than this field rather than made
+    /// required, since an error is the worst possible thing to fail to parse.
+    #[error("{} port {port}, which is in use by {holder}", .wanted_by.as_deref().map(|who| format!("'{who}' asked for")).unwrap_or_else(|| "asked for".to_string()))]
+    PortConflict {
+        port: u16,
+        holder: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wanted_by: Option<String>,
+    },
 
     #[error("no free port found in range {from}-{to}")]
     NoPortAvailable { from: u16, to: u16 },
@@ -121,6 +134,7 @@ mod tests {
             RuntimeError::PortConflict {
                 port: 3000,
                 holder: "dossh/main/web".to_string(),
+                wanted_by: Some("shop/main/api".to_string()),
             },
             RuntimeError::NoPortAvailable {
                 from: 3000,

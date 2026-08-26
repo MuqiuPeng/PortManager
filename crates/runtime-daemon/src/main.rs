@@ -136,7 +136,6 @@ async fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Serve one connection until the client disconnects.
 /// Bring up the stacks that asked to be brought up.
 ///
 /// One at a time rather than together: these are whole projects, and starting
@@ -167,6 +166,39 @@ async fn auto_start(runtime: Arc<Runtime>) {
     }
 }
 
+/// A request as JSON, with the values of environment variables taken out.
+///
+/// Their names say what a service needs and are worth having in a log; their
+/// values are credentials as often as not, and a log is the last place for
+/// those. So `env` becomes the list of keys it had.
+fn summarise(request: &Request) -> String {
+    let mut value = match serde_json::to_value(request) {
+        Ok(value) => value,
+        Err(_) => return "<unprintable>".to_string(),
+    };
+    redact_env(&mut value);
+    value.to_string()
+}
+
+fn redact_env(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::Object(env)) = map.get("env") {
+                let names: Vec<_> = env.keys().cloned().map(serde_json::Value::String).collect();
+                map.insert("env".to_string(), serde_json::Value::Array(names));
+            }
+            for (key, child) in map.iter_mut() {
+                if key != "env" {
+                    redact_env(child);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_env),
+        _ => {}
+    }
+}
+
+/// Serve one connection until the client disconnects.
 async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Result<()> {
     let mut events: Option<tokio::sync::broadcast::Receiver<_>> = None;
 
@@ -207,7 +239,14 @@ async fn serve(dispatcher: Arc<Dispatcher>, mut connection: Connection) -> Resul
             return Ok(()); // end of stream
         };
         let request = match serde_json::from_value::<Frame>(value.clone()) {
-            Ok(Frame::Request { id, request }) => Some((id, request)),
+            Ok(Frame::Request { id, request }) => {
+                // What a client actually sent, which until now could only be
+                // inferred from what happened next. A window and a CLI reach
+                // the same daemon by different paths, and "the CLI works and
+                // the GUI does not" is unanswerable without seeing both.
+                tracing::debug!(id, request = %summarise(&request), "request");
+                Some((id, request))
+            }
             // A frame only a server should send; ignore it rather than reply.
             Ok(_) => None,
             Err(err) => {
@@ -254,4 +293,32 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_env("LOCAL_RUNTIME_LOG")
         .unwrap_or_else(|_| EnvFilter::new("runtime_daemon=info,runtime_core=info"));
     fmt().with_env_filter(filter).with_target(false).init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The names of a service's variables are worth logging; the values are
+    /// credentials as often as not.
+    #[test]
+    fn a_logged_request_keeps_variable_names_and_drops_their_values() {
+        let request = Request::UpdateService {
+            project: None,
+            service: "web".to_string(),
+            patch: runtime_types::ServicePatch {
+                preferred_port: Some(Some(3100)),
+                env: [("DATABASE_URL".to_string(), "postgres://user:hunter2@host/db".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        };
+
+        let logged = summarise(&request);
+
+        assert!(logged.contains("DATABASE_URL"), "{logged}");
+        assert!(!logged.contains("hunter2"), "a password reached the log: {logged}");
+        assert!(logged.contains("3100"), "the port is the thing being diagnosed: {logged}");
+    }
 }

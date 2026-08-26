@@ -452,6 +452,7 @@ impl<'a> PortResolver<'a> {
             ConflictPolicy::Reuse | ConflictPolicy::Fail => Err(RuntimeError::PortConflict {
                 port: preferred,
                 holder,
+                wanted_by: Some(service.name.clone()),
             }),
 
             // `Ask` reports the conflict without acting, leaving the decision
@@ -486,6 +487,7 @@ impl<'a> PortResolver<'a> {
                 // a port. An unknown process is never killed automatically —
                 // this is the safety default the whole design rests on.
                 let holder = conflict.as_ref().ok_or_else(|| RuntimeError::PortConflict {
+                    wanted_by: Some(service.name.clone()),
                     port: preferred,
                     holder: "unknown".to_string(),
                 })?;

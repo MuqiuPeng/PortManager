@@ -225,6 +225,11 @@ button {
 .service {
   display: flex;
   align-items: center;
+  /* Wrapping rather than overflowing. These rows were written for the full
+     width of the pane and now live in a column beside the stack graph, where
+     a name, a state, a port and three buttons do not fit on one line — they
+     did not shrink, they ran off the card. */
+  flex-wrap: wrap;
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid transparent;
@@ -249,7 +254,10 @@ button {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-width: 0;
+  /* Enough to read a name by. `min-width: 0` alone let the name collapse to
+     nothing while the buttons kept their size, which is the wrong thing to
+     give up first. */
+  min-width: 7rem;
 }
 
 .service-name {
@@ -261,6 +269,9 @@ button {
   color: var(--muted-foreground);
   min-width: 56px;
   text-align: right;
+  /* Pushed to the right of whichever line it lands on, so it never sits on
+     top of the name it belongs to. */
+  margin-left: auto;
 }
 
 .service-actions {
@@ -268,6 +279,8 @@ button {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  /* Last onto the line, and onto the next one when there is no room. */
+  margin-left: auto;
 }
 
 .ghost:hover:not(:disabled) {
