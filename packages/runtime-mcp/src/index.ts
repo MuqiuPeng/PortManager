@@ -57,10 +57,73 @@ async function main(): Promise<void> {
   const client = new DaemonClient(resolveEndpoint());
   const session = await registerSession(client, identity);
 
-  const server = new McpServer({
-    name: "local-runtime",
-    version: "0.1.0",
-  });
+/**
+ * What a model needs before its first call.
+ *
+ * Written as the rules that would otherwise be discovered by being refused —
+ * a refusal is a fine teacher but an expensive one, and some of these (killing
+ * something the runtime did not start) are the kind that should never be
+ * reached by trial.
+ */
+const INSTRUCTIONS = `Local Runtime manages the services a developer runs on
+localhost — dev servers, databases, workers, containers — so that a person at
+the desktop app and an agent here see and change the same state. A service you
+start is visible in their window immediately, and survives you exiting.
+
+How to work with it:
+
+Look before acting. \`list_projects\` for what exists, \`list_stacks\` for how a
+project is brought up, \`diagnose\` for what is already wrong with the
+declarations. \`diagnose\` is worth calling in an unfamiliar project: it reports
+dependencies naming services that do not exist, two services asking for one
+port, and commands that will not resolve — each quiet until the moment it is
+expensive.
+
+**A stack is the only thing you can start.** \`run_stack\` brings up every member
+in dependency order, waiting for each to report healthy. \`start_service\` exists
+but refuses on its own and tells you which stack to run instead. This is not a
+limitation to work around: a service started outside the group it belongs to is
+missing whatever it waits for, and the failure surfaces somewhere else.
+
+A stack stops whole. If one member cannot start, the run stops there and what
+is already up stays up — half a stack is a state nobody chose.
+
+Ports. A service may declare one, or declare none. A declared port is treated
+as meant: if it is taken, the start stops and names the holder rather than
+moving quietly to another port. A service with no port declared takes any free
+one, freshly at each start. When a start fails on a port, read who holds it
+before deciding anything — it is often another project of the user's.
+
+**Never terminate what the runtime did not start.** There is no kill-by-pid
+here and there will not be. A process another supervisor owns (pm2, docker,
+launchd) is reported with the supervisor's name and its own handle, so the
+honest fix is to go through that supervisor. \`take_over_service\` and
+\`run_stack\` with freed ports are the two doors, and both refuse a process
+somebody else is watching.
+
+When something fails to start, \`get_logs\` says what it said and
+\`recent_errors\` collects them. Most failures are a missing environment
+variable or the wrong command — \`update_service\` is how you correct either,
+and correcting the port is also what lets the runtime recognise an
+already-running process as that service.
+
+Environment variables: set what a service needs through \`update_service\`, and
+do not read their values back out of the user's shell to put them somewhere
+else. Names are safe to discuss; values are usually credentials.`
+
+  const server = new McpServer(
+    {
+      name: "local-runtime",
+      version: "0.1.0",
+    },
+    // Handed to the model at handshake, before it has called anything.
+    //
+    // The tool descriptions say what each call does; none of them can say what
+    // this runtime is *for*, or which of its rules will refuse a call that
+    // looks perfectly reasonable. An agent that has only the list will try
+    // `start_service` first — that is the obvious name — and be told no.
+    { instructions: INSTRUCTIONS },
+  );
 
   registerTools(server, client, identity, session?.id);
 

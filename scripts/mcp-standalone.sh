@@ -82,8 +82,18 @@ case "$answer" in
     echo "  $answer"
     exit 1
     ;;
+  *'"instructions"'*)
+    echo "  the shipped server starts with nothing beside it, and says how to use it"
+    ;;
   *'"serverInfo"'*)
-    echo "  the shipped server starts with nothing beside it, and answered"
+    # It answered, so it loaded — but a handshake without instructions hands a
+    # model a list of tools and none of the rules that will refuse half of
+    # them. Nothing else notices this going missing: every tool still works,
+    # and the agent using them simply does not know that a service cannot be
+    # started on its own or that killing somebody else's process is refused.
+    echo "  the shipped server answered but sent no instructions"
+    echo "  a model would get the tools and none of the rules"
+    exit 1
     ;;
   # Its own words, which it can only reach by having loaded.
   *"local-runtime MCP server failed to start"*)
