@@ -48,6 +48,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-updater = "2.10.1"
+# Only for `relaunch` after an update: the new binary is on disk and the old
+# one is still running it.
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 tempfile = "3.27.0"

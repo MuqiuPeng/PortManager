@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
+import { getVersion } from "@tauri-apps/api/app";
+
 import { api, errorMessage } from "../api";
+import { UpdateCheck } from "./UpdateCheck";
 import type { DaemonInfo, PanelSettings, ScreenInfo } from "../types";
 
 /**
@@ -17,6 +20,10 @@ export function Settings() {
   const [hasPanel, setHasPanel] = useState<boolean | null>(null);
   const [screens, setScreens] = useState<ScreenInfo[]>([]);
   const [info, setInfo] = useState<DaemonInfo | null>(null);
+  // The app's own version, not the daemon's. They are two programs in one
+  // bundle and they have disagreed: v0.1.1 shipped an app calling itself
+  // 0.1.1 beside a CLI that said 0.1.0. What an update replaces is this one.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -24,6 +31,7 @@ export function Settings() {
     void (async () => {
       try {
         setHasPanel(await api.panelSupported());
+        setAppVersion(await getVersion());
         setSettings(await api.getPanelSettings());
         setScreens(await api.listScreens());
         setInfo(await api.daemonInfo());
@@ -235,6 +243,8 @@ export function Settings() {
       </section>
         </>
       )}
+
+      {appVersion && <UpdateCheck running={appVersion} />}
 
       {info && (
         <section className="settings-group">

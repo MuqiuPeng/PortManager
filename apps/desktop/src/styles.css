@@ -824,6 +824,30 @@ button {
   margin-bottom: 14px;
 }
 
+/* What the update line says while it has nothing to offer. */
+.muted {
+  color: var(--muted-foreground);
+}
+
+/* A word that acts, where a button would be too much furniture for "check
+   again" sitting inside a sentence. */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.update-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .facts {
   display: grid;
   grid-template-columns: 120px 1fr;

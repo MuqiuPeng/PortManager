@@ -40,6 +40,7 @@
     {
       "identifier": "updater:default",
       "comment": "Checking for an update and installing one. The endpoint is this repository's releases, and the payload is verified against the public key in tauri.conf.json before anything is replaced."
-    }
+    },
+    "process:allow-restart"
   ]
 }
