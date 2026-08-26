@@ -107,14 +107,16 @@ variable or the wrong command — \`update_service\` is how you correct either,
 and correcting the port is also what lets the runtime recognise an
 already-running process as that service.
 
-\`healthy\` is not always a statement about a process. For a service the
-runtime started, a dead process is \`stopped\` no matter what the port says.
-But a service reported as started elsewhere has no process the runtime owns,
-and its health is only "something answers on that port" — while its logs are
-still the ones captured from the process the runtime used to run, which has
-since exited. Read that qualifier before believing anything out of
-\`get_logs\`: a token, a URL or a port lifted from a dead instance's output is
-stale, and it fails somewhere far from here.
+**For a service started elsewhere, \`healthy\` only means the port answers.**
+The runtime owns no process there, so it checks the one half it can: something
+is listening. It is not saying that what listens is this service, and it is not
+saying the process it once knew is alive — for a service the runtime did start,
+a dead process is \`stopped\` whatever the port says, but that guarantee is
+exactly what an adopted one lacks. Its logs are worse: they are still the lines
+captured from the process the runtime used to run, and nothing new arrives,
+because there is no pipe to a process it did not spawn. Never copy a token, a
+URL or a port out of \`get_logs\` for such a service — that output can be from
+an instance that exited hours ago, and it fails somewhere far from here.
 
 Environment variables: set what a service needs through \`update_service\`, and
 do not read their values back out of the user's shell to put them somewhere
