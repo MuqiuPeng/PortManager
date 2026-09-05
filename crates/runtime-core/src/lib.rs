@@ -208,7 +208,7 @@ impl Runtime {
             .unwrap_or_else(|| path.clone());
         let root = canonicalize(&root).unwrap_or(root);
 
-        let detection = detect::detect(&root);
+        let mut detection = detect::detect(&root);
         let now = Utc::now();
         let known = self.store.find_project_by_path(&root)?;
 
@@ -268,6 +268,7 @@ impl Runtime {
             .ok_or_else(|| RuntimeError::internal("project vanished after insert"))?;
 
         let workspace = self.register_workspace(&project.id, &root)?;
+        self.expand_compose(&mut detection, &root);
 
         for detected in detection.services.iter().filter(|_| is_new) {
             let service = Service {
@@ -290,7 +291,7 @@ impl Runtime {
                 // Inference never sets this; a config file can, and that is the
                 // path it arrives by.
                 stop_signal: detected.stop_signal,
-                compose: None,
+                compose: detected.compose.clone(),
             };
             self.store.upsert_service(&service)?;
         }
@@ -1310,6 +1311,66 @@ impl Runtime {
             cursor.insert(service_id.clone(), newest);
         }
         Ok(())
+    }
+
+    /// Turn "there is a compose file" into the services it declares.
+    ///
+    /// Detection can see the file but not into it: expanding it means asking
+    /// compose, which resolves `extends`, several files, profiles and
+    /// environment interpolation. Doing that here rather than in `detect`
+    /// keeps that function a pure reading of a directory, and keeps the
+    /// answer compose's own — the dependencies come from the file, so there is
+    /// no second copy of the ordering to fall out of step.
+    ///
+    /// Leaves the single opaque service alone when compose cannot be asked.
+    /// A machine without Docker still has a compose file, and one switch that
+    /// says `docker compose up` is more use than none.
+    fn expand_compose(&self, detection: &mut crate::detect::Detection, root: &Path) {
+        let Some(index) = detection
+            .services
+            .iter()
+            .position(|service| service.name == "compose")
+        else {
+            return;
+        };
+        let Some(file) = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+            .iter()
+            .map(|name| root.join(name))
+            .find(|path| path.exists())
+        else {
+            return;
+        };
+        let Ok(declared) = self.docker.compose_declared(&file) else {
+            return;
+        };
+        if declared.is_empty() {
+            return;
+        }
+
+        let expanded: Vec<_> = declared
+            .into_iter()
+            .map(|service| crate::detect::DetectedService {
+                service_type: crate::detect::guess_type(&service.service, ""),
+                name: service.service.clone(),
+                // Not what runs it — compose does — but the honest answer to
+                // "what is this", and what a release turns it back into.
+                command: format!("docker compose up {}", service.service),
+                port: service.published_ports.first().copied(),
+                cwd: None,
+                // The file's own ordering, which is why it is worth asking
+                // compose rather than guessing from the directory.
+                depends_on: service.depends_on,
+                one_shot: false,
+                stop_signal: None,
+                compose: Some(runtime_types::ComposeBinding {
+                    file: file.clone(),
+                    service: service.service,
+                }),
+                reason: "docker compose file".to_string(),
+            })
+            .collect();
+
+        detection.services.splice(index..=index, expanded);
     }
 
     // ---- compose ----------------------------------------------------------

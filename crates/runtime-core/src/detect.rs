@@ -40,6 +40,9 @@ pub struct DetectedService {
     /// config file: which signal a program wants is not visible in a command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_signal: Option<runtime_types::StopSignal>,
+    /// Set when this came out of a compose file and should be run by compose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<runtime_types::ComposeBinding>,
     /// Why this was suggested, shown in the CLI and the add-project dialog.
     pub reason: String,
 }
@@ -117,6 +120,7 @@ fn from_config(fallback_name: &str, root: &Path, config: ProjectConfig) -> Detec
             depends_on: service.depends_on,
             one_shot: service.one_shot,
             stop_signal: service.stop_signal,
+            compose: None,
             reason: CONFIG_FILE_NAME.to_string(),
         })
         .collect();
@@ -203,6 +207,7 @@ fn detect_node(
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: format!("package.json scripts.{script}"),
         });
     }
@@ -354,6 +359,7 @@ fn detect_workspace_members(
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: "workspace member".to_string(),
         });
     }
@@ -529,6 +535,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: "manage.py".to_string(),
         });
         return;
@@ -545,6 +552,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: "fastapi/uvicorn dependency".to_string(),
         });
     } else if text.contains("flask") {
@@ -558,6 +566,7 @@ fn detect_python(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<D
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: "flask dependency".to_string(),
         });
     }
@@ -582,6 +591,7 @@ fn detect_rust(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<Det
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
             reason: "Cargo.toml".to_string(),
         });
     }
@@ -595,7 +605,14 @@ fn detect_compose(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<
         return;
     }
     frameworks.push("Docker Compose".to_string());
-    // Compose services are managed as one unit until the Docker provider lands.
+    // One service standing for the file, expanded into the services it
+    // declares by whoever has Docker to ask — `detect` reads a directory and
+    // cannot open a compose file properly, since doing that means resolving
+    // `extends`, several files, profiles and environment interpolation.
+    //
+    // Left as the answer where Docker is not there to ask: a machine without
+    // it still has a compose file, and one switch that says `docker compose
+    // up` is more use than none.
     services.push(DetectedService {
         name: "compose".to_string(),
         service_type: ServiceType::Container,
@@ -605,6 +622,7 @@ fn detect_compose(root: &Path, frameworks: &mut Vec<String>, services: &mut Vec<
         depends_on: Vec::new(),
         one_shot: false,
         stop_signal: None,
+        compose: None,
         reason: "docker compose file".to_string(),
     });
 }
