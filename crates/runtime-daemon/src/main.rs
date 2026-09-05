@@ -82,6 +82,15 @@ async fn run(args: Args) -> Result<()> {
     if corrected > 0 {
         tracing::info!(corrected, "closed out instances that died while the daemon was down");
     }
+    // Projects registered before a compose file could become more than one
+    // service. Best effort: a machine without Docker keeps what it has.
+    match runtime.migrate_compose_projects() {
+        Ok(expanded) if expanded > 0 => {
+            tracing::info!(expanded, "expanded compose projects into their services")
+        }
+        Err(err) => tracing::warn!(%err, "could not expand compose projects"),
+        _ => {}
+    }
 
     let listener = Listener::bind(&socket_path).await?;
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);

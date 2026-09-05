@@ -1672,3 +1672,94 @@ async fn a_compose_project_registers_as_its_services() {
     );
     assert_eq!(web.preferred_port, Some(7961), "the published port was dropped");
 }
+
+/// A project registered as one `compose` service is expanded on the way up.
+///
+/// Those registrations predate the file being read, and nothing about them
+/// improves on its own: the single service stays the shape that can be started
+/// and not stopped. The stack has to be rewritten in the same breath — a stack
+/// naming a service that has just been deleted is the one way this could leave
+/// somebody worse off than before it ran.
+#[tokio::test]
+async fn an_old_compose_registration_is_expanded_and_its_stack_rewritten() {
+    if !docker_available() {
+        eprintln!("skipped: docker is not available here");
+        return;
+    }
+    let compose = r#"services:
+  cache:
+    image: busybox:latest
+    command: sh -c "while true; do sleep 1; done"
+  site:
+    image: busybox:latest
+    command: sh -c "while true; do sleep 1; done"
+    depends_on: [cache]
+"#;
+    let dir = repo(&[("docker-compose.yml", compose), ("package.json", "{}")]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+
+    // Put the old shape back, as an upgraded machine would have it.
+    for service in runtime.store().list_services(&workspace.id).unwrap() {
+        runtime.delete_service(&service.id).unwrap();
+    }
+    let old = runtime
+        .add_service(
+            &workspace.id,
+            runtime_types::Service {
+                id: runtime_types::ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                name: "compose".to_string(),
+                service_type: ServiceType::Container,
+                command: "docker compose up".to_string(),
+                cwd: dir.path().to_path_buf(),
+                env: Default::default(),
+                preferred_port: None,
+                health_check: None,
+                auto_start: false,
+                conflict_policy: ConflictPolicy::Reuse,
+                depends_on: Vec::new(),
+                one_shot: false,
+                stop_signal: None,
+                compose: None,
+            },
+        )
+        .unwrap();
+    runtime
+        .set_stack(&workspace.id, "dev", vec!["compose".to_string()], None)
+        .unwrap();
+
+    let expanded = runtime.migrate_compose_projects().unwrap();
+    assert_eq!(expanded, 1, "the workspace was not expanded");
+
+    let services = runtime.store().list_services(&workspace.id).unwrap();
+    let names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
+    assert!(!names.contains(&"compose"), "the old service is still here: {names:?}");
+    assert!(names.contains(&"cache") && names.contains(&"site"), "{names:?}");
+    assert!(
+        runtime.require_service(&old.id).is_err(),
+        "the old service id still resolves"
+    );
+
+    let site = services.iter().find(|s| s.name == "site").unwrap();
+    assert_eq!(site.depends_on, vec!["cache".to_string()], "the ordering was lost");
+    assert!(site.compose.is_some(), "the new service is not bound to compose");
+
+    let stack = runtime
+        .stacks_for(&workspace.id)
+        .unwrap()
+        .into_iter()
+        .find(|stack| stack.name == "dev")
+        .expect("the stack survived");
+    assert!(
+        !stack.members.contains(&"compose".to_string()),
+        "the stack still names a service that was deleted: {:?}",
+        stack.members
+    );
+    assert!(
+        stack.members.contains(&"cache".to_string()) && stack.members.contains(&"site".to_string()),
+        "the stack lost its members: {:?}",
+        stack.members
+    );
+}

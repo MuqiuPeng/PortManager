@@ -1373,6 +1373,162 @@ impl Runtime {
         detection.services.splice(index..=index, expanded);
     }
 
+    /// Replace the single `compose` service earlier versions left behind.
+    ///
+    /// Those projects were registered when a compose file could only become
+    /// one service running `docker compose up` — a switch with no ports, no
+    /// ordering and nothing that could go in a stack, and the exact shape that
+    /// could be started and then not stopped. Registering a project now
+    /// expands the file, but that does nothing for the ones already here.
+    ///
+    /// Run at startup, and quiet: a machine without Docker, or a project whose
+    /// compose file has been moved, keeps what it has rather than losing it.
+    /// Nothing running is touched — this replaces a declaration, not a
+    /// container.
+    ///
+    /// Stacks are rewritten in the same pass. A stack naming `compose` would
+    /// otherwise name a service that no longer exists, which is the one way
+    /// this could leave somebody worse off than before it ran.
+    pub fn migrate_compose_projects(&self) -> Result<usize> {
+        let mut migrated = 0;
+        for project in self.store.list_projects()? {
+            for workspace in self.store.list_workspaces(&project.id)? {
+                match self.migrate_one_compose_workspace(&workspace) {
+                    Ok(true) => migrated += 1,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            workspace = %workspace.path.display(),
+                            %err,
+                            "could not expand a compose project"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(migrated)
+    }
+
+    fn migrate_one_compose_workspace(&self, workspace: &Workspace) -> Result<bool> {
+        let declared = self.store.list_services(&workspace.id)?;
+        // Narrow on purpose. A service somebody named `compose` themselves, or
+        // one already bound, or one whose command they have corrected, is
+        // theirs — only the thing detection used to make is replaced.
+        let Some(old) = declared.iter().find(|service| {
+            service.name == "compose"
+                && service.compose.is_none()
+                && service.command.trim() == "docker compose up"
+        }) else {
+            return Ok(false);
+        };
+
+        let Some(file) = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+            .iter()
+            .map(|name| workspace.path.join(name))
+            .find(|path| path.exists())
+        else {
+            return Ok(false);
+        };
+        let expanded = self.docker.compose_declared(&file)?;
+        if expanded.is_empty() {
+            return Ok(false);
+        }
+
+        let taken: Vec<String> = declared
+            .iter()
+            .filter(|service| service.id != old.id)
+            .map(|service| service.name.clone())
+            .collect();
+        let mut added: Vec<String> = Vec::new();
+        for service in expanded {
+            if taken.contains(&service.service) {
+                // The name is in use. Usually by the same thing: a project
+                // with a compose file often has `postgres` declared by hand as
+                // `docker compose up postgres`, which is the shape that could
+                // be started and then not stopped. Binding that is the whole
+                // point of this pass, and it keeps whatever else has been
+                // corrected about it — its port, its environment, what waits
+                // for it.
+                //
+                // Anything else with that name is somebody's own service and
+                // is left alone. A native `postgres` beside a compose file
+                // that also declares one is not the same thing, and deciding
+                // that it is would change how their service runs.
+                if let Some(existing) = declared.iter().find(|candidate| {
+                    candidate.name == service.service
+                        && candidate.compose.is_none()
+                        && is_compose_command(&candidate.command, &service.service)
+                }) {
+                    let mut bound = existing.clone();
+                    bound.compose = Some(runtime_types::ComposeBinding {
+                        file: file.clone(),
+                        service: service.service.clone(),
+                    });
+                    if bound.preferred_port.is_none() {
+                        bound.preferred_port = service.published_ports.first().copied();
+                    }
+                    self.store.upsert_service(&bound)?;
+                    self.announce_service(&bound, false);
+                    added.push(service.service);
+                }
+                continue;
+            }
+            let name = service.service.clone();
+            self.store.upsert_service(&Service {
+                id: ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                service_type: crate::detect::guess_type(&name, ""),
+                command: format!("docker compose up {name}"),
+                cwd: workspace.path.clone(),
+                env: Default::default(),
+                preferred_port: service.published_ports.first().copied(),
+                health_check: None,
+                auto_start: false,
+                conflict_policy: Default::default(),
+                depends_on: service.depends_on,
+                one_shot: false,
+                stop_signal: None,
+                compose: Some(runtime_types::ComposeBinding {
+                    file: file.clone(),
+                    service: name.clone(),
+                }),
+                name,
+            })?;
+            added.push(service.service);
+        }
+        if added.is_empty() {
+            return Ok(false);
+        }
+
+        // Before the old service goes, so a stack is never left naming
+        // something that is not there.
+        for stack in self.stacks_for(&workspace.id)? {
+            if !stack.members.iter().any(|member| member == "compose") {
+                continue;
+            }
+            let members = stack
+                .members
+                .iter()
+                .flat_map(|member| {
+                    if member == "compose" {
+                        added.clone()
+                    } else {
+                        vec![member.clone()]
+                    }
+                })
+                .collect();
+            self.set_stack(&workspace.id, &stack.name, members, None)?;
+        }
+
+        self.delete_service(&old.id)?;
+        tracing::info!(
+            workspace = %workspace.path.display(),
+            services = added.len(),
+            "expanded a compose project that had been registered as one service"
+        );
+        Ok(true)
+    }
+
     // ---- compose ----------------------------------------------------------
 
     /// Hand a declared service over to compose.
@@ -2955,6 +3111,20 @@ impl Runtime {
 
     pub fn log_cursor(&self, service_id: &ServiceId) -> Result<Option<u64>> {
         self.logs.cursor(service_id)
+    }
+}
+
+/// Whether a command is just "run this compose service".
+///
+/// `docker compose up postgres`, or the bare `docker compose up` on a service
+/// named for it. Anything more — a shell wrapper, extra flags, a different
+/// service name — is somebody having said something specific, and is not this.
+fn is_compose_command(command: &str, service: &str) -> bool {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    match words.as_slice() {
+        ["docker", "compose", "up"] => true,
+        ["docker", "compose", "up", name] => *name == service,
+        _ => false,
     }
 }
 
