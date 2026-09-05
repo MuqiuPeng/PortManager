@@ -1160,23 +1160,19 @@ impl Runtime {
         // Only the claimed ones. Everything else in the compose file is still
         // worth a row — that is how somebody finds a container to claim, and
         // how a project nobody has claimed anything in still has switches.
-        let claimed: Vec<(PathBuf, String)> = self
+        let claimed: Vec<runtime_types::ComposeBinding> = self
             .store
             .list_services(&workspace.id)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|service| {
-                let compose = service.compose?;
-                Some((compose.file.parent()?.to_path_buf(), compose.service))
-            })
+            .filter_map(|service| service.compose)
             .collect();
         let all: Vec<_> = all
             .into_iter()
             .filter(|container| {
-                !claimed.iter().any(|(dir, name)| {
-                    container.compose_service.as_deref() == Some(name.as_str())
-                        && container.working_dir.as_deref() == Some(dir.as_path())
-                })
+                !claimed
+                    .iter()
+                    .any(|binding| container_is(container, binding))
             })
             .collect();
         let live_stacks: Vec<Option<String>> = all
@@ -1803,10 +1799,11 @@ impl Runtime {
         // per service: this runs once per service per render.
         if let Some(binding) = &service.compose {
             let instance = self.store.latest_instance(&service.id)?;
-            let found = self.docker.containers().into_iter().find(|container| {
-                container.compose_service.as_deref() == Some(binding.service.as_str())
-                    && container.working_dir.as_deref() == binding.file.parent()
-            });
+            let found = self
+                .docker
+                .containers()
+                .into_iter()
+                .find(|container| container_is(container, binding));
             let Some(container) = found else {
                 // No container: never created, or removed by a `down` or by
                 // somebody at a terminal. Reported as stopped rather than as
@@ -3142,6 +3139,27 @@ impl Runtime {
     pub fn log_cursor(&self, service_id: &ServiceId) -> Result<Option<u64>> {
         self.logs.cursor(service_id)
     }
+}
+
+/// Whether this container is the one a service claimed.
+///
+/// By file rather than by directory. One directory often holds a
+/// `docker-compose.yml` and a `docker-compose.prod.yml` declaring services
+/// with the same names, and matching on the directory finds whichever comes
+/// first — on this machine that was the stopped production container, so the
+/// running service read as stopped, and then, because its port answered, as
+/// something somebody else had started.
+///
+/// The directory is still the answer for a container made by a compose old
+/// enough not to record which files it used.
+fn container_is(container: &crate::docker::ContainerInfo, binding: &runtime_types::ComposeBinding) -> bool {
+    if container.compose_service.as_deref() != Some(binding.service.as_str()) {
+        return false;
+    }
+    if !container.config_files.is_empty() {
+        return container.config_files.iter().any(|file| file == &binding.file);
+    }
+    container.working_dir.as_deref() == binding.file.parent()
 }
 
 /// Whether a command is just "run this compose service".

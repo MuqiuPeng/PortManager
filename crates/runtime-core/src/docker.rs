@@ -65,6 +65,16 @@ pub struct ContainerInfo {
     /// Directory the compose file lives in — the project root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<PathBuf>,
+    /// The compose files this container was made from.
+    ///
+    /// Which file, not just which directory. One directory often holds two —
+    /// `docker-compose.yml` and `docker-compose.prod.yml` — declaring services
+    /// with the same names, and a claim matched on the directory alone finds
+    /// whichever container comes first. On this machine that was the stopped
+    /// production one, so a running service read as stopped and then, because
+    /// its port answered, as something somebody else had started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_files: Vec<PathBuf>,
     /// `running`, `exited`, `paused`, …
     pub status: String,
     /// What it exited with, for one that has. Zero while it is running, which
@@ -311,6 +321,19 @@ fn parse_container(value: &serde_json::Value) -> Option<ContainerInfo> {
         working_dir: label("com.docker.compose.project.working_dir")
             .map(PathBuf::from)
             .map(|dir| std::fs::canonicalize(&dir).unwrap_or(dir)),
+        // Comma-separated when several were given with `-f`. Resolved, like
+        // every other path here, so it compares against what the runtime holds.
+        config_files: label("com.docker.compose.project.config_files")
+            .map(|files| {
+                files
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|file| !file.is_empty())
+                    .map(PathBuf::from)
+                    .map(|file| std::fs::canonicalize(&file).unwrap_or(file))
+                    .collect()
+            })
+            .unwrap_or_default(),
         status: value
             .pointer("/State/Status")
             .and_then(|v| v.as_str())

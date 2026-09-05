@@ -1823,3 +1823,75 @@ while true; do sleep 0.2; done\n";
         "it is in the list of what is broken"
     );
 }
+
+/// Two compose files in one directory are two projects, not one.
+///
+/// `docker-compose.yml` beside `docker-compose.prod.yml`, both declaring
+/// `postgres`. Matched on the directory, a claim finds whichever container
+/// comes first — which on the machine this was found on was the stopped
+/// production one, so a running service read as stopped and then, because its
+/// port answered, as something somebody else had started. The container that
+/// was actually running was sitting right there with the same name.
+#[tokio::test]
+async fn a_claim_finds_the_container_from_its_own_compose_file() {
+    if !docker_available() {
+        eprintln!("skipped: docker is not available here");
+        return;
+    }
+    let dev = r#"services:
+  store:
+    image: busybox:latest
+    command: sh -c "while true; do sleep 1; done"
+"#;
+    let dir = repo(&[("docker-compose.yml", dev), ("package.json", "{}")]);
+    // A project of its own, which is what makes these two rather than one:
+    // without a name compose derives it from the directory, both files land on
+    // the same project, and the second `up` replaces the first's container
+    // instead of standing beside it. Named after this directory so runs of
+    // this test do not share a project either.
+    let prod = format!(
+        "name: {}-prod\nservices:\n  store:\n    image: busybox:latest\n    command: sh -c \"exit 0\"\n",
+        dir.path().file_name().unwrap().to_string_lossy().to_lowercase().replace('.', "")
+    );
+    std::fs::write(dir.path().join("docker-compose.prod.yml"), prod).unwrap();
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+
+    // The dev one first, so the production container is the newer of the two
+    // and comes first out of `docker ps`. Without that the wrong match wins by
+    // luck and this passes whether the bug is there or not — which is how it
+    // read the first time it was written.
+    let dev_file = dir.path().join("docker-compose.yml");
+    runtime.docker().compose_up(&dev_file, "store").unwrap();
+    let prod_file = dir.path().join("docker-compose.prod.yml");
+    runtime.docker().compose_up(&prod_file, "store").unwrap();
+    runtime.docker().invalidate();
+
+    let service = runtime
+        .store()
+        .list_services(&workspace.id)
+        .unwrap()
+        .into_iter()
+        .find(|service| service.name == "store")
+        .expect("the dev file's service");
+    assert_eq!(
+        service.compose.as_ref().map(|c| c.file.as_path()),
+        Some(std::fs::canonicalize(&dev_file).unwrap().as_path()),
+        "registration bound the wrong file"
+    );
+
+    let view = runtime.service_view(&service).unwrap();
+    assert!(
+        view.status.is_live(),
+        "the running container was not found; status {:?}",
+        view.status
+    );
+    assert!(
+        view.managed,
+        "the service was disowned, and stopping it would be refused"
+    );
+
+    let _ = runtime.docker().compose_down(&dev_file);
+    let _ = runtime.docker().compose_down(&prod_file);
+}
