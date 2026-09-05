@@ -1150,6 +1150,34 @@ impl Runtime {
     /// nothing to switch on.
     fn containers_for(&self, workspace: &Workspace) -> Vec<ContainerView> {
         let all = self.docker.containers_in(&workspace.path);
+
+        // A container a service has claimed is that service, and showing it
+        // again on its own is the same thing twice with two switches: one that
+        // knows about the stack it belongs to and one that does not. The
+        // service is the better of the two, so this row goes.
+        //
+        // Only the claimed ones. Everything else in the compose file is still
+        // worth a row — that is how somebody finds a container to claim, and
+        // how a project nobody has claimed anything in still has switches.
+        let claimed: Vec<(PathBuf, String)> = self
+            .store
+            .list_services(&workspace.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|service| {
+                let compose = service.compose?;
+                Some((compose.file.parent()?.to_path_buf(), compose.service))
+            })
+            .collect();
+        let all: Vec<_> = all
+            .into_iter()
+            .filter(|container| {
+                !claimed.iter().any(|(dir, name)| {
+                    container.compose_service.as_deref() == Some(name.as_str())
+                        && container.working_dir.as_deref() == Some(dir.as_path())
+                })
+            })
+            .collect();
         let live_stacks: Vec<Option<String>> = all
             .iter()
             .filter(|container| container.is_running())
@@ -1313,6 +1341,10 @@ impl Runtime {
         if !file.exists() {
             return Err(RuntimeError::not_found("compose file", file.display().to_string()));
         }
+        // Stored resolved, for the same reason a project's path is: this is
+        // compared against a container's own directory, and one side holding
+        // `/tmp` while the other holds `/private/tmp` matches nothing.
+        let file = canonicalize(&file).unwrap_or(file);
 
         let declared = self.docker.compose_declared(&file)?;
         if !declared.iter().any(|d| d.service == compose_service) {
@@ -1526,24 +1558,11 @@ impl Runtime {
                     && container.working_dir.as_deref() == binding.file.parent()
             });
             let Some(container) = found else {
-                // Not in the container list. That is usually "no container at
-                // all" — never created, or removed by a `down` — but it is
-                // also what a container created a moment ago looks like, since
-                // the list is cached and Docker takes a beat to report a new
-                // one. Falling straight to "stopped" would make a service read
-                // as not running immediately after it was started.
-                //
-                // So the last thing compose itself said stands until something
-                // contradicts it. That record was written from compose's own
-                // answer, not guessed.
-                return Ok((
-                    instance
-                        .as_ref()
-                        .filter(|i| i.status.is_live())
-                        .map(|i| i.status)
-                        .unwrap_or(ServiceStatus::Stopped),
-                    instance,
-                ));
+                // No container: never created, or removed by a `down` or by
+                // somebody at a terminal. Reported as stopped rather than as
+                // the last thing that was true, so that a container removed
+                // out from under the runtime stops being described as running.
+                return Ok((ServiceStatus::Stopped, instance));
             };
             let status = if container.is_running() {
                 match container.health.as_deref() {

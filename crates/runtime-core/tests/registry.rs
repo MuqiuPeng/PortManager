@@ -1560,3 +1560,96 @@ fn docker_available() -> bool {
         .output()
         .is_ok_and(|out| out.status.success())
 }
+
+/// A claimed container is the service, and must not also be a row of its own.
+///
+/// Two rows for one thing is two switches, one of which knows what stack it
+/// belongs to and one of which does not. The unclaimed containers in the same
+/// file stay: that list is how somebody finds the next one to claim.
+#[tokio::test]
+async fn claiming_a_container_takes_it_off_the_container_list() {
+    if !docker_available() {
+        eprintln!("skipped: docker is not available here");
+        return;
+    }
+    let compose = r#"services:
+  taken:
+    image: busybox:latest
+    command: sh -c "while true; do sleep 1; done"
+  spare:
+    image: busybox:latest
+    command: sh -c "while true; do sleep 1; done"
+"#;
+    let dir = repo(&[("docker-compose.yml", compose), ("package.json", "{}")]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+    let file = dir.path().join("docker-compose.yml");
+
+    // Both containers have to exist for either to be a row.
+    runtime.docker().compose_up(&file, "taken").unwrap();
+    runtime.docker().compose_up(&file, "spare").unwrap();
+    runtime.docker().invalidate();
+
+    let names = |p: &runtime_types::ProjectView| -> Vec<String> {
+        p.workspaces
+            .iter()
+            .flat_map(|w| w.containers.iter())
+            .filter_map(|c| c.service.clone())
+            .collect()
+    };
+
+    // Polled, not assumed. Docker reports a container it has just made a beat
+    // after `up` returns, and the runtime caches the list on top of that — so
+    // asking once and calling an empty answer a failure would fail here for a
+    // reason that has nothing to do with what is being tested.
+    let mut before = Vec::new();
+    for _ in 0..20 {
+        runtime.docker().invalidate();
+        before = names(&runtime.get_project(&view.project.id).unwrap());
+        if before.contains(&"taken".to_string()) && before.contains(&"spare".to_string()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    assert!(
+        before.contains(&"taken".to_string()),
+        "the container never appeared before anything claimed it: {before:?}"
+    );
+
+    let service = runtime
+        .add_service(
+            &workspace.id,
+            runtime_types::Service {
+                id: runtime_types::ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                name: "taken".to_string(),
+                service_type: ServiceType::Container,
+                command: "unused".to_string(),
+                cwd: dir.path().to_path_buf(),
+                env: Default::default(),
+                preferred_port: None,
+                health_check: None,
+                auto_start: false,
+                conflict_policy: ConflictPolicy::Reuse,
+                depends_on: Vec::new(),
+                one_shot: false,
+                stop_signal: None,
+                compose: None,
+            },
+        )
+        .unwrap();
+    runtime.claim_compose(&service.id, &file, "taken").unwrap();
+
+    let after = names(&runtime.get_project(&view.project.id).unwrap());
+    assert!(
+        !after.contains(&"taken".to_string()),
+        "the claimed container is still listed separately: {after:?}"
+    );
+    assert!(
+        after.contains(&"spare".to_string()),
+        "claiming one container removed the others too: {after:?}"
+    );
+
+    let _ = runtime.docker().compose_down(&file);
+}

@@ -302,7 +302,15 @@ fn parse_container(value: &serde_json::Value) -> Option<ContainerInfo> {
             .to_string(),
         compose_project: label("com.docker.compose.project"),
         compose_service: label("com.docker.compose.service"),
-        working_dir: label("com.docker.compose.project.working_dir").map(PathBuf::from),
+        // Resolved, because everything it is compared against is. A project's
+        // path is canonicalised when it is registered — `/tmp` and
+        // `/private/tmp` must not be two projects — while the label holds
+        // whatever directory compose was invoked from. On macOS those differ
+        // for anything under `/tmp` or `/var`, and the two never matched: the
+        // container belonged to a directory the runtime had never heard of.
+        working_dir: label("com.docker.compose.project.working_dir")
+            .map(PathBuf::from)
+            .map(|dir| std::fs::canonicalize(&dir).unwrap_or(dir)),
         status: value
             .pointer("/State/Status")
             .and_then(|v| v.as_str())
