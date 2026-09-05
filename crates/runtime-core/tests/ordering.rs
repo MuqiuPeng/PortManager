@@ -113,6 +113,7 @@ fn declare(
         depends_on: depends_on.iter().map(|d| d.to_string()).collect(),
         one_shot,
         stop_signal: None,
+        compose: None,
     };
     runtime.add_service(workspace, service).unwrap()
 }

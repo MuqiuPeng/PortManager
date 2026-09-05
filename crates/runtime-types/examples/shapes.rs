@@ -63,6 +63,7 @@ fn main() {
         depends_on: Vec::new(),
         one_shot: false,
         stop_signal: None,
+        compose: None,
     };
 
     out.insert(
@@ -101,6 +102,7 @@ fn main() {
                 exit_code: None,
                 started_by: StartedBy::ClaudeCode,
                 owner_session: None,
+                container_id: None,
             }),
             actual_port: Some(3000),
             url: Some("http://localhost:3000".to_string()),
@@ -133,6 +135,7 @@ fn main() {
                 exit_code: Some(0),
                 started_by: StartedBy::Unknown,
                 owner_session: None,
+                container_id: None,
             }),
             actual_port: None,
             url: None,

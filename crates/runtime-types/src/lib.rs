@@ -14,9 +14,9 @@ pub use error::{Result, RuntimeError};
 pub use id::{InstanceId, ProjectId, ServiceId, SessionId, StackId, WorkspaceId};
 pub use model::{
     ANY_PORT,
-    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, Protocol, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, StartedBy, Stack, StopSignal, Workspace,
+    AgentSession, ConflictPolicy, HealthCheck, LogLine, LogStream, PortLease, PortLeaseStatus, Project, Protocol, RuntimeInstance, Service, ServicePatch, ServiceStatus, ServiceType, ComposeBinding, StartedBy, Stack, StopSignal, Workspace,
 };
 pub use view::{
     FlowNode,
-    AdoptOutcome, CommandSource, ContainerView, DaemonInfo, ExternalService, Failure, Finding, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, SupervisedView, StackView, WorkspaceView,
+    AdoptOutcome, CommandSource, ComposeService, ContainerView, DaemonInfo, ExternalService, Failure, Finding, HealthReport, LaunchObservation, LaunchState, PortOwner, PortReservation, PortStatus, ProjectView, ServiceView, StartOutcome, SupervisedView, StackView, WorkspaceView,
 };

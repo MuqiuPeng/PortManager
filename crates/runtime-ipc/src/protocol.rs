@@ -237,6 +237,43 @@ pub enum Request {
         /// start | stop | restart
         action: String,
     },
+    /// Hand a declared service over to `docker compose`.
+    ///
+    /// Manual because detection cannot always tell: a project that runs its
+    /// database through compose and everything else natively already has a
+    /// service somebody declared and corrected, and re-detecting it would
+    /// throw those corrections away.
+    ClaimCompose {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        service: String,
+        /// The compose file, absolute or relative to the workspace.
+        file: PathBuf,
+        /// Its name inside that file, which need not be the service's name.
+        compose_service: String,
+    },
+    /// Give it back: the service becomes a command the runtime spawns.
+    ReleaseCompose {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        service: String,
+    },
+    /// Remove a compose project's containers and network, keeping volumes.
+    ///
+    /// Separate from stopping because it is not reversible in the way stopping
+    /// is, and whole-project because that is what `down` is defined over.
+    ComposeDown {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        /// Any service bound to the file; the file is what comes down.
+        service: String,
+    },
+    /// What a compose file declares, without starting anything.
+    ComposeDeclared {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        file: PathBuf,
+    },
     GetContainerLogs {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -326,6 +363,8 @@ pub enum ResponseBody {
     Workspaces { items: Vec<Workspace> },
     Workspace(Workspace),
     Services { items: Vec<ServiceView> },
+    /// What a compose file declares, before anything is claimed or started.
+    ComposeServices { items: Vec<runtime_types::ComposeService> },
     Config(ProjectConfig),
     Container(ContainerView),
     Service(ServiceView),

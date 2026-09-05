@@ -25,7 +25,7 @@ pub mod store;
 pub mod supervisors;
 pub mod supervisor;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use runtime_adapter::{PlatformAdapter, ProcessIdentity};
 use runtime_types::{
-    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Stack, StackId, FlowNode, StackView, Workspace, WorkspaceId, WorkspaceView,
+    AdoptOutcome, CommandSource, ConflictPolicy, ContainerView, DaemonInfo, ExternalService, Failure, Finding, LaunchObservation, LogLine, LogStream, PortOwner, PortStatus, Project, ProjectId, ProjectView, Result, RuntimeError, RuntimeInstance, Service, ServiceId, ServiceStatus, ServiceView, StartedBy, SupervisedView, Stack, StackId, FlowNode, StackView, Workspace, WorkspaceId, WorkspaceView,
 };
 
 use crate::docker::Docker;
@@ -55,6 +55,12 @@ pub struct Runtime {
     /// Resolving one port walks the process table, so answering "what is
     /// listening" for a whole machine would do it dozens of times over.
     port_owners: Mutex<Option<(Instant, Vec<PortOwner>)>>,
+    /// The timestamp each compose service's log has been read up to.
+    ///
+    /// In memory rather than in the database: it is a position in something
+    /// Docker holds, and losing it on a restart costs one re-read, not any
+    /// correctness.
+    compose_log_cursor: Mutex<HashMap<ServiceId, String>>,
     /// Launches the runtime was told about but did not perform.
     launches: crate::launch::LaunchLog,
     events: EventBus,
@@ -112,6 +118,7 @@ impl Runtime {
             store,
             logs: Arc::new(LogStore::default()),
             supervisor: Arc::new(Supervisor::new()),
+            compose_log_cursor: Mutex::new(HashMap::new()),
             docker: Arc::new(Docker::new()),
             pm2: Arc::new(crate::pm2::Pm2::new()),
             port_owners: Mutex::new(None),
@@ -283,6 +290,7 @@ impl Runtime {
                 // Inference never sets this; a config file can, and that is the
                 // path it arrives by.
                 stop_signal: detected.stop_signal,
+                compose: None,
             };
             self.store.upsert_service(&service)?;
         }
@@ -1208,6 +1216,175 @@ impl Runtime {
         })
     }
 
+    /// Pull anything new out of a compose service's container into the log
+    /// store.
+    ///
+    /// Incremental by timestamp: compose can be asked for everything after a
+    /// moment, and the last line's own timestamp is that moment. Without it
+    /// every read would re-append the whole log and the store would grow by a
+    /// copy of itself each time somebody looked.
+    ///
+    /// Quiet on failure. Docker being down is a reason to have no new lines,
+    /// not a reason to refuse to show the ones already held.
+    pub(crate) fn pull_compose_logs(&self, service_id: &ServiceId) -> Result<()> {
+        let Some(service) = self.store.get_service(service_id)? else {
+            return Ok(());
+        };
+        let Some(binding) = service.compose.as_ref() else {
+            return Ok(());
+        };
+
+        let since = self
+            .compose_log_cursor
+            .lock()
+            .ok()
+            .and_then(|cursor| cursor.get(service_id).cloned());
+
+        let Ok(lines) = self.docker.compose_logs(
+            &binding.file,
+            &binding.service,
+            since.as_deref(),
+            logs::MAX_READ_LINES,
+        ) else {
+            return Ok(());
+        };
+
+        // Two names for one thing: `seen` stays at where the last read
+        // finished, and `newest` moves as lines are taken.
+        let seen = since.clone();
+        let mut newest = since;
+        for line in lines {
+            // `service-1  | 2026-09-05T01:39:29.173Z the message`
+            let body = line.split_once('|').map(|(_, rest)| rest).unwrap_or(&line).trim_start();
+            let (stamp, message) = match body.split_once(' ') {
+                Some((stamp, message)) if stamp.contains('T') => (Some(stamp), message),
+                _ => (None, body),
+            };
+            if let Some(stamp) = stamp {
+                // `--since` includes the moment it is given, so the line that
+                // set the cursor comes back every time. Compared rather than
+                // matched for equality: docker prints a fixed-width RFC3339,
+                // which orders the same as its text, and one line arriving out
+                // of order would otherwise reopen the whole log.
+                if let Some(seen) = seen.as_deref() {
+                    if stamp <= seen {
+                        continue;
+                    }
+                }
+                newest = Some(stamp.to_string());
+            }
+            // Docker merges the container's two streams and does not say which
+            // was which, so claiming one would be inventing the distinction.
+            self.logs.append(service_id, LogStream::Stdout, message)?;
+        }
+
+        if let (Ok(mut cursor), Some(newest)) = (self.compose_log_cursor.lock(), newest) {
+            cursor.insert(service_id.clone(), newest);
+        }
+        Ok(())
+    }
+
+    // ---- compose ----------------------------------------------------------
+
+    /// Hand a declared service over to compose.
+    ///
+    /// The manual half of the claim. Detection can propose these from a
+    /// compose file, but a project that runs its database through compose and
+    /// everything else natively has a service somebody already declared, and
+    /// re-declaring it would lose whatever they had corrected about it. This
+    /// binds the one they have.
+    ///
+    /// The compose service has to exist in the file. A binding that names
+    /// nothing is a service that will fail at the moment somebody tries to
+    /// start it, with an error about a file rather than about the mistake.
+    pub fn claim_compose(
+        &self,
+        service_id: &ServiceId,
+        file: &Path,
+        compose_service: &str,
+    ) -> Result<ServiceView> {
+        let mut service = self.require_service(service_id)?;
+        let file = if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            let workspace = self.require_workspace(&service.workspace_id)?;
+            workspace.path.join(file)
+        };
+        if !file.exists() {
+            return Err(RuntimeError::not_found("compose file", file.display().to_string()));
+        }
+
+        let declared = self.docker.compose_declared(&file)?;
+        if !declared.iter().any(|d| d.service == compose_service) {
+            let names: Vec<&str> = declared.iter().map(|d| d.service.as_str()).collect();
+            return Err(RuntimeError::invalid(format!(
+                "'{compose_service}' is not in {}; it declares {}",
+                file.display(),
+                if names.is_empty() { "nothing".to_string() } else { names.join(", ") }
+            )));
+        }
+
+        service.compose = Some(runtime_types::ComposeBinding {
+            file,
+            service: compose_service.to_string(),
+        });
+        self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
+        self.service_view(&service)
+    }
+
+    /// Stop claiming a service through compose; it becomes a command again.
+    pub fn release_compose(&self, service_id: &ServiceId) -> Result<ServiceView> {
+        let mut service = self.require_service(service_id)?;
+        service.compose = None;
+        self.store.upsert_service(&service)?;
+        self.announce_service(&service, false);
+        self.service_view(&service)
+    }
+
+    /// Take a compose project down: its containers and network, removed.
+    ///
+    /// Separate from stopping, and deliberately harder to reach. A stop is
+    /// reversible in seconds; this throws the containers away. Named volumes
+    /// are kept — a database deleted by something the person read as "stop"
+    /// is not a trade the runtime gets to make on their behalf.
+    ///
+    /// Whole-project rather than per-service because that is what `down` is
+    /// defined over: the network is shared, and taking it out from under the
+    /// others is not something one service can ask for.
+    pub fn compose_down(&self, service_id: &ServiceId) -> Result<Vec<ServiceView>> {
+        let service = self.require_service(service_id)?;
+        let binding = service.compose.clone().ok_or_else(|| {
+            RuntimeError::invalid(format!(
+                "'{}' is not a compose service; nothing to take down",
+                service.name
+            ))
+        })?;
+
+        self.docker.compose_down(&binding.file)?;
+        self.invalidate_port_owners();
+
+        // Every service in this workspace bound to the same file has just
+        // lost its container, and saying so about one of them would leave the
+        // rest reading as running.
+        let mut touched = Vec::new();
+        for other in self.store.list_services(&service.workspace_id)? {
+            if other.compose.as_ref().map(|c| &c.file) == Some(&binding.file) {
+                self.announce_service(&other, false);
+                touched.push(self.service_view(&other)?);
+            }
+        }
+        Ok(touched)
+    }
+
+    /// What a compose file declares, without starting anything.
+    ///
+    /// For an agent or a person deciding what to claim, and for detection to
+    /// propose services with the dependencies the file already states.
+    pub fn compose_declared(&self, file: &Path) -> Result<Vec<docker::ComposeDeclared>> {
+        self.docker.compose_declared(file)
+    }
+
     pub fn container_logs(&self, name: &str, max_lines: usize) -> Result<Vec<String>> {
         self.docker.logs(name, max_lines.clamp(1, logs::MAX_READ_LINES))
     }
@@ -1339,6 +1516,60 @@ impl Runtime {
         &self,
         service: &Service,
     ) -> Result<(ServiceStatus, Option<RuntimeInstance>)> {
+        // Asked of Docker, because the recorded pid is zero and deliberately
+        // so. Read from the cached container list rather than by shelling out
+        // per service: this runs once per service per render.
+        if let Some(binding) = &service.compose {
+            let instance = self.store.latest_instance(&service.id)?;
+            let found = self.docker.containers().into_iter().find(|container| {
+                container.compose_service.as_deref() == Some(binding.service.as_str())
+                    && container.working_dir.as_deref() == binding.file.parent()
+            });
+            let Some(container) = found else {
+                // Not in the container list. That is usually "no container at
+                // all" — never created, or removed by a `down` — but it is
+                // also what a container created a moment ago looks like, since
+                // the list is cached and Docker takes a beat to report a new
+                // one. Falling straight to "stopped" would make a service read
+                // as not running immediately after it was started.
+                //
+                // So the last thing compose itself said stands until something
+                // contradicts it. That record was written from compose's own
+                // answer, not guessed.
+                return Ok((
+                    instance
+                        .as_ref()
+                        .filter(|i| i.status.is_live())
+                        .map(|i| i.status)
+                        .unwrap_or(ServiceStatus::Stopped),
+                    instance,
+                ));
+            };
+            let status = if container.is_running() {
+                match container.health.as_deref() {
+                    Some("unhealthy") => ServiceStatus::Unhealthy,
+                    Some("starting") => ServiceStatus::Starting,
+                    _ => ServiceStatus::Healthy,
+                }
+            } else if container.exit_code == 0 {
+                ServiceStatus::Stopped
+            } else if instance
+                .as_ref()
+                .is_some_and(|i| i.status == ServiceStatus::Stopped)
+            {
+                // Asked to stop, and it did. Docker reports the signal that
+                // ended it — 143 for SIGTERM, 137 for SIGKILL — and reading
+                // those as failures would put every service somebody switched
+                // off into the list of what is broken.
+                ServiceStatus::Stopped
+            } else {
+                // Exited on its own, and not well. Saying "stopped" here would
+                // keep it out of every list of what is broken.
+                ServiceStatus::Failed
+            };
+            return Ok((status, instance));
+        }
+
         let Some(mut instance) = self.store.latest_instance(&service.id)? else {
             return Ok((ServiceStatus::Stopped, None));
         };
@@ -2240,6 +2471,7 @@ impl Runtime {
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
         };
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);
@@ -2414,6 +2646,7 @@ impl Runtime {
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
         };
         self.store.upsert_service(&service)?;
         self.announce_service(&service, false);
@@ -2588,6 +2821,13 @@ impl Runtime {
         max_lines: usize,
         since_seq: Option<u64>,
     ) -> Result<Vec<LogLine>> {
+        // A container writes to Docker, not to a pipe the runtime holds, so
+        // its output has to be fetched. Fetched *into* the log store rather
+        // than returned around it, so that everything reading logs — the
+        // cursor a caller pages with, `recent_errors`, the window — keeps
+        // working off one source instead of two that disagree.
+        self.pull_compose_logs(service_id)?;
+
         let lines = self.logs.read(service_id, max_lines, since_seq)?;
         if !lines.is_empty() {
             return Ok(lines);

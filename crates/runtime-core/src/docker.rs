@@ -67,6 +67,10 @@ pub struct ContainerInfo {
     pub working_dir: Option<PathBuf>,
     /// `running`, `exited`, `paused`, …
     pub status: String,
+    /// What it exited with, for one that has. Zero while it is running, which
+    /// is why this is only worth reading alongside the status.
+    #[serde(default)]
+    pub exit_code: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
     /// Host ports this container publishes.
@@ -304,6 +308,10 @@ fn parse_container(value: &serde_json::Value) -> Option<ContainerInfo> {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
+        exit_code: value
+            .pointer("/State/ExitCode")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32,
         health: value
             .pointer("/State/Health/Status")
             .and_then(|v| v.as_str())
@@ -392,6 +400,341 @@ fn run(docker: &PathBuf, args: &[&str]) -> Option<String> {
         return None;
     }
     String::from_utf8(output).ok()
+}
+
+/// How long a compose command may take.
+///
+/// Longer than [`COMMAND_TIMEOUT`], which is for questions: `up` pulls images,
+/// creates networks and waits on `depends_on: service_healthy` before it comes
+/// back, and on a cold project that is minutes rather than seconds.
+const COMPOSE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// One compose service, as compose itself reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposeState {
+    pub service: String,
+    pub container_id: String,
+    /// `running`, `exited`, `created`, …
+    pub state: String,
+    pub exit_code: i32,
+    /// `healthy`, `unhealthy`, `starting`, or empty for no healthcheck.
+    pub health: String,
+    pub published_ports: Vec<u16>,
+}
+
+impl ComposeState {
+    pub fn is_running(&self) -> bool {
+        self.state == "running"
+    }
+}
+
+/// A compose service as declared, read without starting anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposeDeclared {
+    pub service: String,
+    /// Services it waits for, from the file's own `depends_on`.
+    pub depends_on: Vec<String>,
+    pub published_ports: Vec<u16>,
+    pub has_healthcheck: bool,
+}
+
+/// What a compose command said, including the half that matters when it failed.
+struct ComposeOutput {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+}
+
+impl Docker {
+    /// Read a compose file's declarations without running anything.
+    ///
+    /// This is how a compose project becomes services with an ordering rather
+    /// than one opaque `docker compose up`. The dependencies are the file's
+    /// own: there is no second place to write them down, and no chance for the
+    /// two to disagree.
+    pub fn compose_declared(&self, file: &Path) -> Result<Vec<ComposeDeclared>> {
+        let out = self.compose(file, &["config", "--format", "json"], COMMAND_TIMEOUT)?;
+        if !out.ok {
+            return Err(RuntimeError::invalid(first_useful_line(&out.stderr)));
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out.stdout).map_err(|err| {
+                RuntimeError::invalid(format!("could not read the compose file: {err}"))
+            })?;
+        let mut declared = Vec::new();
+        let Some(services) = parsed.get("services").and_then(|v| v.as_object()) else {
+            return Ok(declared);
+        };
+        for (name, body) in services {
+            let depends_on = match body.get("depends_on") {
+                // The long form, which is what carries the condition.
+                Some(serde_json::Value::Object(map)) => map.keys().cloned().collect(),
+                Some(serde_json::Value::Array(list)) => list
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let published_ports = body
+                .get("ports")
+                .and_then(|v| v.as_array())
+                .map(|ports| {
+                    ports
+                        .iter()
+                        .filter_map(|p| p.get("published"))
+                        .filter_map(port_number)
+                        .collect()
+                })
+                .unwrap_or_default();
+            declared.push(ComposeDeclared {
+                service: name.clone(),
+                depends_on,
+                published_ports,
+                has_healthcheck: body.get("healthcheck").is_some(),
+            });
+        }
+        declared.sort_by(|a, b| a.service.cmp(&b.service));
+        Ok(declared)
+    }
+
+    /// What compose says is there right now, running or not.
+    pub fn compose_ps(&self, file: &Path) -> Result<Vec<ComposeState>> {
+        let out = self.compose(file, &["ps", "-a", "--format", "json"], COMMAND_TIMEOUT)?;
+        if !out.ok {
+            return Err(RuntimeError::invalid(first_useful_line(&out.stderr)));
+        }
+        // One JSON object per line rather than one array, which is what this
+        // prints and what a plain `from_str` chokes on.
+        Ok(out
+            .stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .map(|v| ComposeState {
+                service: text(&v, "Service"),
+                container_id: text(&v, "ID"),
+                state: text(&v, "State"),
+                exit_code: v.get("ExitCode").and_then(|c| c.as_i64()).unwrap_or(0) as i32,
+                health: text(&v, "Health"),
+                published_ports: v
+                    .get("Publishers")
+                    .and_then(|p| p.as_array())
+                    .map(|list| {
+                        let mut ports: Vec<u16> = list
+                            .iter()
+                            .filter_map(|p| p.get("PublishedPort"))
+                            .filter_map(port_number)
+                            .filter(|port| *port != 0)
+                            .collect();
+                        ports.sort_unstable();
+                        ports.dedup();
+                        ports
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Bring one compose service up, in the background.
+    ///
+    /// `up -d` returns as soon as it has started what it was asked for, having
+    /// waited on whatever that service declares it depends on. Its exit status
+    /// says the command worked, *not* that the service is up: a container that
+    /// starts and immediately dies is a successful `up`. The caller has to ask
+    /// [`compose_ps`](Self::compose_ps) what actually happened.
+    pub fn compose_up(&self, file: &Path, service: &str) -> Result<()> {
+        let out = self.compose(file, &["up", "-d", service], COMPOSE_TIMEOUT)?;
+        self.invalidate();
+        if out.ok {
+            return Ok(());
+        }
+        Err(RuntimeError::io(format!(
+            "`docker compose up {service}` failed: {}",
+            first_useful_line(&out.stderr)
+        )))
+    }
+
+    /// Stop one compose service, leaving the container in place.
+    ///
+    /// The default, because it is the reversible one: the container keeps its
+    /// filesystem and its identity, and starting it again is quick. Throwing
+    /// the container away is [`compose_down`](Self::compose_down), which is a
+    /// separate thing to ask for.
+    pub fn compose_stop(&self, file: &Path, service: &str) -> Result<()> {
+        let out = self.compose(file, &["stop", service], COMPOSE_TIMEOUT)?;
+        self.invalidate();
+        if out.ok {
+            return Ok(());
+        }
+        Err(RuntimeError::io(format!(
+            "`docker compose stop {service}` failed: {}",
+            first_useful_line(&out.stderr)
+        )))
+    }
+
+    /// Take the whole project down: containers and its network, removed.
+    ///
+    /// Whole rather than per-service on purpose — `down` is defined over a
+    /// project, and the network is shared. Volumes are kept: a `down` that
+    /// silently deleted a database would be a data loss nobody asked for, and
+    /// `docker compose down -v` is there for somebody who means it.
+    pub fn compose_down(&self, file: &Path) -> Result<()> {
+        let out = self.compose(file, &["down"], COMPOSE_TIMEOUT)?;
+        self.invalidate();
+        if out.ok {
+            return Ok(());
+        }
+        Err(RuntimeError::io(format!(
+            "`docker compose down` failed: {}",
+            first_useful_line(&out.stderr)
+        )))
+    }
+
+    /// A compose service's output, optionally only what is new.
+    ///
+    /// `since` takes an RFC3339 timestamp, which is how this stays incremental
+    /// rather than re-reading the whole log every time it is asked.
+    pub fn compose_logs(
+        &self,
+        file: &Path,
+        service: &str,
+        since: Option<&str>,
+        tail: usize,
+    ) -> Result<Vec<String>> {
+        let tail = tail.to_string();
+        let mut args: Vec<&str> = vec!["logs", "--no-color", "--timestamps", "--tail", &tail];
+        if let Some(since) = since {
+            args.push("--since");
+            args.push(since);
+        }
+        args.push(service);
+        let out = self.compose(file, &args, COMMAND_TIMEOUT)?;
+        if !out.ok {
+            return Err(RuntimeError::io(first_useful_line(&out.stderr)));
+        }
+        Ok(out.stdout.lines().map(str::to_string).collect())
+    }
+
+    /// Run one `docker compose -f <file> …`.
+    ///
+    /// Always `-f` with an absolute path: nothing here should depend on which
+    /// directory the daemon was started in, and the daemon's directory is not
+    /// the project's.
+    fn compose(&self, file: &Path, args: &[&str], timeout: Duration) -> Result<ComposeOutput> {
+        let docker = docker_binary()
+            .ok_or_else(|| RuntimeError::unsupported("docker is not installed"))?;
+        let file = file.to_string_lossy().to_string();
+        let mut full: Vec<&str> = vec!["compose", "-f", &file];
+        full.extend_from_slice(args);
+        run_capturing(&docker, &full, timeout)
+            .ok_or_else(|| RuntimeError::io("docker did not answer".to_string()))
+    }
+}
+
+/// A JSON string field, or empty.
+fn text(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// A port from compose's JSON, which writes them as numbers in one place and
+/// strings in another.
+fn port_number(value: &serde_json::Value) -> Option<u16> {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64().and_then(|n| u16::try_from(n).ok()),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// The line of a compose failure worth showing.
+///
+/// Compose narrates progress on stderr — "Container x Creating", "Network y
+/// Created" — and then says what went wrong. Handing all of it to a caller
+/// buries the sentence they need under the ones they do not.
+fn first_useful_line(stderr: &str) -> String {
+    let noise = |line: &str| {
+        let line = line.trim();
+        line.is_empty()
+            || line.ends_with("Creating")
+            || line.ends_with("Created")
+            || line.ends_with("Starting")
+            || line.ends_with("Started")
+            || line.ends_with("Stopping")
+            || line.ends_with("Stopped")
+            || line.ends_with("Waiting")
+            || line.ends_with("Healthy")
+            || line.ends_with("Removing")
+            || line.ends_with("Removed")
+            || line.ends_with("Running")
+    };
+    stderr
+        .lines()
+        .rev()
+        .find(|line| !noise(line))
+        .map(|line| line.trim().to_string())
+        .unwrap_or_else(|| "no reason given".to_string())
+}
+
+/// Like [`run`], but keeps stderr and reports failure rather than discarding it.
+///
+/// `run` returns `None` for everything — not installed, timed out, exited
+/// non-zero — which is all a port lookup needs. Starting somebody's database
+/// is not: the difference between "docker is not running" and "port 5432 is
+/// already allocated" is the whole of what the person needs to read.
+fn run_capturing(docker: &PathBuf, args: &[&str], timeout: Duration) -> Option<ComposeOutput> {
+    let mut command = Command::new(docker);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    runtime_adapter::without_a_console(&mut command);
+    let mut child = command.spawn().ok()?;
+
+    // Both pipes drained on their own threads. Waiting for exit while a pipe
+    // fills is the deadlock this file already learned about once.
+    let mut out = child.stdout.take()?;
+    let mut err = child.stderr.take()?;
+    let out_reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut out, &mut buffer);
+        buffer
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut err, &mut buffer);
+        buffer
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = out_reader.join();
+                let _ = err_reader.join();
+                tracing::debug!(?args, "compose command timed out");
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => {
+                let _ = out_reader.join();
+                let _ = err_reader.join();
+                return None;
+            }
+        }
+    };
+
+    Some(ComposeOutput {
+        ok: status.success(),
+        stdout: String::from_utf8_lossy(&out_reader.join().ok()?).to_string(),
+        stderr: String::from_utf8_lossy(&err_reader.join().ok()?).to_string(),
+    })
 }
 
 fn docker_binary() -> Option<PathBuf> {

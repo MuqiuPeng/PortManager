@@ -628,3 +628,30 @@ fn discovery_line(item: &Discovery) -> String {
     }
     line
 }
+
+/// What a compose file declares, before anything is claimed.
+///
+/// The dependencies are shown because they are the reason to read this at all:
+/// they are the ordering the file already states, and the thing a person is
+/// about to avoid writing down a second time.
+pub fn compose_services(items: &[runtime_types::ComposeService]) -> String {
+    if items.is_empty() {
+        return "this compose file declares no services".to_string();
+    }
+    let mut out = String::new();
+    for service in items {
+        out.push_str(&format!("{:<20}", service.name));
+        if !service.ports.is_empty() {
+            let ports: Vec<String> = service.ports.iter().map(|p| format!(":{p}")).collect();
+            out.push_str(&format!(" {}", ports.join(" ")));
+        }
+        if service.has_healthcheck {
+            out.push_str("  healthcheck");
+        }
+        if !service.depends_on.is_empty() {
+            out.push_str(&format!("\n  after   {}", service.depends_on.join(", ")));
+        }
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}

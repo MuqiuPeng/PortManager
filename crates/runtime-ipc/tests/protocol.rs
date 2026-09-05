@@ -30,6 +30,7 @@ fn service() -> Service {
         depends_on: vec!["db".to_string()],
         one_shot: false,
         stop_signal: None,
+        compose: None,
     }
 }
 

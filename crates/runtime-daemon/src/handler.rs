@@ -186,6 +186,7 @@ impl Dispatcher {
                     depends_on: config.depends_on,
                     one_shot: config.one_shot,
                     stop_signal: config.stop_signal,
+                    compose: None,
                 };
                 let created = runtime.add_service(&workspace.id, service)?;
                 Ok(ResponseBody::Service(runtime.service_view(&created)?))
@@ -357,6 +358,57 @@ impl Dispatcher {
                 Ok(ResponseBody::Container(
                     runtime.control_container(&name, action)?,
                 ))
+            }
+
+            Request::ClaimCompose {
+                project,
+                service,
+                file,
+                compose_service,
+            } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Service(runtime.claim_compose(
+                    &service.id,
+                    &file,
+                    &compose_service,
+                )?))
+            }
+
+            Request::ReleaseCompose { project, service } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Service(runtime.release_compose(&service.id)?))
+            }
+
+            Request::ComposeDown { project, service } => {
+                let service = self.resolve_service(project.as_deref(), &service)?;
+                Ok(ResponseBody::Services {
+                    items: runtime.compose_down(&service.id)?,
+                })
+            }
+
+            Request::ComposeDeclared { project, file } => {
+                // Relative to the workspace, like every other path a caller
+                // gives: the daemon's directory is nobody's project root.
+                let file = if file.is_absolute() {
+                    file
+                } else {
+                    match project.as_deref() {
+                        Some(selector) => self.workspace_to_run_in(selector)?.path.join(file),
+                        None => file,
+                    }
+                };
+                Ok(ResponseBody::ComposeServices {
+                    items: runtime
+                        .compose_declared(&file)?
+                        .into_iter()
+                        .map(|d| runtime_types::ComposeService {
+                            name: d.service,
+                            depends_on: d.depends_on,
+                            ports: d.published_ports,
+                            has_healthcheck: d.has_healthcheck,
+                        })
+                        .collect(),
+                })
             }
 
             Request::GetContainerLogs { name, max_lines } => {

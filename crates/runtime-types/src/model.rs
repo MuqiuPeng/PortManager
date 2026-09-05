@@ -116,6 +116,37 @@ pub struct Service {
     /// default, and so a patch can clear it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_signal: Option<StopSignal>,
+    /// Set when this is a compose service rather than a process to spawn.
+    ///
+    /// Everything about starting, stopping, reading and watching it goes
+    /// through `docker compose` instead of through a pid, because there is no
+    /// pid here that means anything on this side of Docker's VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<ComposeBinding>,
+}
+
+/// A service the runtime drives through `docker compose` rather than by
+/// spawning it.
+///
+/// The pid of `docker compose up` is not the service: that command starts the
+/// container, reports what it did and exits, and what ends up holding the port
+/// is Docker's own process. A runtime that recorded the launcher lost the
+/// service the moment it returned — which is what happened, on this machine,
+/// to every container it had been asked to start.
+///
+/// So the claim is by name rather than by process. Compose labels every
+/// container it makes with its project's directory and the service's name, and
+/// those two are what the runtime already knows a service by. That claim
+/// survives what a pid does not: the container restarting, Docker restarting,
+/// the machine restarting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComposeBinding {
+    /// The compose file, absolute. Passed as `-f`, so nothing depends on which
+    /// directory the daemon happens to be in.
+    pub file: PathBuf,
+    /// The service's name inside that file, which is not always the name the
+    /// runtime knows it by.
+    pub service: String,
 }
 
 /// Which signal a graceful stop sends.
@@ -281,6 +312,13 @@ pub struct RuntimeInstance {
     pub started_by: StartedBy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_session: Option<SessionId>,
+    /// The container this instance is, for a compose service.
+    ///
+    /// Present instead of a meaningful `pid`: a container's pid belongs to
+    /// Docker's virtual machine and names nothing the host can signal, so for
+    /// these the id is the identity and `pid` is left at zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -562,6 +600,7 @@ mod tests {
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
         };
 
         ServicePatch {
@@ -598,6 +637,7 @@ mod tests {
             depends_on: Vec::new(),
             one_shot: false,
             stop_signal: None,
+            compose: None,
         };
 
         ServicePatch {

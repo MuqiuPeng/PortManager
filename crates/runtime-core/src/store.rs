@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS services (
     depends_on      TEXT NOT NULL DEFAULT '[]',
     one_shot        INTEGER NOT NULL DEFAULT 0,
     stop_signal     TEXT,
+    compose_file    TEXT,
+    compose_service TEXT,
     UNIQUE(workspace_id, name)
 );
 
@@ -85,7 +87,8 @@ CREATE TABLE IF NOT EXISTS instances (
     stopped_at         TEXT,
     exit_code          INTEGER,
     started_by         TEXT NOT NULL DEFAULT 'unknown',
-    owner_session      TEXT
+    owner_session      TEXT,
+    container_id       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_instances_service ON instances(service_id, started_at DESC);
 
@@ -226,6 +229,9 @@ impl Store {
             "ALTER TABLE services ADD COLUMN one_shot INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE stacks ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE services ADD COLUMN stop_signal TEXT",
+            "ALTER TABLE services ADD COLUMN compose_file TEXT",
+            "ALTER TABLE services ADD COLUMN compose_service TEXT",
+            "ALTER TABLE instances ADD COLUMN container_id TEXT",
         ];
         for statement in ADDITIONS {
             // "duplicate column name" is the ordinary case: the column is
@@ -486,8 +492,9 @@ impl Store {
             conn.execute(
                 "INSERT INTO services(id, workspace_id, name, service_type, command, cwd, env,
                                       preferred_port, health_check, auto_start, conflict_policy,
-                                      depends_on, one_shot, stop_signal)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                                      depends_on, one_shot, stop_signal,
+                                      compose_file, compose_service)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(workspace_id, name) DO UPDATE SET
                      service_type = excluded.service_type,
                      command = excluded.command,
@@ -499,7 +506,9 @@ impl Store {
                      conflict_policy = excluded.conflict_policy,
                      depends_on = excluded.depends_on,
                      one_shot = excluded.one_shot,
-                     stop_signal = excluded.stop_signal",
+                     stop_signal = excluded.stop_signal,
+                     compose_file = excluded.compose_file,
+                     compose_service = excluded.compose_service",
                 params![
                     service.id.as_str(),
                     service.workspace_id.as_str(),
@@ -515,6 +524,8 @@ impl Store {
                     depends_on,
                     service.one_shot as i64,
                     service.stop_signal.map(json_tag),
+                    service.compose.as_ref().map(|c| path_str(&c.file)),
+                    service.compose.as_ref().map(|c| c.service.clone()),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -580,8 +591,9 @@ impl Store {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO instances(id, service_id, pid, process_start_time, status, port,
-                                       started_at, stopped_at, exit_code, started_by, owner_session)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                       started_at, stopped_at, exit_code, started_by,
+                                       owner_session, container_id)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     instance.id.as_str(),
                     instance.service_id.as_str(),
@@ -594,6 +606,7 @@ impl Store {
                     instance.exit_code,
                     json_tag(instance.started_by),
                     instance.owner_session.as_ref().map(|s| s.0.clone()),
+                    instance.container_id.clone(),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -605,7 +618,8 @@ impl Store {
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE instances SET status = ?2, port = ?3, stopped_at = ?4, exit_code = ?5,
-                                      pid = ?6, process_start_time = ?7
+                                      pid = ?6, process_start_time = ?7,
+                                      container_id = ?8
                  WHERE id = ?1",
                 params![
                     instance.id.as_str(),
@@ -615,6 +629,7 @@ impl Store {
                     instance.exit_code,
                     instance.pid as i64,
                     instance.process_start_time,
+                    instance.container_id.clone(),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -908,6 +923,18 @@ fn row_service(row: &Row<'_>) -> Result<Service> {
         // open the row: the worst case is a stop that sends SIGTERM, which is
         // what every service got before this column existed.
         stop_signal: get_opt_text(row, "stop_signal")?.and_then(|raw| parse_tag(&raw).ok()),
+        // Both halves or neither: a file with no service names nothing, and a
+        // service with no file cannot be found.
+        compose: match (
+            get_opt_text(row, "compose_file")?,
+            get_opt_text(row, "compose_service")?,
+        ) {
+            (Some(file), Some(service)) => Some(runtime_types::ComposeBinding {
+                file: PathBuf::from(file),
+                service,
+            }),
+            _ => None,
+        },
     })
 }
 
@@ -936,6 +963,7 @@ fn row_instance(row: &Row<'_>) -> Result<RuntimeInstance> {
         exit_code: get_opt_int(row, "exit_code")?.map(|v| v as i32),
         started_by: parse_tag(&get_text(row, "started_by")?)?,
         owner_session: get_opt_text(row, "owner_session")?.map(SessionId),
+        container_id: get_opt_text(row, "container_id")?,
     })
 }
 

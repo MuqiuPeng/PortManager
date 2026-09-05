@@ -408,6 +408,7 @@ fn renaming_onto_an_existing_service_is_refused() {
                 depends_on: Vec::new(),
                 one_shot: false,
                 stop_signal: None,
+                compose: None,
             },
         )
         .unwrap();
@@ -857,6 +858,7 @@ async fn exported_config_carries_ordering_back() {
             depends_on,
             one_shot,
             stop_signal,
+            compose: None,
         };
         runtime.add_service(&workspace.id, service).unwrap();
     }
@@ -930,6 +932,7 @@ async fn registering_a_worktree_tops_up_its_services() {
         depends_on: Vec::new(),
         one_shot: false,
         stop_signal: None,
+        compose: None,
     };
     runtime.add_service(&primary.id, service).unwrap();
 
@@ -1094,6 +1097,7 @@ async fn a_cursored_read_is_not_answered_with_a_synthesised_line() {
         depends_on: Vec::new(),
         one_shot: false,
         stop_signal: None,
+        compose: None,
     };
     let service = runtime.add_service(&workspace.id, service).unwrap();
 
@@ -1449,4 +1453,110 @@ socketserver.TCPServer((\"127.0.0.1\", {port}), http.server.SimpleHTTPRequestHan
         std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
         "the port is still being served after a stop that reported success"
     );
+}
+
+/// A compose service claimed by hand is started, read and stopped by compose.
+///
+/// The whole of what the container path has to do, in the order somebody does
+/// it: read what the file declares, bind a service to one of them, bring it
+/// up, find it owned rather than "started elsewhere", and stop it again. It
+/// was the last of those that was impossible before — the runtime recorded the
+/// pid of `docker compose up`, that command exited as soon as it had started
+/// the container, and the service it had just started came back as one
+/// somebody else was running.
+///
+/// Skipped where Docker is not there. A test that quietly passes on a machine
+/// that could not have run it is worse than one that says it did not.
+#[tokio::test]
+async fn a_claimed_compose_service_is_started_and_stopped_by_compose() {
+    if !docker_available() {
+        eprintln!("skipped: docker is not available here");
+        return;
+    }
+
+    // No `name:` on purpose. A compose project name is global to the Docker
+    // daemon, so a fixed one makes every run of this share one project — the
+    // second run reuses the first run's container, which still carries the
+    // first run's directory in its labels, and the claim then matches nothing.
+    // Left out, compose derives the name from the directory, which is fresh
+    // here every time.
+    let compose = r#"services:
+  probe:
+    image: busybox:latest
+    command: sh -c "echo probe up; while true; do sleep 1; done"
+"#;
+    let dir = repo(&[("docker-compose.yml", compose), ("package.json", "{}")]);
+    let runtime = Runtime::in_memory().unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let workspace = view.workspaces[0].workspace.clone();
+    let file = dir.path().join("docker-compose.yml");
+
+    // What the file says, without starting anything.
+    let declared = runtime.compose_declared(&file).unwrap();
+    assert!(
+        declared.iter().any(|d| d.service == "probe"),
+        "reading the compose file found {:?}",
+        declared.iter().map(|d| &d.service).collect::<Vec<_>>()
+    );
+
+    let service = runtime
+        .add_service(
+            &workspace.id,
+            runtime_types::Service {
+                id: runtime_types::ServiceId::new(),
+                workspace_id: workspace.id.clone(),
+                name: "probe".to_string(),
+                service_type: ServiceType::Container,
+                command: "unused".to_string(),
+                cwd: dir.path().to_path_buf(),
+                env: Default::default(),
+                preferred_port: None,
+                health_check: None,
+                auto_start: false,
+                conflict_policy: ConflictPolicy::Reuse,
+                depends_on: Vec::new(),
+                one_shot: false,
+                stop_signal: None,
+                compose: None,
+            },
+        )
+        .unwrap();
+
+    runtime.claim_compose(&service.id, &file, "probe").unwrap();
+    // Re-read: the copy returned by `add_service` predates the claim, and a
+    // view taken from it would go down the process path and report a service
+    // Docker is running as stopped.
+    let service = runtime.require_service(&service.id).unwrap();
+
+    runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .expect("starting a claimed compose service");
+
+    let view = runtime.service_view(&service).unwrap();
+    assert!(view.status.is_live(), "status after start: {:?}", view.status);
+    assert!(
+        view.managed,
+        "the runtime disowned a container it started, and would refuse to stop it"
+    );
+
+    runtime
+        .stop_service(&service.id, runtime_core::lifecycle::GRACEFUL_TIMEOUT)
+        .await
+        .expect("stopping it");
+    assert!(
+        !runtime.service_view(&service).unwrap().status.is_live(),
+        "it is still running after a stop that reported success"
+    );
+
+    // Leave nothing behind: the containers and the network both go.
+    let _ = runtime.compose_down(&service.id);
+}
+
+/// `docker`, if this machine has one that answers.
+fn docker_available() -> bool {
+    std::process::Command::new("docker")
+        .args(["version", "--format", "{{.Server.Version}}"])
+        .output()
+        .is_ok_and(|out| out.status.success())
 }

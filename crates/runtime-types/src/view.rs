@@ -57,6 +57,23 @@ pub struct ServiceView {
 /// Reported rather than guessed at: a process in Loom's directory on `:3001`
 /// is certainly part of Loom, but deciding *which* declared service it is
 /// would be a guess, and a wrong one is worse than an honest "unaccounted for".
+/// A service a compose file declares, read without starting anything.
+///
+/// What somebody picks from when claiming, and what detection reads to propose
+/// a compose project as services with an ordering rather than as one opaque
+/// `docker compose up`. The dependencies are the file's own — there is no
+/// second place to write them, and so no chance of the two disagreeing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComposeService {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
+    #[serde(default)]
+    pub has_healthcheck: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalService {
     pub port: u16,

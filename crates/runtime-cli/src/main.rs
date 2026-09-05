@@ -145,6 +145,24 @@ enum Command {
     #[command(subcommand)]
     Container(ContainerCommand),
 
+    /// Take a compose project down: containers and network removed.
+    ///
+    /// Not the same as stopping, which is why it is not a flag on `stop`. A
+    /// stop is reversible in seconds; this throws the containers away, and
+    /// every service in the same file comes down with it, because a compose
+    /// network is not one service's to remove. Named volumes are kept.
+    Down {
+        /// Any service bound to the file. The file is what comes down.
+        service: String,
+    },
+
+    /// List what a compose file declares, without starting anything.
+    Compose {
+        /// Absolute, or relative to the project.
+        #[arg(long, default_value = "docker-compose.yml")]
+        file: PathBuf,
+    },
+
     /// Write the project's services out as a committable .runtime.json.
     Export {
         selector: Option<String>,
@@ -348,6 +366,25 @@ enum ServiceCommand {
 
     /// Remove a declared service. Nothing running is touched.
     Remove { service: String },
+
+    /// Hand this service over to `docker compose`.
+    ///
+    /// Starting, stopping and reading it then go through compose instead of
+    /// through a process, which is the only thing that works for a container:
+    /// `docker compose up` exits as soon as it has started one, and what holds
+    /// the port afterwards is Docker.
+    Claim {
+        service: String,
+        /// The compose file, absolute or relative to the project.
+        #[arg(long, default_value = "docker-compose.yml")]
+        file: PathBuf,
+        /// Its name inside that file. Defaults to the service's own name.
+        #[arg(long = "as")]
+        compose_service: Option<String>,
+    },
+
+    /// Give it back: the service becomes a command the runtime spawns.
+    Release { service: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -644,6 +681,35 @@ async fn run(cli: Cli) -> Result<String> {
                     },
                 })
                 .await?
+        }
+
+        Command::Service(ServiceCommand::Claim {
+            service,
+            file,
+            compose_service,
+        }) => {
+            client
+                .call(Request::ClaimCompose {
+                    project,
+                    // The service's own name unless told otherwise, which is
+                    // the case where the two already agree.
+                    compose_service: compose_service.unwrap_or_else(|| service.clone()),
+                    service,
+                    file,
+                })
+                .await?
+        }
+
+        Command::Service(ServiceCommand::Release { service }) => {
+            client.call(Request::ReleaseCompose { project, service }).await?
+        }
+
+        Command::Down { service } => {
+            client.call(Request::ComposeDown { project, service }).await?
+        }
+
+        Command::Compose { file } => {
+            client.call(Request::ComposeDeclared { project, file }).await?
         }
 
         Command::Service(ServiceCommand::Remove { service }) => {
@@ -947,6 +1013,7 @@ fn render_response(response: &ResponseBody, json: bool) -> Result<String> {
         ResponseBody::Workspace(item) => render::workspaces(std::slice::from_ref(item)),
         ResponseBody::Services { items } => render::services(items),
         ResponseBody::Container(view) => render::container_line(view),
+        ResponseBody::ComposeServices { items } => render::compose_services(items),
         ResponseBody::Config(config) => serde_json::to_string_pretty(config)
             .map_err(|err| RuntimeError::internal(format!("cannot encode the config: {err}")))?,
         ResponseBody::Service(view) => render::service_detail(view),

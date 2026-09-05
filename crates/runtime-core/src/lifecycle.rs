@@ -19,10 +19,35 @@ use runtime_types::{
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+use crate::docker::ComposeState;
 use crate::events::{EventBus, RuntimeEvent};
 use crate::store::Store;
 use crate::supervisor::RunningProcess;
 use crate::Runtime;
+
+/// What compose's own words mean in the runtime's vocabulary.
+///
+/// `healthy` and `unhealthy` come from the container's own healthcheck, which
+/// is a better answer than probing the port from outside — it is the check the
+/// people who wrote the compose file chose. A container with no healthcheck
+/// only says whether it is running, and that is all this claims.
+fn compose_status(state: &ComposeState) -> ServiceStatus {
+    if !state.is_running() {
+        return match state.exit_code {
+            0 => ServiceStatus::Stopped,
+            _ => ServiceStatus::Failed,
+        };
+    }
+    match state.health.as_str() {
+        "healthy" => ServiceStatus::Healthy,
+        "unhealthy" => ServiceStatus::Unhealthy,
+        // A healthcheck that has not passed yet is "starting", which is the
+        // truthful answer; so is a container with no healthcheck, where the
+        // only thing established is that it is up.
+        "starting" => ServiceStatus::Starting,
+        _ => ServiceStatus::Healthy,
+    }
+}
 
 /// Whether the group this instance leads still holds the port it was given.
 ///
@@ -288,6 +313,15 @@ impl Runtime {
                     warning,
                 });
             }
+        }
+
+        // A compose service is not spawned, so everything below this — the
+        // port lease, the process, the exit watcher — is the wrong shape for
+        // it. Docker allocates the port from the compose file, holds it from
+        // inside its own VM, and keeps the container after the command that
+        // asked for it has returned.
+        if service.compose.is_some() {
+            return self.start_compose_service(&service, warning).await;
         }
 
         // Services without a port (workers, one-shots) skip leasing entirely.
@@ -798,6 +832,7 @@ impl Runtime {
             exit_code,
             started_by: StartedBy::Unknown,
             owner_session: None,
+            container_id: None,
         };
         self.store().insert_instance(&instance)?;
         self.events().publish(RuntimeEvent::ServiceStatusChanged {
@@ -902,6 +937,7 @@ impl Runtime {
             exit_code: None,
             started_by: options.started_by,
             owner_session: options.session.clone(),
+            container_id: None,
         };
         self.store().insert_instance(&instance)?;
 
@@ -1258,6 +1294,14 @@ impl Runtime {
     /// Stop a service and everything it spawned.
     pub async fn stop_service(&self, service_id: &ServiceId, timeout: Duration) -> Result<ServiceView> {
         let service = self.require_service(service_id)?;
+
+        // Answered by compose, which is the only thing that can. There is no
+        // pid on this side of Docker's VM to signal, and the runtime's claim
+        // on it was never a process in the first place.
+        if service.compose.is_some() {
+            return self.stop_compose_service(&service).await;
+        }
+
         let (status, instance) = self.current_state(&service)?;
 
         // A finished instance is no more stoppable than no instance at all, and
@@ -1558,6 +1602,176 @@ impl Runtime {
         }
         self.store().expire_leases(Utc::now())?;
         Ok(corrected)
+    }
+
+    // ---- compose ----------------------------------------------------------
+
+    /// Bring up a service Docker owns.
+    ///
+    /// The shape is the same as the process path and every step of it is a
+    /// different mechanism. Compose allocates the port from its own file, so
+    /// there is no lease to take. It waits on its own `depends_on` before
+    /// returning, so there is no ordering to impose here. And it keeps the
+    /// container after the command exits, so there is no child to watch — the
+    /// instance is claimed by container id instead, which survives the
+    /// container restarting, Docker restarting and the machine restarting.
+    async fn start_compose_service(
+        &self,
+        service: &Service,
+        warning: Option<String>,
+    ) -> Result<StartOutcome> {
+        let binding = service
+            .compose
+            .as_ref()
+            .expect("called only for a compose service");
+
+        self.logs_arc().append(
+            &service.id,
+            LogStream::System,
+            format!("docker compose up {}", binding.service),
+        )?;
+
+        self.docker().compose_up(&binding.file, &binding.service)?;
+
+        // Asked rather than assumed. `up -d` reports that it started the
+        // container, and a container that starts and dies in the same second
+        // is a successful `up` — so the exit status of that command is not an
+        // answer to "is it running".
+        let state = self
+            .docker()
+            .compose_ps(&binding.file)?
+            .into_iter()
+            .find(|found| found.service == binding.service)
+            .ok_or_else(|| {
+                RuntimeError::internal(format!(
+                    "compose reported no container for '{}' after starting it",
+                    binding.service
+                ))
+            })?;
+
+        self.record_compose_state(service, &state, false)?;
+
+        if !state.is_running() {
+            // Whatever it printed on the way out is the reason, and the
+            // command that started it returned before it died — so the reason
+            // exists only inside the container's log. Pulled through the same
+            // path a read would use, so it is stored once and in one shape
+            // rather than twice in two.
+            self.pull_compose_logs(&service.id)?;
+            return Err(RuntimeError::StartFailed {
+                service: service.name.clone(),
+                exit_code: Some(state.exit_code),
+                detail: format!("the container exited with {}", state.exit_code),
+            });
+        }
+
+        let port = state.published_ports.first().copied();
+        Ok(StartOutcome {
+            service: self.service_view(service)?,
+            reused: false,
+            reservation: port.map(|port| PortReservation {
+                port,
+                preferred_port: service.preferred_port,
+                // Compose publishes what its file says; nothing was moved.
+                reallocated: false,
+                policy: ConflictPolicy::Reuse,
+                conflict: None,
+            }),
+            warning,
+        })
+    }
+
+    /// Stop a compose service, leaving the container in place.
+    ///
+    /// `stop` rather than `down` because it is the reversible one: the
+    /// container keeps its filesystem and comes back quickly. Removing it is
+    /// a separate request — see [`compose_down`](Runtime::compose_down) — for
+    /// somebody who means to throw the state away.
+    async fn stop_compose_service(&self, service: &Service) -> Result<ServiceView> {
+        let binding = service
+            .compose
+            .as_ref()
+            .expect("called only for a compose service");
+
+        self.docker().compose_stop(&binding.file, &binding.service)?;
+        self.logs_arc().append(
+            &service.id,
+            LogStream::System,
+            format!("docker compose stop {}", binding.service),
+        )?;
+
+        if let Some(state) = self
+            .docker()
+            .compose_ps(&binding.file)?
+            .into_iter()
+            .find(|found| found.service == binding.service)
+        {
+            self.record_compose_state(service, &state, true)?;
+        }
+        self.invalidate_port_owners();
+        self.service_view(service)
+    }
+
+    /// Write down what compose says, as this service's instance.
+    ///
+    /// The container id stands in for the pid, which is left at zero: a
+    /// container's pid belongs to Docker's virtual machine and names nothing
+    /// this side can signal, so recording one would be recording a number that
+    /// looks like an identity and is not.
+    fn record_compose_state(
+        &self,
+        service: &Service,
+        state: &ComposeState,
+        asked_to_stop: bool,
+    ) -> Result<()> {
+        // A stop that was asked for is a stop, whatever signal ended it.
+        // Docker reports 143 for SIGTERM and 137 for SIGKILL, and reading
+        // those as failures would put everything somebody switched off into
+        // the list of what is broken.
+        let status = if asked_to_stop {
+            ServiceStatus::Stopped
+        } else {
+            compose_status(state)
+        };
+        let port = state.published_ports.first().copied();
+
+        if let Some(mut instance) = self.store().latest_instance(&service.id)? {
+            if instance.container_id.as_deref() == Some(state.container_id.as_str()) {
+                instance.status = status;
+                instance.port = port;
+                instance.exit_code = (!state.is_running()).then_some(state.exit_code);
+                instance.stopped_at = (!state.is_running()).then(Utc::now);
+                self.store().update_instance(&instance)?;
+                self.announce(service, status, port);
+                return Ok(());
+            }
+        }
+
+        let instance = RuntimeInstance {
+            id: runtime_types::InstanceId::new(),
+            service_id: service.id.clone(),
+            pid: 0,
+            process_start_time: 0,
+            status,
+            port,
+            started_at: Utc::now(),
+            stopped_at: (!state.is_running()).then(Utc::now),
+            exit_code: (!state.is_running()).then_some(state.exit_code),
+            started_by: StartedBy::default(),
+            owner_session: None,
+            container_id: Some(state.container_id.clone()),
+        };
+        self.store().insert_instance(&instance)?;
+        self.announce(service, status, port);
+        Ok(())
+    }
+
+    fn announce(&self, service: &Service, status: ServiceStatus, port: Option<u16>) {
+        self.events().publish(RuntimeEvent::ServiceStatusChanged {
+            service_id: service.id.clone(),
+            status,
+            port,
+        });
     }
 
     /// Stop every service this daemon started. Used on shutdown.
