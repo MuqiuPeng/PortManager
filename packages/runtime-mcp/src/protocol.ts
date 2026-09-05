@@ -36,6 +36,8 @@ export interface RuntimeInstance {
   started_at: string;
   exit_code?: number;
   started_by: string;
+  /** The container, for a service compose runs. */
+  container_id?: string;
 }
 
 export interface ServiceView {
@@ -59,6 +61,16 @@ export interface ServiceView {
   one_shot?: boolean;
   /** What a graceful stop sends, when SIGTERM is the wrong word for it. */
   stop_signal?: "term" | "int" | "quit" | "hup";
+  /** Set when compose runs this rather than the runtime spawning it. */
+  compose?: { file: string; service: string };
+}
+
+/** A service a compose file declares, read without starting anything. */
+export interface ComposeService {
+  name: string;
+  depends_on?: string[];
+  ports?: number[];
+  has_healthcheck?: boolean;
 }
 
 /** A live port in a checkout that no declared service explains. */
@@ -293,6 +305,7 @@ export type ResponseBody =
   | { type: "workspaces"; items: Workspace[] }
   | ({ type: "workspace" } & Workspace)
   | { type: "services"; items: ServiceView[] }
+  | { type: "compose_services"; items: ComposeService[] }
   | ({ type: "config" } & ProjectConfig)
   | ({ type: "container" } & ContainerView)
   | ({ type: "service" } & ServiceView)

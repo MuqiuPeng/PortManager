@@ -32,6 +32,7 @@ import {
   formatProjectRuntime,
   formatProjects,
   formatReservation,
+  formatComposeServices,
   formatServiceDetail,
   formatServices,
   formatSupervised,
@@ -668,6 +669,99 @@ function registerTools(
     async ({ name, action }) =>
       run("control_container", { name, action }, (body) =>
         body.type === "container" ? formatContainer(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "list_compose_services",
+    {
+      title: "Read a compose file",
+      description:
+        "What a compose file declares — its services, the ports they publish, which of them have a healthcheck, and what each waits for — without starting anything. Read this before claiming: the names here are the ones a claim has to use, and the dependencies are the ordering the file already states, which is not worth writing down a second time.",
+      inputSchema: {
+        project: z.string().describe(PROJECT_DESCRIPTION),
+        file: z
+          .string()
+          .optional()
+          .describe("Path to the compose file, absolute or relative to the project. Defaults to docker-compose.yml."),
+      },
+    },
+    async ({ project, file }) =>
+      run(
+        "compose_declared",
+        { project, file: file ?? "docker-compose.yml" },
+        (body) =>
+          body.type === "compose_services" ? formatComposeServices(body.items) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "claim_compose",
+    {
+      title: "Run a service through docker compose",
+      description:
+        "Bind an existing service to a service in a compose file, so that starting, stopping and reading it go through `docker compose` instead of through a process. This is what a container needs: `docker compose up` exits as soon as it has started one, and what holds the port afterwards is Docker — so a runtime that recorded the launcher loses the service the moment it returns, and then refuses to stop what it thinks somebody else started. Claim the service that is already declared rather than adding a new one; whatever has been corrected about it — its port, its environment, what it waits for — is kept.",
+      inputSchema: {
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        service: z.string().describe(SERVICE_DESCRIPTION),
+        file: z
+          .string()
+          .optional()
+          .describe("The compose file, absolute or relative to the project. Defaults to docker-compose.yml."),
+        compose_service: z
+          .string()
+          .optional()
+          .describe("Its name inside that file, when it differs from the service's own name."),
+      },
+    },
+    async ({ project, service, file, compose_service }) =>
+      run(
+        "claim_compose",
+        {
+          project: project ?? null,
+          service,
+          file: file ?? "docker-compose.yml",
+          compose_service: compose_service ?? service,
+        },
+        (body) => (body.type === "service" ? formatServiceDetail(body) : unexpected(body)),
+      ),
+  );
+
+  server.registerTool(
+    "release_compose",
+    {
+      title: "Stop running a service through compose",
+      description:
+        "Undo a claim: the service goes back to being a command the runtime spawns. Nothing running is touched.",
+      inputSchema: {
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        service: z.string().describe(SERVICE_DESCRIPTION),
+      },
+    },
+    async ({ project, service }) =>
+      run("release_compose", { project: project ?? null, service }, (body) =>
+        body.type === "service" ? formatServiceDetail(body) : unexpected(body),
+      ),
+  );
+
+  server.registerTool(
+    "compose_down",
+    {
+      title: "Remove a compose project's containers",
+      description:
+        "Take the whole compose project down: its containers and its network are removed. Not the same as stopping, and not a tidier version of it — a stop is reversible in seconds, this throws the containers away, and every service in the same file comes down together because a compose network is not one service's to remove. Named volumes are kept, so a database keeps its data. Reach for stop_stack unless somebody has asked for this.",
+      inputSchema: {
+        project: z.string().optional().describe(PROJECT_DESCRIPTION),
+        service: z
+          .string()
+          .describe("Any service bound to the file. The file is what comes down."),
+      },
+    },
+    async ({ project, service }) =>
+      run("compose_down", { project: project ?? null, service }, (body) =>
+        body.type === "services"
+          ? body.items.map(formatService).join("\n") || "nothing was running"
+          : unexpected(body),
       ),
   );
 

@@ -6,6 +6,7 @@
 
 import type {
   AdoptOutcome,
+  ComposeService,
   ContainerView,
   Discovery,
   Failure,
@@ -110,7 +111,15 @@ export function formatService(service: ServiceView): string {
   const port = service.actual_port ? `:${service.actual_port}` : "no port";
   const owner =
     instance && instance.started_by !== "unknown" ? `, started by ${instance.started_by}` : "";
-  const pid = instance ? `, pid ${instance.pid}` : "";
+  // A compose service has no pid on this side of Docker's VM; the runtime
+  // records a zero rather than a number that would read as an identity, and
+  // printing that zero would be worse than saying nothing. The container is
+  // the identity, so name that instead.
+  const pid = !instance
+    ? ""
+    : instance.container_id
+      ? `, container ${instance.container_id.slice(0, 12)}`
+      : `, pid ${instance.pid}`;
   // Worth saying plainly: stop_service cannot act on this one.
   const unmanaged = live && service.managed === false ? ", started outside the runtime" : "";
   // The id comes last so the line stays readable, but is always available for
@@ -142,6 +151,11 @@ export function formatServiceDetail(service: ServiceView): string {
   // line saying so on all of them would bury the one where it is not true.
   if (service.stop_signal && service.stop_signal !== "term") {
     lines.push(`  stop     SIG${service.stop_signal.toUpperCase()}`);
+  }
+  // Said because it changes what every other verb does to this service: the
+  // command above is not what runs it, and stopping goes through compose.
+  if (service.compose) {
+    lines.push(`  compose  ${service.compose.service} in ${service.compose.file}`);
   }
 
   // Names only. Confirming that a variable was set does not require putting its
@@ -385,4 +399,19 @@ export function formatFailures(failures: Failure[]): string {
       return `${failure.subject} — ${failure.status}${code}\n${said}`;
     })
     .join("\n\n");
+}
+
+/** What a compose file declares, before anything is claimed. */
+export function formatComposeServices(items: ComposeService[]): string {
+  if (items.length === 0) return "this compose file declares no services";
+  return items
+    .map((service) => {
+      const bits = [service.name.padEnd(18)];
+      if (service.ports?.length) bits.push(service.ports.map((p) => `:${p}`).join(" "));
+      if (service.has_healthcheck) bits.push("healthcheck");
+      // The ordering the file already states, which is the reason to read this.
+      if (service.depends_on?.length) bits.push(`after ${service.depends_on.join(", ")}`);
+      return bits.join("  ");
+    })
+    .join("\n");
 }
