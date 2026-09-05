@@ -3665,6 +3665,7 @@ dependencies = [
  "adapter-windows",
  "chrono",
  "directories",
+ "libc",
  "runtime-adapter",
  "runtime-types",
  "rusqlite",
