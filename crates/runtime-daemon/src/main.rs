@@ -82,6 +82,14 @@ async fn run(args: Args) -> Result<()> {
     if corrected > 0 {
         tracing::info!(corrected, "closed out instances that died while the daemon was down");
     }
+    // Records written when a signalled exit was read as a failure.
+    match runtime.correct_signalled_failures() {
+        Ok(corrected) if corrected > 0 => {
+            tracing::info!(corrected, "re-read signalled exits as stops rather than failures")
+        }
+        Err(err) => tracing::warn!(%err, "could not correct signalled exits"),
+        _ => {}
+    }
     // Projects registered before a compose file could become more than one
     // service. Best effort: a machine without Docker keeps what it has.
     match runtime.migrate_compose_projects() {

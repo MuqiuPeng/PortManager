@@ -1763,3 +1763,63 @@ async fn an_old_compose_registration_is_expanded_and_its_stack_rewritten() {
         stack.members
     );
 }
+
+/// A service ended by a termination signal was stopped, not failed.
+///
+/// `pnpm run api` catches SIGTERM, passes it on and exits 143 — which is 128
+/// plus SIGTERM's number, and is how a well-behaved wrapper says "I was told
+/// to stop". Reading any non-zero exit as a failure put every one of those in
+/// the list of what is broken, with a red mark against a service somebody had
+/// just switched off.
+///
+/// Signalled from outside rather than through `stop_service`, because that is
+/// the case that was wrong: stopping through the runtime writes `stopped` over
+/// the top afterwards, so the bug only showed when something else did the
+/// asking — another terminal, a `kill`, a machine going to sleep.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_service_told_to_stop_is_stopped_rather_than_failed() {
+    let logs = tempfile::tempdir().unwrap();
+    let config = r#"{ "name": "polite", "services": {
+        "server": { "command": "sh forward.sh" } } }"#;
+    // Exits 143 on SIGTERM, the way a package manager does.
+    let script = "trap 'exit 143' TERM\n\
+echo ready\n\
+while true; do sleep 0.2; done\n";
+    let dir = repo(&[(".runtime.json", config), ("forward.sh", script)]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .unwrap();
+    let pid = runtime
+        .service_view(&service)
+        .unwrap()
+        .instance
+        .expect("an instance")
+        .pid;
+
+    // Somebody else's doing, which is the whole point.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+
+    let view = runtime.service_view(&service).unwrap();
+    assert_eq!(
+        view.status,
+        runtime_types::ServiceStatus::Stopped,
+        "a service that exited on SIGTERM was recorded as {:?}",
+        view.status
+    );
+    assert!(
+        runtime
+            .failures(5)
+            .unwrap()
+            .iter()
+            .all(|failure| failure.service_id != service.id),
+        "it is in the list of what is broken"
+    );
+}

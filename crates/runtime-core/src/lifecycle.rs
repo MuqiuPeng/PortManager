@@ -35,6 +35,9 @@ fn compose_status(state: &ComposeState) -> ServiceStatus {
     if !state.is_running() {
         return match state.exit_code {
             0 => ServiceStatus::Stopped,
+            // A container stopped from a terminal reports the signal that
+            // ended it, the same as a process does.
+            code if told_to_stop(code) => ServiceStatus::Stopped,
             _ => ServiceStatus::Failed,
         };
     }
@@ -47,6 +50,35 @@ fn compose_status(state: &ComposeState) -> ServiceStatus {
         "starting" => ServiceStatus::Starting,
         _ => ServiceStatus::Healthy,
     }
+}
+
+/// Whether an exit code says the process was asked to stop.
+///
+/// A shell reports a signalled child as 128 plus the signal, and a wrapper
+/// that catches the signal and passes it on exits with that number itself:
+/// `pnpm run api` ends 143 on SIGTERM, which is exactly what stopping it looks
+/// like. Read as a failure, every service anybody switched off — from another
+/// terminal, with a `kill`, by closing a laptop — went into the list of what
+/// is broken with a red mark against it.
+///
+/// Only the signals that mean "stop". A segfault is 139 and stays a failure.
+/// Unix only: Windows exit codes carry no such convention, and applying one
+/// there would turn a real 143 into a stop.
+#[cfg(unix)]
+pub(crate) fn told_to_stop(code: i32) -> bool {
+    const TERM: i32 = 128 + 15;
+    const INT: i32 = 128 + 2;
+    const HUP: i32 = 128 + 1;
+    const QUIT: i32 = 128 + 3;
+    // SIGKILL, which is also what the runtime's own escalation sends once a
+    // graceful stop has run out of time.
+    const KILL: i32 = 128 + 9;
+    matches!(code, TERM | INT | HUP | QUIT | KILL)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn told_to_stop(_code: i32) -> bool {
+    false
 }
 
 /// Whether the group this instance leads still holds the port it was given.
@@ -1219,9 +1251,9 @@ impl Runtime {
 
             instance.stopped_at = Some(Utc::now());
             instance.exit_code = exit_code;
-            // A clean exit is a stop; anything else is a failure worth showing.
             instance.status = match exit_code {
                 Some(0) | None => ServiceStatus::Stopped,
+                Some(code) if told_to_stop(code) => ServiceStatus::Stopped,
                 Some(_) => ServiceStatus::Failed,
             };
             if let Err(err) = store.update_instance(&instance) {

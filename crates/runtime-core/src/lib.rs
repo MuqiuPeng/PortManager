@@ -1373,6 +1373,39 @@ impl Runtime {
         detection.services.splice(index..=index, expanded);
     }
 
+    /// Correct records that called a signalled exit a failure.
+    ///
+    /// The rule was wrong, so the rows written under it are too, and they do
+    /// not age out: a stopped service keeps whatever its last instance said,
+    /// so a red mark against something somebody switched off stays there until
+    /// the service is run again. Bounded to exactly the codes the rule now
+    /// reads as a stop — everything else is left as it was recorded.
+    pub fn correct_signalled_failures(&self) -> Result<usize> {
+        let mut corrected = 0;
+        for project in self.store.list_projects()? {
+            for workspace in self.store.list_workspaces(&project.id)? {
+                for service in self.store.list_services(&workspace.id)? {
+                    let Some(mut instance) = self.store.latest_instance(&service.id)? else {
+                        continue;
+                    };
+                    if instance.status != ServiceStatus::Failed {
+                        continue;
+                    }
+                    let Some(code) = instance.exit_code else {
+                        continue;
+                    };
+                    if !crate::lifecycle::told_to_stop(code) {
+                        continue;
+                    }
+                    instance.status = ServiceStatus::Stopped;
+                    self.store.update_instance(&instance)?;
+                    corrected += 1;
+                }
+            }
+        }
+        Ok(corrected)
+    }
+
     /// Replace the single `compose` service earlier versions left behind.
     ///
     /// Those projects were registered when a compose file could only become
@@ -1787,16 +1820,13 @@ impl Runtime {
                     Some("starting") => ServiceStatus::Starting,
                     _ => ServiceStatus::Healthy,
                 }
-            } else if container.exit_code == 0 {
-                ServiceStatus::Stopped
-            } else if instance
-                .as_ref()
-                .is_some_and(|i| i.status == ServiceStatus::Stopped)
+            } else if container.exit_code == 0
+                || crate::lifecycle::told_to_stop(container.exit_code)
             {
-                // Asked to stop, and it did. Docker reports the signal that
-                // ended it — 143 for SIGTERM, 137 for SIGKILL — and reading
-                // those as failures would put every service somebody switched
-                // off into the list of what is broken.
+                // Zero, or the signal that ends a stop — 143 for SIGTERM, 137
+                // for SIGKILL. One rule for containers and processes alike:
+                // reading either as a failure puts every service somebody
+                // switched off into the list of what is broken.
                 ServiceStatus::Stopped
             } else {
                 // Exited on its own, and not well. Saying "stopped" here would
