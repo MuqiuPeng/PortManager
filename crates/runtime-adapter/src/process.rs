@@ -137,5 +137,39 @@ pub trait ProcessProvider: Send + Sync {
     ///
     /// Returns `Ok(false)` when the identity no longer matches a live process,
     /// which callers should treat as success.
+    /// Which process group a pid belongs to, where the platform has them.
+    ///
+    /// A service is spawned into a group of its own, and the group outlives its
+    /// leader: `pnpm run dev` hands off to `node` and steps out of the way,
+    /// leaving the server running in a group whose leader is gone. Judged by
+    /// the leader alone the service reads as stopped while it is serving, and
+    /// — because its port is still held — the runtime then reports it as
+    /// something somebody else started and refuses to stop it.
+    ///
+    /// This is deliberately a question about *another* pid rather than "is the
+    /// group alive". Asking whether the leader's group still exists would say
+    /// yes to a recycled pid that happens to lead a group of its own, and the
+    /// runtime would claim a stranger's processes. Asking which group the
+    /// holder of our port is in cannot: the answer names the group we made.
+    ///
+    /// `None` where the platform has no process groups. Windows keeps a
+    /// service's processes in a job object and does not need this.
+    fn group_of(&self, _pid: u32) -> Result<Option<u32>> {
+        Ok(None)
+    }
+
+    /// Signal whatever is still in the group `leader` started.
+    ///
+    /// The counterpart to [`group_of`](Self::group_of), for the case where the
+    /// leader has gone and the group is still serving. There is no identity
+    /// left to re-verify at that point, so this is only for a caller that has
+    /// already established the group is the runtime's own — which it does by
+    /// finding the holder of the service's port inside it.
+    ///
+    /// `false` where the platform has no process groups.
+    fn terminate_group(&self, _leader: u32, _mode: TerminationMode) -> Result<bool> {
+        Ok(false)
+    }
+
     fn terminate_tree(&self, identity: &ProcessIdentity, mode: TerminationMode) -> Result<bool>;
 }

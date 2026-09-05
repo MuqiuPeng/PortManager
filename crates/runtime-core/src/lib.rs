@@ -1315,6 +1315,26 @@ impl Runtime {
 
     /// Reconcile the stored instance for a service against the live process
     /// table. The OS wins: a database row is only a claim.
+    /// Whether the group this instance was started in still holds its port.
+    ///
+    /// The test the runtime needs when the process it recorded is gone. A
+    /// service is spawned into a group of its own and the leader is often the
+    /// first to leave — `pnpm run dev` execs its way out, `docker compose`
+    /// finishes — while the server it started keeps serving from inside that
+    /// group. Calling the service stopped then loses the runtime's claim on
+    /// it, and since the port answers it comes back as "started elsewhere",
+    /// which is what makes the Stop button disappear.
+    ///
+    /// Asked as "is the holder of our port in our group" rather than "does our
+    /// group still exist", because a recycled pid leads a group of its own and
+    /// the second question would hand the runtime a stranger's processes.
+    fn group_still_serving(&self, instance: &RuntimeInstance) -> Result<bool> {
+        Ok(crate::lifecycle::group_still_holds_port(
+            &self.adapter,
+            instance,
+        ))
+    }
+
     pub(crate) fn current_state(
         &self,
         service: &Service,
@@ -1328,6 +1348,13 @@ impl Runtime {
 
         let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
         if self.adapter.process().is_alive(&identity)? {
+            return Ok((instance.status, Some(instance)));
+        }
+
+        // The leader is gone, but the group it led may still be serving —
+        // which is the ordinary shape of `pnpm run dev`, not an edge case.
+        // Keeping the claim here is what keeps a Stop button on it.
+        if self.group_still_serving(&instance)? {
             return Ok((instance.status, Some(instance)));
         }
 

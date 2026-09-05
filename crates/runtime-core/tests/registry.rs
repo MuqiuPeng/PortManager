@@ -1384,3 +1384,69 @@ while True:\n    time.sleep(0.1)\n";
          is what actually ended it"
     );
 }
+
+/// A launcher that hands off and exits must not cost the runtime its claim.
+///
+/// The ordinary shape of `pnpm run dev`: the recorded process spawns the
+/// server and leaves. Judged by that process alone the service reads as
+/// stopped while it is serving, and because its port answers it comes back as
+/// something somebody else started — at which point the runtime refuses to
+/// stop it and the button disappears. Found in the wild with seven services
+/// in that state, their ports held by processes still sitting in the groups
+/// the runtime had made for them.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_service_survives_its_launcher_and_stays_the_runtime_s_to_stop() {
+    let logs = tempfile::tempdir().unwrap();
+    let port = 7913;
+    let config = format!(
+        r#"{{ "name": "handoff", "services": {{
+            "server": {{ "command": "sh launch.sh", "port": {port} }} }} }}"#
+    );
+    // Starts the server, says so, and leaves — which is what a package
+    // manager does once it has handed over. It stays up long enough to be a
+    // start rather than an immediate failure, and then goes, which is the
+    // moment this test is about.
+    let launcher = "python3 -u serve.py &\necho started\nsleep 2\nexit 0\n";
+    let server = format!(
+        "import http.server, socketserver\n\
+socketserver.TCPServer((\"127.0.0.1\", {port}), http.server.SimpleHTTPRequestHandler).serve_forever()\n"
+    );
+    let dir = repo(&[
+        (".runtime.json", config.as_str()),
+        ("launch.sh", launcher),
+        ("serve.py", server.as_str()),
+    ]);
+
+    let runtime = Runtime::in_memory_with_logs(logs.path()).unwrap();
+    let view = runtime.add_project(dir.path(), None).unwrap();
+    let service = view.workspaces[0].services[0].service.clone();
+
+    runtime
+        .start_service(&service.id, Default::default())
+        .await
+        .unwrap();
+    // Long enough for the launcher to be gone and the server to be listening.
+    tokio::time::sleep(std::time::Duration::from_millis(3_000)).await;
+
+    let view = runtime.service_view(&service).unwrap();
+    assert!(
+        view.status.is_live(),
+        "the service stopped being live once its launcher exited: {:?}",
+        view.status
+    );
+    assert!(
+        view.managed,
+        "the runtime disowned a service it started, and would refuse to stop it"
+    );
+
+    runtime
+        .stop_service(&service.id, runtime_core::lifecycle::GRACEFUL_TIMEOUT)
+        .await
+        .expect("stopping a service the runtime started");
+
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "the port is still being served after a stop that reported success"
+    );
+}

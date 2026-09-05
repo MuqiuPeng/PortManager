@@ -24,6 +24,39 @@ use crate::store::Store;
 use crate::supervisor::RunningProcess;
 use crate::Runtime;
 
+/// Whether the group this instance leads still holds the port it was given.
+///
+/// The question to ask when the process the runtime recorded has gone. A
+/// service is spawned into a group of its own and the leader is often the
+/// first to leave — `pnpm run dev` hands off to node and exits, `docker
+/// compose` finishes — while the server it started keeps serving from inside
+/// that group. Treating the leader's exit as the service's exit loses the
+/// runtime's claim, and because the port still answers the service comes back
+/// as one somebody else started: no longer stoppable from here.
+///
+/// Phrased as "is the holder of our port in our group" rather than "does our
+/// group still exist". The second question says yes to a recycled pid that
+/// happens to lead a group of its own, and would have the runtime signalling
+/// a stranger's processes.
+pub(crate) fn group_still_holds_port(
+    adapter: &Arc<dyn PlatformAdapter>,
+    instance: &RuntimeInstance,
+) -> bool {
+    let Some(port) = instance.port else {
+        return false;
+    };
+    let Ok(bindings) = adapter.port().listening_ports() else {
+        return false;
+    };
+    bindings
+        .iter()
+        .filter(|binding| binding.port == port)
+        .filter_map(|binding| binding.primary_pid())
+        .any(|holder| {
+            matches!(adapter.process().group_of(holder), Ok(Some(group)) if group == instance.pid)
+        })
+}
+
 /// What a graceful stop of this service sends.
 ///
 /// Read from the service rather than fixed at the signalling layer: what
@@ -1123,6 +1156,28 @@ impl Runtime {
         tokio::spawn(async move {
             let status = child.wait().await;
             let exit_code = status.as_ref().ok().and_then(|s| s.code());
+
+            // The process the runtime holds is not always the service. A
+            // launcher that starts a server and exits leaves the group still
+            // serving, and recording that exit here would hand the service
+            // away — it would show as started elsewhere, and stopping it would
+            // be refused. Nothing is released either: the group is still the
+            // runtime's to terminate.
+            if group_still_holds_port(&adapter, &instance) {
+                let _ = logs.append(
+                    &service.id,
+                    LogStream::System,
+                    format!(
+                        "launcher exited; the service is still serving on {}",
+                        instance
+                            .port
+                            .map(|port| port.to_string())
+                            .unwrap_or_else(|| "its port".into())
+                    ),
+                );
+                return;
+            }
+
             // Nothing left to terminate; drop whatever `confine` allocated.
             adapter.spawn().release(instance.pid);
 
@@ -1251,14 +1306,34 @@ impl Runtime {
         let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
         let process = self.adapter().process();
 
-        process.terminate_tree(&identity, graceful_stop(&service))?;
+        // Two ways to reach the same processes. While the leader is alive its
+        // identity can be re-verified, which is what `terminate_tree` insists
+        // on. Once it has gone there is nothing left to verify, so the claim
+        // rests on the group holding the port this service was given — the
+        // same evidence that kept the instance live in the first place.
+        let leaderless = !process.is_alive(&identity)? && self.group_still_serving(&instance)?;
+        let signal_them = |mode| -> Result<()> {
+            if leaderless {
+                process.terminate_group(instance.pid, mode)?;
+            } else {
+                process.terminate_tree(&identity, mode)?;
+            }
+            Ok(())
+        };
+
+        signal_them(graceful_stop(&service))?;
 
         // Escalate rather than hang: a dev server that ignores SIGTERM must
         // still release its port within a bounded time.
         let deadline = tokio::time::Instant::now() + timeout;
         let mut forced = false;
         loop {
-            if !process.is_alive(&identity)? {
+            let still_there = if leaderless {
+                self.group_still_serving(&instance)?
+            } else {
+                process.is_alive(&identity)?
+            };
+            if !still_there {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1463,7 +1538,11 @@ impl Runtime {
         let mut corrected = 0;
         for mut instance in self.store().live_instances()? {
             let identity = ProcessIdentity::new(instance.pid, instance.process_start_time);
-            if self.adapter().process().is_alive(&identity)? {
+            if self.adapter().process().is_alive(&identity)?
+                // Or the leader has gone and left the group serving, which is
+                // what a launcher that execs away looks like from here.
+                || self.group_still_serving(&instance)?
+            {
                 if let Some(port) = instance.port {
                     self.resolver().activate(port)?;
                 }

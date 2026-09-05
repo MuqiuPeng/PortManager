@@ -239,6 +239,21 @@ impl ProcessProvider for MacProcessProvider {
         }))
     }
 
+    fn group_of(&self, pid: u32) -> Result<Option<u32>> {
+        Ok(Self::process_group(pid).map(|pgid| pgid as u32))
+    }
+
+    fn terminate_group(&self, leader: u32, mode: TerminationMode) -> Result<bool> {
+        let signal = signal_for(mode);
+        match Self::signal_group(leader as i32, signal) {
+            Ok(()) => Ok(true),
+            // ESRCH: the group emptied between the caller's check and this.
+            // Nothing to do and nothing wrong.
+            Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(false),
+            Err(err) => Err(RuntimeError::io(format!("killpg({leader}) failed: {err}"))),
+        }
+    }
+
     fn terminate_tree(&self, identity: &ProcessIdentity, mode: TerminationMode) -> Result<bool> {
         // Re-verify identity immediately before signalling: between the caller
         // reading state and this call, the pid could have been recycled.
@@ -249,13 +264,7 @@ impl ProcessProvider for MacProcessProvider {
             return Ok(false);
         }
 
-        let signal = match mode {
-            TerminationMode::Graceful(StopSignal::Term) => libc::SIGTERM,
-            TerminationMode::Graceful(StopSignal::Int) => libc::SIGINT,
-            TerminationMode::Graceful(StopSignal::Quit) => libc::SIGQUIT,
-            TerminationMode::Graceful(StopSignal::Hup) => libc::SIGHUP,
-            TerminationMode::Forceful => libc::SIGKILL,
-        };
+        let signal = signal_for(mode);
 
         // Services are spawned into their own process group, so signalling the
         // group reaches every descendant in one call and cannot race a fork.
@@ -352,6 +361,17 @@ fn parse_procargs(buffer: &[u8]) -> Vec<String> {
         position += 1;
     }
     args
+}
+
+/// The signal a termination mode asks for.
+fn signal_for(mode: TerminationMode) -> libc::c_int {
+    match mode {
+        TerminationMode::Graceful(StopSignal::Term) => libc::SIGTERM,
+        TerminationMode::Graceful(StopSignal::Int) => libc::SIGINT,
+        TerminationMode::Graceful(StopSignal::Quit) => libc::SIGQUIT,
+        TerminationMode::Graceful(StopSignal::Hup) => libc::SIGHUP,
+        TerminationMode::Forceful => libc::SIGKILL,
+    }
 }
 
 #[cfg(test)]
